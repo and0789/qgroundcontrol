@@ -8,11 +8,13 @@ ToolStrip {
     id: _root
 
     signal displayPreFlightChecklist
+    signal displayOpticalFlowCalibration
 
     FlyViewToolStripActionList {
         id: flyViewToolStripActionList
 
-        onDisplayPreFlightChecklist: _root.displayPreFlightChecklist()
+        onDisplayPreFlightChecklist:     _root.displayPreFlightChecklist()
+        onDisplayOpticalFlowCalibration: _root.displayOpticalFlowCalibration()
     }
 
     model: flyViewToolStripActionList.model

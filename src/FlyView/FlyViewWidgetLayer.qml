@@ -161,6 +161,13 @@ Item {
             preFlightChecklistLoader.item.open()
         }
 
+        onDisplayOpticalFlowCalibration: {
+            if (!opticalFlowCalibrationLoader.active) {
+                opticalFlowCalibrationLoader.active = true
+            }
+            opticalFlowCalibrationLoader.item.open()
+        }
+
         property real topEdgeLeftInset:     visible ? y + height : 0
         property real leftEdgeTopInset:     visible ? x + width : 0
         property real leftEdgeCenterInset:  leftEdgeTopInset
@@ -211,6 +218,18 @@ Item {
     Component {
         id: preFlightChecklistPopup
         FlyViewPreFlightChecklistPopup {
+        }
+    }
+
+    Loader {
+        id: opticalFlowCalibrationLoader
+        sourceComponent: opticalFlowCalibrationDialog
+        active: false
+    }
+
+    Component {
+        id: opticalFlowCalibrationDialog
+        OpticalFlowCalibrationDialog {
         }
     }
 }

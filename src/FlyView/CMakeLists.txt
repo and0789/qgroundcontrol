@@ -53,6 +53,8 @@ qt_add_qml_module(FlyViewModule
         NonGpsStatusPanel.qml
         NonGpsStatusShowAction.qml
         ObstacleDistanceOverlay.qml
+        OpticalFlowCalibrationDialog.qml
+        OpticalFlowCalibrationShowAction.qml
         ObstacleDistanceOverlayMap.qml
         ObstacleDistanceOverlayVideo.qml
         OnScreenCameraTrackingController.qml

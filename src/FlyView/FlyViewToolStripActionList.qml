@@ -8,11 +8,13 @@ ToolStripActionList {
     id: _root
 
     signal displayPreFlightChecklist
+    signal displayOpticalFlowCalibration
 
     model: [
         Viewer3DShowAction { },
         PreFlightCheckListShowAction { onTriggered: displayPreFlightChecklist() },
         NonGpsStatusShowAction { },
+        OpticalFlowCalibrationShowAction { onTriggered: displayOpticalFlowCalibration() },
         GuidedActionTakeoff { },
         GuidedActionLand { },
         GuidedActionRTL { },

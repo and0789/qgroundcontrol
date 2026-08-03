@@ -15,6 +15,7 @@
 #include "VehicleHygrometerFactGroup.h"
 #include "VehicleLocalPositionFactGroup.h"
 #include "VehicleLocalPositionSetpointFactGroup.h"
+#include "OpticalFlowCalibrator.h"
 #include "VehicleOpticalFlowFactGroup.h"
 #include "VehicleRPMFactGroup.h"
 #include "VehicleSetpointFactGroup.h"
@@ -293,6 +294,7 @@ void Vehicle::_commonInit(LinkInterface* link)
     _objectAvoidance = new VehicleObjectAvoidance(this, this);
 
     _autotune = _firmwarePlugin->createAutotune(this);
+    _opticalFlowCalibrator = new OpticalFlowCalibrator(this);
 
     // GeoFenceManager needs to access ParameterManager so make sure to create after
     _geoFenceManager = new GeoFenceManager(this);

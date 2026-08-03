@@ -54,6 +54,7 @@ class VehicleTemperatureFactGroup;
 class VehicleVibrationFactGroup;
 class VehicleWindFactGroup;
 class Autotune;
+class OpticalFlowCalibrator;
 class ComponentInformationManager;
 class MAVLinkEventManager;
 class FirmwarePlugin;
@@ -93,6 +94,7 @@ class Vehicle : public VehicleFactGroup, public VehicleTypes
     Q_MOC_INCLUDE("AutoPilotPlugin.h")
     Q_MOC_INCLUDE("Autotune.h")
     Q_MOC_INCLUDE("GimbalController.h")
+    Q_MOC_INCLUDE("OpticalFlowCalibrator.h")
     Q_MOC_INCLUDE("LinkInterface.h")
     Q_MOC_INCLUDE("MAVLinkLogManager.h")
     Q_MOC_INCLUDE("ParameterManager.h")
@@ -230,6 +232,7 @@ public:
     Q_PROPERTY(VehicleLinkManager*      vehicleLinkManager  READ vehicleLinkManager CONSTANT)
     Q_PROPERTY(VehicleObjectAvoidance*  objectAvoidance     READ objectAvoidance    CONSTANT)
     Q_PROPERTY(Autotune*                autotune            READ autotune           CONSTANT)
+    Q_PROPERTY(OpticalFlowCalibrator*   opticalFlowCalibrator READ opticalFlowCalibrator CONSTANT)
     Q_PROPERTY(RemoteIDManager*         remoteIDManager     READ remoteIDManager    CONSTANT)
 
     // FactGroup object model properties
@@ -584,6 +587,7 @@ public:
     ComponentInformationManager*    compInfoManager     () { return _componentInformationManager; }
     VehicleObjectAvoidance*         objectAvoidance     () { return _objectAvoidance; }
     Autotune*                       autotune            () const { return _autotune; }
+    OpticalFlowCalibrator*          opticalFlowCalibrator() const { return _opticalFlowCalibrator; }
     RemoteIDManager*                remoteIDManager     () { return _remoteIDManager; }
 
     static void showCommandAckError(const mavlink_command_ack_t& ack);
@@ -976,6 +980,7 @@ private:
     ComponentInformationManager*    _componentInformationManager    = nullptr;
     VehicleObjectAvoidance*         _objectAvoidance                = nullptr;
     Autotune*                       _autotune                       = nullptr;
+    OpticalFlowCalibrator*          _opticalFlowCalibrator          = nullptr;
     GimbalController*               _gimbalController               = nullptr;
     VehicleSupports*                _vehicleSupports                = nullptr;
 
