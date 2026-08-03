@@ -183,6 +183,15 @@ Item {
         property real topEdgeCenterInset: visible ? y + height : 0
     }
 
+    NonGpsStatusPanel {
+        id:                 nonGpsStatusPanel
+        anchors.left:       toolStrip.right
+        anchors.leftMargin: _toolsMargin
+        anchors.top:        mapScale.visible ? mapScale.bottom : parent.top
+        anchors.topMargin:  _toolsMargin
+        z:                  QGroundControl.zOrderWidgets
+    }
+
     Viewer3DScaleBar {
         objectName:         "viewer3DScaleBar"
         anchors.left:       toolStrip.right

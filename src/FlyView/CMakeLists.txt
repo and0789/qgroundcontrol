@@ -49,6 +49,8 @@ qt_add_qml_module(FlyViewModule
         GuidedValueSlider.qml
         MultiRotorChecklist.qml
         MultiVehicleList.qml
+        NonGpsStatusPanel.qml
+        NonGpsStatusShowAction.qml
         ObstacleDistanceOverlay.qml
         ObstacleDistanceOverlayMap.qml
         ObstacleDistanceOverlayVideo.qml

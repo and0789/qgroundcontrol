@@ -68,6 +68,14 @@
             "label": "Show obstacle distance overlay on map and video."
         },
         {
+            "name": "showNonGpsStatusPanel",
+            "shortDesc": "Show the non-GPS status panel on the fly view map.",
+            "type": "bool",
+            "default": false,
+            "label": "Show non-GPS status panel",
+            "keywords": "non-gps,gps denied,optical flow,calibration"
+        },
+        {
             "name": "maxGoToLocationDistance",
             "shortDesc": "Maximum allowed distance for go-to-location commands from the vehicle.",
             "type": "double",
