@@ -1,0 +1,54 @@
+{
+    "version":      1,
+    "fileType":  "FactMetaData",
+    "QGC.MetaData.Facts":
+[
+{
+    "name":             "quality",
+    "shortDesc":        "Flow Quality",
+    "type":             "uint32"
+},
+{
+    "name":             "flowCompX",
+    "shortDesc":        "Flow X (comp)",
+    "type":             "double",
+    "decimalPlaces":    3,
+    "units":            "rad/s"
+},
+{
+    "name":             "flowCompY",
+    "shortDesc":        "Flow Y (comp)",
+    "type":             "double",
+    "decimalPlaces":    3,
+    "units":            "rad/s"
+},
+{
+    "name":             "flowCompMagnitude",
+    "shortDesc":        "Flow Magnitude (comp)",
+    "type":             "double",
+    "decimalPlaces":    3,
+    "units":            "rad/s"
+},
+{
+    "name":             "flowRateX",
+    "shortDesc":        "Flow Rate X",
+    "type":             "double",
+    "decimalPlaces":    3,
+    "units":            "rad/s"
+},
+{
+    "name":             "flowRateY",
+    "shortDesc":        "Flow Rate Y",
+    "type":             "double",
+    "decimalPlaces":    3,
+    "units":            "rad/s"
+},
+{
+    "name":             "groundDistance",
+    "shortDesc":        "Flow Ground Distance",
+    "type":             "double",
+    "decimalPlaces":    2,
+    "units":            "m"
+}
+]
+}

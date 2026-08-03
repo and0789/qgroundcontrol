@@ -15,6 +15,7 @@
 #include "VehicleHygrometerFactGroup.h"
 #include "VehicleLocalPositionFactGroup.h"
 #include "VehicleLocalPositionSetpointFactGroup.h"
+#include "VehicleOpticalFlowFactGroup.h"
 #include "VehicleRPMFactGroup.h"
 #include "VehicleSetpointFactGroup.h"
 #include "VehicleTemperatureFactGroup.h"
@@ -319,6 +320,7 @@ void Vehicle::_commonInit(LinkInterface* link)
     _distanceSensorFactGroup        = new VehicleDistanceSensorFactGroup(this);
     _localPositionFactGroup         = new VehicleLocalPositionFactGroup(this);
     _localPositionSetpointFactGroup = new VehicleLocalPositionSetpointFactGroup(this);
+    _opticalFlowFactGroup           = new VehicleOpticalFlowFactGroup(this);
     _estimatorStatusFactGroup       = new VehicleEstimatorStatusFactGroup(this);
     _hygrometerFactGroup            = new VehicleHygrometerFactGroup(this);
     _generatorFactGroup             = new VehicleGeneratorFactGroup(this);
@@ -353,6 +355,7 @@ void Vehicle::_commonInit(LinkInterface* link)
     _addFactGroup(_distanceSensorFactGroup,    _distanceSensorFactGroupName);
     _addFactGroup(_localPositionFactGroup,     _localPositionFactGroupName);
     _addFactGroup(_localPositionSetpointFactGroup,_localPositionSetpointFactGroupName);
+    _addFactGroup(_opticalFlowFactGroup,       _opticalFlowFactGroupName);
     _addFactGroup(_estimatorStatusFactGroup,   _estimatorStatusFactGroupName);
     _addFactGroup(_hygrometerFactGroup,        _hygrometerFactGroupName);
     _addFactGroup(_generatorFactGroup,         _generatorFactGroupName);
@@ -419,6 +422,7 @@ FactGroup* Vehicle::setpointFactGroup()             { return _setpointFactGroup;
 FactGroup* Vehicle::distanceSensorFactGroup()       { return _distanceSensorFactGroup; }
 FactGroup* Vehicle::localPositionFactGroup()        { return _localPositionFactGroup; }
 FactGroup* Vehicle::localPositionSetpointFactGroup() { return _localPositionSetpointFactGroup; }
+FactGroup* Vehicle::opticalFlowFactGroup()          { return _opticalFlowFactGroup; }
 FactGroup* Vehicle::estimatorStatusFactGroup()      { return _estimatorStatusFactGroup; }
 FactGroup* Vehicle::terrainFactGroup()              { return _terrainFactGroup; }
 FactGroup* Vehicle::hygrometerFactGroup()           { return _hygrometerFactGroup; }

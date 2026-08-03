@@ -47,6 +47,7 @@ class VehicleGPSAggregateFactGroup;
 class VehicleHygrometerFactGroup;
 class VehicleLocalPositionFactGroup;
 class VehicleLocalPositionSetpointFactGroup;
+class VehicleOpticalFlowFactGroup;
 class VehicleRPMFactGroup;
 class VehicleSetpointFactGroup;
 class VehicleTemperatureFactGroup;
@@ -247,6 +248,7 @@ public:
     Q_PROPERTY(FactGroup*           distanceSensors READ distanceSensorFactGroup    CONSTANT)
     Q_PROPERTY(FactGroup*           localPosition   READ localPositionFactGroup     CONSTANT)
     Q_PROPERTY(FactGroup*           localPositionSetpoint READ localPositionSetpointFactGroup CONSTANT)
+    Q_PROPERTY(FactGroup*           opticalFlow     READ opticalFlowFactGroup       CONSTANT)
     Q_PROPERTY(FactGroup*           hygrometer      READ hygrometerFactGroup        CONSTANT)
     Q_PROPERTY(FactGroup*           generator       READ generatorFactGroup         CONSTANT)
     Q_PROPERTY(FactGroup*           efi             READ efiFactGroup               CONSTANT)
@@ -560,6 +562,7 @@ public:
     FactGroup* distanceSensorFactGroup      ();
     FactGroup* localPositionFactGroup       ();
     FactGroup* localPositionSetpointFactGroup();
+    FactGroup* opticalFlowFactGroup         ();
     FactGroup* estimatorStatusFactGroup     ();
     FactGroup* terrainFactGroup             ();
     FactGroup* hygrometerFactGroup          ();
@@ -1085,6 +1088,7 @@ public:
     const QString _distanceSensorFactGroupName =     QStringLiteral("distanceSensor");
     const QString _localPositionFactGroupName =      QStringLiteral("localPosition");
     const QString _localPositionSetpointFactGroupName = QStringLiteral("localPositionSetpoint");
+    const QString _opticalFlowFactGroupName =        QStringLiteral("opticalFlow");
     const QString _estimatorStatusFactGroupName =    QStringLiteral("estimatorStatus");
     const QString _terrainFactGroupName =            QStringLiteral("terrain");
     const QString _hygrometerFactGroupName =         QStringLiteral("hygrometer");
@@ -1105,6 +1109,7 @@ public:
     VehicleDistanceSensorFactGroup*     _distanceSensorFactGroup    = nullptr;
     VehicleLocalPositionFactGroup*      _localPositionFactGroup     = nullptr;
     VehicleLocalPositionSetpointFactGroup* _localPositionSetpointFactGroup = nullptr;
+    VehicleOpticalFlowFactGroup*        _opticalFlowFactGroup       = nullptr;
     VehicleEstimatorStatusFactGroup*    _estimatorStatusFactGroup   = nullptr;
     VehicleHygrometerFactGroup*         _hygrometerFactGroup        = nullptr;
     VehicleGeneratorFactGroup*          _generatorFactGroup         = nullptr;
