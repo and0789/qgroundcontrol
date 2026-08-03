@@ -3,6 +3,7 @@ import QtQuick.Layouts
 
 import QGroundControl
 import QGroundControl.Controls
+import QGroundControl.FlyView
 
 /// Read-only readout of the values needed to fly without GPS and to calibrate an optical flow
 /// sensor. Those values live in several different fact groups, so watching them during a flight
@@ -29,7 +30,35 @@ Item {
     property real   _labelWidth:        ScreenTools.defaultFontPixelWidth * 12
     property real   _valueWidth:        ScreenTools.defaultFontPixelWidth * 12
 
+    // Pass criteria taken from the project's own flow calibration procedure and bench recorder,
+    // not from generic defaults
+    readonly property int  _minFlowQuality:      50
+    readonly property real _vibeWarnThreshold:   30
+    readonly property real _vibeBadThreshold:    60
+
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
+
+    NonGpsFlowHealth {
+        id:      flowHealth
+        vehicle: _root._activeVehicle
+    }
+
+    function _qualityColor(quality) {
+        if (isNaN(quality)) {
+            return qgcPal.text
+        }
+        return (quality > _minFlowQuality) ? qgcPal.colorGreen : qgcPal.colorRed
+    }
+
+    function _vibeColor(vibe) {
+        if (isNaN(vibe)) {
+            return qgcPal.text
+        }
+        if (vibe > _vibeBadThreshold) {
+            return qgcPal.colorRed
+        }
+        return (vibe > _vibeWarnThreshold) ? qgcPal.colorOrange : qgcPal.colorGreen
+    }
 
     component SectionHeader: QGCLabel {
         Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
@@ -44,6 +73,7 @@ Item {
 
         property string label
         property var    fact
+        property color  valueColor: qgcPal.text
 
         QGCLabel {
             Layout.preferredWidth:  _root._labelWidth
@@ -56,11 +86,36 @@ Item {
             Layout.preferredWidth:  _root._valueWidth
             horizontalAlignment:    Text.AlignRight
             font.pointSize:         ScreenTools.smallFontPointSize
-            color:                  qgcPal.text
+            color:                  valueRow.valueColor
             // Fact substitutes a placeholder for NaN on its own, so unpopulated telemetry reads as "--"
             text:                   valueRow.fact
                                         ? valueRow.fact.valueString + (valueRow.fact.units.length ? " " + valueRow.fact.units : "")
                                         : qsTr("n/a")
+        }
+    }
+
+    /// A row whose value is computed rather than read straight off a fact
+    component TextRow: RowLayout {
+        id:         textRow
+        spacing:    ScreenTools.defaultFontPixelWidth
+
+        property string label
+        property string value
+        property color  valueColor: qgcPal.text
+
+        QGCLabel {
+            Layout.preferredWidth:  _root._labelWidth
+            text:                   textRow.label
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.text
+        }
+
+        QGCLabel {
+            Layout.preferredWidth:  _root._valueWidth
+            horizontalAlignment:    Text.AlignRight
+            text:                   textRow.value
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  textRow.valueColor
         }
     }
 
@@ -110,37 +165,94 @@ Item {
 
         SectionHeader { text: qsTr("Optical Flow") }
 
-        ValueRow { label: qsTr("Quality");      fact: _opticalFlow ? _opticalFlow.quality : null }
-        ValueRow { label: qsTr("Flow |x,y|");   fact: _opticalFlow ? _opticalFlow.flowCompMagnitude : null }
-        ValueRow { label: qsTr("Flow X");       fact: _opticalFlow ? _opticalFlow.flowCompX : null }
-        ValueRow { label: qsTr("Flow Y");       fact: _opticalFlow ? _opticalFlow.flowCompY : null }
-        ValueRow { label: qsTr("Flow Height");  fact: _opticalFlow ? _opticalFlow.groundDistance : null }
+        ValueRow {
+            label:      qsTr("Quality")
+            fact:       _opticalFlow ? _opticalFlow.quality : null
+            valueColor: _qualityColor(_opticalFlow ? _opticalFlow.quality.rawValue : NaN)
+        }
+
+        ValueRow {
+            label:      qsTr("Flow |x,y|")
+            fact:       _opticalFlow ? _opticalFlow.flowCompMagnitude : null
+            // Red once the EKF would be discarding this reading
+            valueColor: flowHealth.rejectingNow ? qgcPal.colorRed : qgcPal.text
+        }
+
+        ValueRow { label: qsTr("Flow X");        fact: _opticalFlow ? _opticalFlow.flowCompX : null }
+        ValueRow { label: qsTr("Flow Y");        fact: _opticalFlow ? _opticalFlow.flowCompY : null }
+        ValueRow { label: qsTr("Flow Height");   fact: _opticalFlow ? _opticalFlow.groundDistance : null }
+
+        SectionHeader { text: qsTr("Flow Accepted by EKF") }
+
+        TextRow {
+            label: qsTr("EKF Limit")
+            value: flowHealth.limitKnown
+                       ? flowHealth.flowLimit.toFixed(2) + " " + qsTr("rad/s")
+                       : qsTr("n/a")
+        }
+
+        TextRow {
+            label:      qsTr("Rejected")
+            value:      flowHealth.hasSamples
+                            ? flowHealth.rejectedPercent.toFixed(0) + "% (" + flowHealth.rejectedCount + "/" + flowHealth.sampleCount + ")"
+                            : qsTr("no data")
+            valueColor: !flowHealth.hasSamples || !flowHealth.limitKnown
+                            ? qgcPal.text
+                            : (flowHealth.rejectedCount > 0 ? qgcPal.colorRed : qgcPal.colorGreen)
+        }
+
+        TextRow {
+            label: qsTr("Mean |x,y|")
+            value: flowHealth.hasSamples ? flowHealth.averageMagnitude.toFixed(3) + " " + qsTr("rad/s") : qsTr("no data")
+        }
+
+        TextRow {
+            label:      qsTr("Peak |x,y|")
+            value:      flowHealth.hasSamples ? flowHealth.peakMagnitude.toFixed(3) + " " + qsTr("rad/s") : qsTr("no data")
+            valueColor: flowHealth.limitKnown && flowHealth.hasSamples && (flowHealth.peakMagnitude > flowHealth.flowLimit)
+                            ? qgcPal.colorRed
+                            : qgcPal.text
+        }
 
         SectionHeader { text: qsTr("Rangefinder") }
 
-        ValueRow { label: qsTr("Down");         fact: _distanceSensors ? _distanceSensors.rotationPitch270 : null }
+        ValueRow { label: qsTr("Down");          fact: _distanceSensors ? _distanceSensors.rotationPitch270 : null }
 
         SectionHeader { text: qsTr("EKF") }
 
-        FlagRow  { label: qsTr("Horiz Pos");    fact: _estimatorStatus ? _estimatorStatus.goodHorizPosRelEstimate : null }
-        FlagRow  { label: qsTr("Horiz Vel");    fact: _estimatorStatus ? _estimatorStatus.goodHorizVelEstimate : null }
-        FlagRow  { label: qsTr("Const Pos");    fact: _estimatorStatus ? _estimatorStatus.goodConstPosModeEstimate : null }
-        ValueRow { label: qsTr("Vel Ratio");    fact: _estimatorStatus ? _estimatorStatus.velRatio : null }
-        ValueRow { label: qsTr("Pos Ratio");    fact: _estimatorStatus ? _estimatorStatus.horizPosRatio : null }
-        ValueRow { label: qsTr("HAGL Ratio");   fact: _estimatorStatus ? _estimatorStatus.haglRatio : null }
+        FlagRow  { label: qsTr("Horiz Pos");     fact: _estimatorStatus ? _estimatorStatus.goodHorizPosRelEstimate : null }
+        FlagRow  { label: qsTr("Horiz Vel");     fact: _estimatorStatus ? _estimatorStatus.goodHorizVelEstimate : null }
+        FlagRow  { label: qsTr("Const Pos");     fact: _estimatorStatus ? _estimatorStatus.goodConstPosModeEstimate : null }
+        ValueRow { label: qsTr("Vel Ratio");     fact: _estimatorStatus ? _estimatorStatus.velRatio : null }
+        ValueRow { label: qsTr("Pos Ratio");     fact: _estimatorStatus ? _estimatorStatus.horizPosRatio : null }
+        ValueRow { label: qsTr("HAGL Ratio");    fact: _estimatorStatus ? _estimatorStatus.haglRatio : null }
 
         SectionHeader { text: qsTr("Local Position") }
 
-        ValueRow { label: qsTr("North");        fact: _localPosition ? _localPosition.x : null }
-        ValueRow { label: qsTr("East");         fact: _localPosition ? _localPosition.y : null }
-        ValueRow { label: qsTr("Down");         fact: _localPosition ? _localPosition.z : null }
-        ValueRow { label: qsTr("Vel North");    fact: _localPosition ? _localPosition.vx : null }
-        ValueRow { label: qsTr("Vel East");     fact: _localPosition ? _localPosition.vy : null }
+        ValueRow { label: qsTr("North");         fact: _localPosition ? _localPosition.x : null }
+        ValueRow { label: qsTr("East");          fact: _localPosition ? _localPosition.y : null }
+        ValueRow { label: qsTr("Down");          fact: _localPosition ? _localPosition.z : null }
+        ValueRow { label: qsTr("Vel North");     fact: _localPosition ? _localPosition.vx : null }
+        ValueRow { label: qsTr("Vel East");      fact: _localPosition ? _localPosition.vy : null }
 
         SectionHeader { text: qsTr("Vibration") }
 
-        ValueRow { label: qsTr("Vibe X");       fact: _vibration ? _vibration.xAxis : null }
-        ValueRow { label: qsTr("Vibe Y");       fact: _vibration ? _vibration.yAxis : null }
-        ValueRow { label: qsTr("Vibe Z");       fact: _vibration ? _vibration.zAxis : null }
+        ValueRow {
+            label:      qsTr("Vibe X")
+            fact:       _vibration ? _vibration.xAxis : null
+            valueColor: _vibeColor(_vibration ? _vibration.xAxis.rawValue : NaN)
+        }
+
+        ValueRow {
+            label:      qsTr("Vibe Y")
+            fact:       _vibration ? _vibration.yAxis : null
+            valueColor: _vibeColor(_vibration ? _vibration.yAxis.rawValue : NaN)
+        }
+
+        ValueRow {
+            label:      qsTr("Vibe Z")
+            fact:       _vibration ? _vibration.zAxis : null
+            valueColor: _vibeColor(_vibration ? _vibration.zAxis.rawValue : NaN)
+        }
     }
 }

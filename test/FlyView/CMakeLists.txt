@@ -5,6 +5,8 @@
 
 target_sources(${CMAKE_PROJECT_NAME}
     PRIVATE
+        NonGpsFlowHealthTest.cc
+        NonGpsFlowHealthTest.h
         NonGpsStatusPanelTest.cc
         NonGpsStatusPanelTest.h
         ProximityRadarValuesTest.cc
@@ -13,5 +15,6 @@ target_sources(${CMAKE_PROJECT_NAME}
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_qgc_test(NonGpsFlowHealthTest LABELS Integration Vehicle)
 add_qgc_test(NonGpsStatusPanelTest LABELS Integration Vehicle)
 add_qgc_test(ProximityRadarValuesTest LABELS Integration Vehicle)
