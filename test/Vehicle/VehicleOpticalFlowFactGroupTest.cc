@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "Fact.h"
+#include "Vehicle.h"
 #include "VehicleOpticalFlowFactGroup.h"
 
 namespace {
@@ -161,4 +162,20 @@ void VehicleOpticalFlowFactGroupTest::_unrelatedMessageIgnored_test()
     QVERIFY(qIsNaN(factValue(factGroup, "flowCompX")));
 }
 
+void VehicleOpticalFlowFactGroupRegistrationTest::_listedInVehicleFactGroups_test()
+{
+    QVERIFY(vehicle());
+
+    // This is the exact list InstrumentValueData offers in the telemetry value picker
+    const QStringList factGroupNames = vehicle()->factGroupNames();
+    QVERIFY2(factGroupNames.contains(QStringLiteral("opticalFlow")),
+             qPrintable(QStringLiteral("opticalFlow missing, vehicle offers: %1").arg(factGroupNames.join(QStringLiteral(", ")))));
+
+    FactGroup *const factGroup = vehicle()->getFactGroup(QStringLiteral("opticalFlow"));
+    QVERIFY(factGroup);
+    QCOMPARE(factGroup, vehicle()->opticalFlowFactGroup());
+    QVERIFY(factGroup->factExists(QStringLiteral("flowCompMagnitude")));
+}
+
 UT_REGISTER_TEST(VehicleOpticalFlowFactGroupTest, TestLabel::Unit, TestLabel::Vehicle)
+UT_REGISTER_TEST(VehicleOpticalFlowFactGroupRegistrationTest, TestLabel::Integration, TestLabel::Vehicle)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BaseClasses/VehicleTest.h"
 #include "UnitTest.h"
 
 /// Tests OPTICAL_FLOW and OPTICAL_FLOW_RAD handling in VehicleOpticalFlowFactGroup by feeding
@@ -15,4 +16,14 @@ private slots:
     void _opticalFlowRad_test();
     void _opticalFlowRadZeroIntegrationTime_test();
     void _unrelatedMessageIgnored_test();
+};
+
+/// Tests that Vehicle actually registers the optical flow fact group, which is what makes it
+/// reachable from QML as vehicle.opticalFlow and listed in the telemetry value picker.
+class VehicleOpticalFlowFactGroupRegistrationTest : public VehicleTest
+{
+    Q_OBJECT
+
+private slots:
+    void _listedInVehicleFactGroups_test();
 };
