@@ -227,4 +227,34 @@ void OpticalFlowCalibratorTest::_noisyFitPassesWithWarnings_test()
     calibrator->cancel();
 }
 
+void OpticalFlowCalibratorTest::_nearZeroSlopeFails_test()
+{
+    QVERIFY(vehicle());
+    OpticalFlowCalibrator *const calibrator = startCalibrator(vehicle());
+
+    // A sensor reporting exactly zero flow while the vehicle rotates gives a slope of zero.
+    // Deriving a scaler divides by that slope, and qRound aborts on the resulting infinity rather
+    // than saturating, so this took the whole application down.
+    sweepBothAxes(vehicle(), 0.0);
+    calibrator->finish();
+
+    QVERIFY2(!calibrator->succeeded(), "a sensor reporting no flow must not pass");
+    QVERIFY(!calibrator->hasSuggestions());
+    QVERIFY(calibrator->resultSummary().contains(QStringLiteral("FAILED")));
+
+    calibrator->cancel();
+
+    // A slope merely tiny stays finite, so it is bounded to the parameter limit and reported with a
+    // warning rather than refused. It must not abort either.
+    startCalibrator(vehicle());
+    sweepBothAxes(vehicle(), 1e-9);
+    calibrator->finish();
+
+    QVERIFY(calibrator->hasWarnings());
+    QVERIFY2(calibrator->suggestionSummary().contains(QString::number(OpticalFlowCalibrator::kScalerMax)),
+             qPrintable(calibrator->suggestionSummary()));
+
+    calibrator->cancel();
+}
+
 UT_REGISTER_TEST(OpticalFlowCalibratorTest, TestLabel::Integration, TestLabel::Vehicle)

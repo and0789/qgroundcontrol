@@ -20,4 +20,5 @@ private slots:
     void _lowQualityAndYawDiscarded_test();
     void _noSamplesFails_test();
     void _noisyFitPassesWithWarnings_test();
+    void _nearZeroSlopeFails_test();
 };

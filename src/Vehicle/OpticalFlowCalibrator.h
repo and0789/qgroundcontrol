@@ -128,7 +128,8 @@ private:
     bool _scalerParameterValue(const QString &parameterName, double &value) const;
 
     static Fit_s _fitThroughOrigin(const QList<Sample_s> &samples, bool crossAxis);
-    static int _scalerFromSlope(double slope, double oldScaler);
+    /// @return false when the slope cannot yield a meaningful scaler
+    static bool _scalerFromSlope(double slope, double oldScaler, int &newScaler);
 
     Vehicle *_vehicle = nullptr;
     State _state = Idle;

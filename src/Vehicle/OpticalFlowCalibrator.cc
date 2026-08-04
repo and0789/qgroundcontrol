@@ -285,7 +285,16 @@ bool OpticalFlowCalibrator::_reportAxis(const QString &axisLabel, const QString 
         return false;
     }
 
-    const int newScaler = _scalerFromSlope(sameAxis.slope, oldScaler);
+    int newScaler = 0;
+    if (!_scalerFromSlope(sameAxis.slope, oldScaler, newScaler)) {
+        // A slope this small means the sensor barely reported any flow while the vehicle was
+        // clearly rotating, so there is no scale to correct, only a sensor that is not tracking.
+        lines.append(tr("FAILED: the slope is too close to zero to derive a scale from. The sensor "
+                        "reported almost no flow while the vehicle was rotating. Check the surface "
+                        "texture and lighting."));
+        return false;
+    }
+
     lines.append(tr("Flow reads %1% too %2.")
                      .arg(std::abs(1.0 - sameAxis.slope) * 100, 0, 'f', 1)
                      .arg(sameAxis.slope < 1.0 ? tr("small") : tr("large")));
@@ -341,14 +350,25 @@ OpticalFlowCalibrator::Fit_s OpticalFlowCalibrator::_fitThroughOrigin(const QLis
     return fit;
 }
 
-int OpticalFlowCalibrator::_scalerFromSlope(double slope, double oldScaler)
+bool OpticalFlowCalibrator::_scalerFromSlope(double slope, double oldScaler, int &newScaler)
 {
+    // Written as a positive test so that a NaN slope is rejected as well
+    if (!(slope > 0.0)) {
+        return false;
+    }
+
     // Firmware applies scale = 1 + 0.001 * FLOW_F?SCALER, and the samples were already recorded
     // with the old scaler applied, so the correction divides rather than adds.
     const double oldScale = 1.0 + (0.001 * oldScaler);
-    const double newScale = oldScale / slope;
-    const int value = qRound(1000.0 * (newScale - 1.0));
-    return qBound(kScalerMin, value, kScalerMax);
+    const double rawScaler = 1000.0 * ((oldScale / slope) - 1.0);
+    if (!std::isfinite(rawScaler)) {
+        return false;
+    }
+
+    // Bounded as a double before rounding. A slope near zero puts this value far outside the range
+    // of int, and qRound aborts on that rather than saturating, so bounding afterwards is too late.
+    newScaler = qRound(qBound(static_cast<double>(kScalerMin), rawScaler, static_cast<double>(kScalerMax)));
+    return true;
 }
 
 bool OpticalFlowCalibrator::_scalerParameterValue(const QString &parameterName, double &value) const
