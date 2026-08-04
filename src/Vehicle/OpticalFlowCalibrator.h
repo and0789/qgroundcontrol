@@ -38,6 +38,7 @@ class OpticalFlowCalibrator : public QObject
     Q_PROPERTY(bool enoughSamples READ enoughSamples NOTIFY progressChanged)
     Q_PROPERTY(bool succeeded READ succeeded NOTIFY resultChanged)
     Q_PROPERTY(bool hasWarnings READ hasWarnings NOTIFY resultChanged)
+    Q_PROPERTY(bool flowRateRaised READ flowRateRaised NOTIFY stateChanged)
     Q_PROPERTY(QString resultSummary READ resultSummary NOTIFY resultChanged)
     Q_PROPERTY(bool hasSuggestions READ hasSuggestions NOTIFY resultChanged)
     Q_PROPERTY(QString suggestionSummary READ suggestionSummary NOTIFY resultChanged)
@@ -70,6 +71,10 @@ public:
     static constexpr double kAccurateTolerance = 0.02;
     static constexpr int kScalerMin = -800;
     static constexpr int kScalerMax = 800;
+    /// Rate asked of the vehicle while collecting. The default OPTICAL_FLOW stream rate can be a
+    /// message every few seconds, which turns a hundred samples per axis into several minutes of
+    /// swinging. The rate is handed back when the run ends.
+    static constexpr int kCalibrationFlowRateHz = 25;
 
     Q_INVOKABLE void start();
     Q_INVOKABLE void cancel();
@@ -92,6 +97,7 @@ public:
     bool succeeded() const { return _succeeded; }
     /// A pass that still carries warnings is not a result to write to the vehicle unchecked
     bool hasWarnings() const { return _warningCount > 0; }
+    bool flowRateRaised() const { return _flowRateRaised; }
     QString resultSummary() const { return _resultSummary; }
     bool hasSuggestions() const { return _suggestedFxValid || _suggestedFyValid; }
     QString suggestionSummary() const { return _suggestionSummary; }
@@ -120,6 +126,8 @@ private:
     };
 
     void _handleOpticalFlow(const mavlink_message_t &message);
+    /// @param rateHz the rate to ask for, or 0 to hand the stream back to the vehicle's own rate
+    void _setFlowMessageRate(int rateHz);
     void _reset();
     void _updateInstruction();
     /// @return true if a suggested scaler was produced for this axis
@@ -143,6 +151,7 @@ private:
     int _rejectedQualityCount = 0;
     int _rejectedYawCount = 0;
     int _warningCount = 0;
+    bool _flowRateRaised = false;
     int _currentQuality = 0;
     double _yawRate = 0.0;
 

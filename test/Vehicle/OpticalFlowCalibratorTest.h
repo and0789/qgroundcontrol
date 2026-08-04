@@ -21,4 +21,5 @@ private slots:
     void _noSamplesFails_test();
     void _noisyFitPassesWithWarnings_test();
     void _nearZeroSlopeFails_test();
+    void _flowRateHandedBackWhenRunEnds_test();
 };

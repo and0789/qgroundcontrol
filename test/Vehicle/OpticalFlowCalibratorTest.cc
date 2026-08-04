@@ -257,4 +257,26 @@ void OpticalFlowCalibratorTest::_nearZeroSlopeFails_test()
     calibrator->cancel();
 }
 
+void OpticalFlowCalibratorTest::_flowRateHandedBackWhenRunEnds_test()
+{
+    QVERIFY(vehicle());
+    OpticalFlowCalibrator *const calibrator = vehicle()->opticalFlowCalibrator();
+
+    QVERIFY2(!calibrator->flowRateRaised(), "the rate must not be held before a run starts");
+
+    // Leaving a telemetry radio streaming at the calibration rate would starve everything else on
+    // the link, so both ways out of a run have to hand it back.
+    calibrator->start();
+    QVERIFY(calibrator->flowRateRaised());
+    calibrator->cancel();
+    QVERIFY2(!calibrator->flowRateRaised(), "cancel must hand the rate back");
+
+    calibrator->start();
+    QVERIFY(calibrator->flowRateRaised());
+    calibrator->finish();
+    QVERIFY2(!calibrator->flowRateRaised(), "finish must hand the rate back");
+
+    calibrator->cancel();
+}
+
 UT_REGISTER_TEST(OpticalFlowCalibratorTest, TestLabel::Integration, TestLabel::Vehicle)

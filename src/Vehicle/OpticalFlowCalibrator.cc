@@ -37,6 +37,7 @@ void OpticalFlowCalibrator::start()
     _state = CollectingRoll;
     (void) connect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &OpticalFlowCalibrator::_mavlinkMessageReceived,
                    Qt::UniqueConnection);
+    _setFlowMessageRate(kCalibrationFlowRateHz);
 
     _updateInstruction();
     emit stateChanged();
@@ -49,12 +50,29 @@ void OpticalFlowCalibrator::cancel()
         (void) disconnect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &OpticalFlowCalibrator::_mavlinkMessageReceived);
     }
 
+    _setFlowMessageRate(0);
     _reset();
     _state = Idle;
 
     _updateInstruction();
     emit stateChanged();
     emit resultChanged();
+}
+
+void OpticalFlowCalibrator::_setFlowMessageRate(int rateHz)
+{
+    if (!_vehicle) {
+        return;
+    }
+
+    // Nothing to hand back if the rate was never taken, and asking anyway would put a command on a
+    // link that may be the vehicle's only one
+    if ((rateHz == 0) && !_flowRateRaised) {
+        return;
+    }
+
+    _vehicle->setMessageRate(static_cast<uint8_t>(_vehicle->defaultComponentId()), MAVLINK_MSG_ID_OPTICAL_FLOW, rateHz);
+    _flowRateRaised = (rateHz > 0);
 }
 
 void OpticalFlowCalibrator::_reset()
@@ -165,6 +183,8 @@ void OpticalFlowCalibrator::finish()
     if (_vehicle) {
         (void) disconnect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &OpticalFlowCalibrator::_mavlinkMessageReceived);
     }
+
+    _setFlowMessageRate(0);
 
     _state = Finished;
     _suggestedFxValid = false;
