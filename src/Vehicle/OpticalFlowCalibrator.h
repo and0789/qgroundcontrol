@@ -37,6 +37,7 @@ class OpticalFlowCalibrator : public QObject
     Q_PROPERTY(int currentQuality READ currentQuality NOTIFY progressChanged)
     Q_PROPERTY(bool enoughSamples READ enoughSamples NOTIFY progressChanged)
     Q_PROPERTY(bool succeeded READ succeeded NOTIFY resultChanged)
+    Q_PROPERTY(bool hasWarnings READ hasWarnings NOTIFY resultChanged)
     Q_PROPERTY(QString resultSummary READ resultSummary NOTIFY resultChanged)
     Q_PROPERTY(bool hasSuggestions READ hasSuggestions NOTIFY resultChanged)
     Q_PROPERTY(QString suggestionSummary READ suggestionSummary NOTIFY resultChanged)
@@ -89,6 +90,8 @@ public:
     int currentQuality() const { return _currentQuality; }
     bool enoughSamples() const;
     bool succeeded() const { return _succeeded; }
+    /// A pass that still carries warnings is not a result to write to the vehicle unchecked
+    bool hasWarnings() const { return _warningCount > 0; }
     QString resultSummary() const { return _resultSummary; }
     bool hasSuggestions() const { return _suggestedFxValid || _suggestedFyValid; }
     QString suggestionSummary() const { return _suggestionSummary; }
@@ -138,6 +141,7 @@ private:
     QList<Sample_s> _pitchSamples;
     int _rejectedQualityCount = 0;
     int _rejectedYawCount = 0;
+    int _warningCount = 0;
     int _currentQuality = 0;
     double _yawRate = 0.0;
 

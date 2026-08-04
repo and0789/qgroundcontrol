@@ -192,4 +192,39 @@ void OpticalFlowCalibratorTest::_noSamplesFails_test()
     calibrator->cancel();
 }
 
+void OpticalFlowCalibratorTest::_noisyFitPassesWithWarnings_test()
+{
+    QVERIFY(vehicle());
+    OpticalFlowCalibrator *const calibrator = startCalibrator(vehicle());
+
+    // A clean sweep first, to show the same shape without warnings
+    sweepBothAxes(vehicle(), 0.90);
+    calibrator->finish();
+    QVERIFY(calibrator->succeeded());
+    QVERIFY2(!calibrator->hasWarnings(), qPrintable(calibrator->resultSummary()));
+    QVERIFY(calibrator->resultSummary().contains(QStringLiteral("PASSED")));
+    QVERIFY(!calibrator->resultSummary().contains(QStringLiteral("WARNINGS")));
+
+    // Now flow that barely tracks the body rate. This is what translating instead of rotating in
+    // place looks like, and it must not be reported the same way as a clean pass.
+    calibrator->cancel();
+    startCalibrator(vehicle());
+    for (int i = 0; i < kSampleCount; i++) {
+        const double bodyRate = 0.2 + (0.01 * (i % 20));
+        const double noise = ((i % 2) == 0) ? 0.5 : -0.5;
+        sendFlow(vehicle(), bodyRate, bodyRate + noise, 0.0, 0.0, kGoodQuality);
+    }
+    for (int i = 0; i < kSampleCount; i++) {
+        const double bodyRate = 0.2 + (0.01 * (i % 20));
+        const double noise = ((i % 2) == 0) ? 0.5 : -0.5;
+        sendFlow(vehicle(), 0.0, 0.0, bodyRate, bodyRate + noise, kGoodQuality);
+    }
+    calibrator->finish();
+
+    QVERIFY2(calibrator->hasWarnings(), qPrintable(calibrator->resultSummary()));
+    QVERIFY(calibrator->resultSummary().contains(QStringLiteral("PASSED WITH WARNINGS")));
+
+    calibrator->cancel();
+}
+
 UT_REGISTER_TEST(OpticalFlowCalibratorTest, TestLabel::Integration, TestLabel::Vehicle)

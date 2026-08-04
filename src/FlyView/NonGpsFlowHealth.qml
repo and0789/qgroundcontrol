@@ -43,7 +43,7 @@ QtObject {
     property var    _opticalFlow:       vehicle ? vehicle.opticalFlow : null
     property var    _magnitudeFact:     _opticalFlow ? _opticalFlow.flowCompMagnitude : null
     property bool   _parametersReady:   vehicle ? vehicle.parameterManager.parametersReady : false
-    property var    _limitFact:         (_parametersReady && _controller.parameterExists(-1, limitParameterName))
+    property var    _limitFact:         (_controller && _parametersReady && _controller.parameterExists(-1, limitParameterName))
                                             ? _controller.getParameterFact(-1, limitParameterName)
                                             : null
 
@@ -53,7 +53,14 @@ QtObject {
     property real   _sum:               0
     property real   _peak:              NaN
 
-    property FactPanelController _controller: FactPanelController { }
+    // FactPanelController binds its vehicle in its constructor and never rebinds. This object is
+    // created with the fly view, before any vehicle connects, so a single instance would hold the
+    // offline editing vehicle forever and never find a parameter. Rebuild it when the vehicle changes.
+    property Component _controllerComponent: Component { FactPanelController { } }
+    property var _controller: null
+
+    onVehicleChanged:       _rebuildController()
+    Component.onCompleted:  _rebuildController()
 
     /// Drops samples that aged out even while no new ones arrive, so a stopped flow decays to
     /// "no data" instead of freezing on the last verdict
@@ -72,6 +79,16 @@ QtObject {
     function reset() {
         _samples = []
         _recalculate()
+    }
+
+    function _rebuildController() {
+        if (_controller) {
+            _controller.destroy()
+            _controller = null
+        }
+        if (vehicle) {
+            _controller = _controllerComponent.createObject(_root)
+        }
     }
 
     function _addSample(magnitude) {

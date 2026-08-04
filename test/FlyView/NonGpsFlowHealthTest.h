@@ -20,4 +20,5 @@ private slots:
     void _countsRejectedAboveLimit_test();
     void _missingLimitParameterGivesNoVerdict_test();
     void _samplesAgeOutOfWindow_test();
+    void _limitFoundWhenVehicleArrivesLater_test();
 };

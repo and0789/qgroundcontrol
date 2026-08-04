@@ -63,6 +63,7 @@ void OpticalFlowCalibrator::_reset()
     _pitchSamples.clear();
     _rejectedQualityCount = 0;
     _rejectedYawCount = 0;
+    _warningCount = 0;
     _currentQuality = 0;
     _yawRate = 0.0;
     _succeeded = false;
@@ -168,6 +169,7 @@ void OpticalFlowCalibrator::finish()
     _state = Finished;
     _suggestedFxValid = false;
     _suggestedFyValid = false;
+    _warningCount = 0;
 
     QStringList lines;
     lines.append(tr("Samples used: %1 roll, %2 pitch").arg(_rollSamples.count()).arg(_pitchSamples.count()));
@@ -188,7 +190,11 @@ void OpticalFlowCalibrator::finish()
         }
     }
 
-    if (_succeeded) {
+    if (_succeeded && hasWarnings()) {
+        // A pass carrying warnings usually means the fit described the hand movement as much as the
+        // sensor, so it is reported apart from a clean pass rather than buried under it
+        lines.prepend(tr("RESULT: PASSED WITH WARNINGS — read the warnings below before writing anything."));
+    } else if (_succeeded) {
         lines.prepend(hasSuggestions() ? tr("RESULT: PASSED — new scaler values suggested below.")
                                        : tr("RESULT: PASSED — flow scale is already accurate, nothing to change."));
     } else {
@@ -235,25 +241,35 @@ bool OpticalFlowCalibrator::_reportAxis(const QString &axisLabel, const QString 
     if (crossAxis.valid) {
         lines.append(tr("Cross axis slope: %1 (should be near 0)").arg(crossAxis.slope, 0, 'f', 4));
         if (std::abs(crossAxis.slope) > std::abs(sameAxis.slope)) {
+            // FLOW_ORIENT_YAW is in centi-degrees, so the value to enter is 100x the angle. Naming
+            // the number outright avoids entering 90 and rotating by less than a degree.
             lines.append(tr("FAILED: the cross axis responds more than the axis itself, so the sensor is "
-                            "mounted rotated by 90°. Fix FLOW_ORIENT_YAW and record again."));
+                            "mounted rotated by 90°. Set FLOW_ORIENT_YAW to 9000 or -9000 (the parameter "
+                            "is in centi-degrees, so 90 would mean 0.9°), then record again."));
             return false;
         }
     }
 
     if (sameAxis.slope < 0) {
         lines.append(tr("FAILED: negative slope means flow opposes the gyro, so the sensor is mounted "
-                        "rotated by 180°. Fix FLOW_ORIENT_YAW and record again."));
+                        "rotated by 180°. Set FLOW_ORIENT_YAW to 18000 (the parameter is in "
+                        "centi-degrees, so 180 would mean 1.8°), then record again."));
         return false;
     }
 
     if (sameAxis.r2 < kMinR2) {
+        // Translation adds flow the gyro never saw, which pushes the slope above 1. A slope above 1
+        // paired with a poor fit is therefore as likely to be the operator's hand as the sensor.
         lines.append(tr("Warning: noisy data (R² below %1). The vehicle was probably translating rather "
-                        "than rotating in place, or the surface lacks texture.").arg(kMinR2, 0, 'f', 2));
+                        "than rotating in place, or the surface lacks texture. Hold it higher and turn it "
+                        "around the sensor, then record again before writing anything.")
+                         .arg(kMinR2, 0, 'f', 2));
+        _warningCount++;
     }
     if (sameAxis.count < kMinSamplesPerAxis) {
         lines.append(tr("Warning: few samples (%1 below %2). Use more rotation swings.")
                          .arg(sameAxis.count).arg(kMinSamplesPerAxis));
+        _warningCount++;
     }
 
     double oldScaler = 0;
@@ -278,6 +294,7 @@ bool OpticalFlowCalibrator::_reportAxis(const QString &axisLabel, const QString 
     if (std::abs(newScaler) >= kScalerMax) {
         lines.append(tr("Warning: the suggestion hit the %1 limit. A correction this large points at "
                         "FLOW_POS_* or the holding height rather than at sensor scale.").arg(kScalerMax));
+        _warningCount++;
     }
 
     suggestedScaler = newScaler;

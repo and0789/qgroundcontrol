@@ -195,4 +195,36 @@ void NonGpsFlowHealthTest::_samplesAgeOutOfWindow_test()
     QVERIFY(qIsNaN(flowHealth->property("rejectedPercent").toDouble()));
 }
 
+void NonGpsFlowHealthTest::_limitFoundWhenVehicleArrivesLater_test()
+{
+    QVERIFY(vehicle());
+
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/qml"));
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        NonGpsFlowHealth {}
+    )", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+
+    // Created with no vehicle, the way the fly view creates it at startup
+    const QScopedPointer<QObject> flowHealth(component.createWithInitialProperties({
+        { QStringLiteral("limitParameterName"), QString::fromLatin1(kLimitParameterName) },
+    }));
+    QVERIFY(flowHealth);
+    QVERIFY2(!flowHealth->property("limitKnown").toBool(), "no vehicle means no limit");
+
+    // The vehicle arriving afterwards must still produce a limit. FactPanelController binds its
+    // vehicle at construction, so a controller built before this point would be stuck on the
+    // offline editing vehicle and never find the parameter.
+    flowHealth->setProperty("vehicle", QVariant::fromValue(vehicle()));
+
+    QVERIFY2(flowHealth->property("limitKnown").toBool(),
+             "limit parameter should resolve once the vehicle connects");
+    QVERIFY(flowHealth->property("flowLimit").toDouble() > 0);
+}
+
 UT_REGISTER_TEST(NonGpsFlowHealthTest, TestLabel::Integration, TestLabel::Vehicle)

@@ -19,4 +19,5 @@ private slots:
     void _crossAxisDominanceFails_test();
     void _lowQualityAndYawDiscarded_test();
     void _noSamplesFails_test();
+    void _noisyFitPassesWithWarnings_test();
 };

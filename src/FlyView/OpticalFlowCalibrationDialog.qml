@@ -141,13 +141,19 @@ QGCPopupDialog {
             spacing:                ScreenTools.defaultFontPixelHeight / 2
             visible:                _calibrator && _calibrator.finished
 
+            // A pass carrying warnings gets its own colour. Green over a fit that mostly described
+            // the operator's hand movement is what invites writing a bad scaler to the vehicle.
             QGCLabel {
                 Layout.fillWidth:   true
                 wrapMode:           Text.WordWrap
                 font.bold:          true
                 font.pointSize:     ScreenTools.mediumFontPointSize
-                color:              (_calibrator && _calibrator.succeeded) ? qgcPal.colorGreen : qgcPal.colorRed
-                text:               (_calibrator && _calibrator.succeeded) ? qsTr("PASSED") : qsTr("FAILED")
+                color:              !_calibrator || !_calibrator.succeeded
+                                        ? qgcPal.colorRed
+                                        : (_calibrator.hasWarnings ? qgcPal.colorOrange : qgcPal.colorGreen)
+                text:               !_calibrator || !_calibrator.succeeded
+                                        ? qsTr("FAILED")
+                                        : (_calibrator.hasWarnings ? qsTr("PASSED WITH WARNINGS") : qsTr("PASSED"))
             }
 
             QGCFlickable {
@@ -175,12 +181,23 @@ QGCPopupDialog {
                                          "afterwards: the slope should then come out near 1.00.")
             }
 
+            QGCLabel {
+                Layout.fillWidth:   true
+                wrapMode:           Text.WordWrap
+                color:              qgcPal.colorOrange
+                visible:            _calibrator && _calibrator.hasSuggestions && _calibrator.hasWarnings
+                text:               qsTr("This run produced warnings, so these numbers may describe how the " +
+                                         "vehicle was moved rather than the sensor. Fix the cause and record " +
+                                         "again before writing.")
+            }
+
             RowLayout {
                 visible: _calibrator && _calibrator.hasSuggestions
 
                 QGCButton {
                     text:       qsTr("Write to Vehicle")
-                    primary:    true
+                    // Deliberately not the primary action when the run is questionable
+                    primary:    _calibrator && !_calibrator.hasWarnings
                     onClicked:  _calibrator.applySuggestions()
                 }
             }
