@@ -130,6 +130,12 @@ Item {
         /// identical to one reporting a real failure. Without this the panel reports a broken EKF
         /// when the truth is that EKF_STATUS_REPORT is not being streamed on this link at all.
         property bool   received: _root._estimatorStatus ? _root._estimatorStatus.telemetryAvailable : false
+        /// Constant position mode is the estimator giving up and assuming the vehicle is still, so
+        /// the flag being set is the failure. QGC names that fact "good..." like the others, and
+        /// colouring it the same way paints the one healthy answer red.
+        property bool   healthyWhenSet: true
+
+        readonly property bool _healthy: flagRow.fact && (flagRow.fact.rawValue === flagRow.healthyWhenSet)
 
         QGCLabel {
             Layout.preferredWidth:  _root._labelWidth
@@ -142,12 +148,14 @@ Item {
             Layout.preferredWidth:  _root._valueWidth
             horizontalAlignment:    Text.AlignRight
             font.pointSize:         ScreenTools.smallFontPointSize
+            // Always reads as "is this healthy", so no row needs the reader to remember which flag
+            // is inverted
             text:                   (!flagRow.fact || !flagRow.received)
                                         ? qsTr("no data")
-                                        : (flagRow.fact.rawValue ? qsTr("OK") : qsTr("NO"))
+                                        : (flagRow._healthy ? qsTr("OK") : qsTr("NO"))
             color:                  (!flagRow.fact || !flagRow.received)
                                         ? qgcPal.text
-                                        : (flagRow.fact.rawValue ? qgcPal.colorGreen : qgcPal.colorRed)
+                                        : (flagRow._healthy ? qgcPal.colorGreen : qgcPal.colorRed)
         }
     }
 
@@ -228,7 +236,12 @@ Item {
 
         FlagRow  { label: qsTr("Horiz Pos");     fact: _estimatorStatus ? _estimatorStatus.goodHorizPosRelEstimate : null }
         FlagRow  { label: qsTr("Horiz Vel");     fact: _estimatorStatus ? _estimatorStatus.goodHorizVelEstimate : null }
-        FlagRow  { label: qsTr("Const Pos");     fact: _estimatorStatus ? _estimatorStatus.goodConstPosModeEstimate : null }
+        FlagRow {
+            label:          qsTr("Aiding")
+            fact:           _estimatorStatus ? _estimatorStatus.goodConstPosModeEstimate : null
+            // Set means the estimator fell back to assuming the vehicle is stationary
+            healthyWhenSet: false
+        }
         ValueRow { label: qsTr("Vel Ratio");     fact: _estimatorStatus ? _estimatorStatus.velRatio : null }
         ValueRow { label: qsTr("Pos Ratio");     fact: _estimatorStatus ? _estimatorStatus.horizPosRatio : null }
         ValueRow { label: qsTr("HAGL Ratio");    fact: _estimatorStatus ? _estimatorStatus.haglRatio : null }
