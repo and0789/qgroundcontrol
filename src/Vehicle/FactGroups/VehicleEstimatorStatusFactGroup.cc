@@ -30,10 +30,25 @@ void VehicleEstimatorStatusFactGroup::handleMessage(Vehicle *vehicle, const mavl
 {
     Q_UNUSED(vehicle);
 
-    if (message.msgid != MAVLINK_MSG_ID_ESTIMATOR_STATUS) {
+    // ArduPilot never sends ESTIMATOR_STATUS. It reports the same estimator state through
+    // EKF_STATUS_REPORT from its own dialect, so listening only for the common message left this
+    // whole group empty on every ArduPilot vehicle.
+    switch (message.msgid) {
+    case MAVLINK_MSG_ID_ESTIMATOR_STATUS:
+        _handleEstimatorStatus(message);
+        break;
+    case MAVLINK_MSG_ID_EKF_STATUS_REPORT:
+        _handleEkfStatusReport(message);
+        break;
+    default:
         return;
     }
 
+    _setTelemetryAvailable(true);
+}
+
+void VehicleEstimatorStatusFactGroup::_handleEstimatorStatus(const mavlink_message_t &message)
+{
     mavlink_estimator_status_t estimatorStatus{};
     mavlink_msg_estimator_status_decode(&message, &estimatorStatus);
 
@@ -57,6 +72,36 @@ void VehicleEstimatorStatusFactGroup::handleMessage(Vehicle *vehicle, const mavl
     tasRatio()->setRawValue(estimatorStatus.tas_ratio);
     horizPosAccuracy()->setRawValue(estimatorStatus.pos_horiz_accuracy);
     vertPosAccuracy()->setRawValue(estimatorStatus.pos_vert_accuracy);
+}
 
-    _setTelemetryAvailable(true);
+void VehicleEstimatorStatusFactGroup::_handleEkfStatusReport(const mavlink_message_t &message)
+{
+    mavlink_ekf_status_report_t ekfStatus{};
+    mavlink_msg_ekf_status_report_decode(&message, &ekfStatus);
+
+    // EKF_STATUS_FLAGS uses the same bit positions as ESTIMATOR_STATUS_FLAGS for everything below,
+    // so the health flags carry over unchanged.
+    goodAttitudeEstimate()->setRawValue(!!(ekfStatus.flags & EKF_ATTITUDE));
+    goodHorizVelEstimate()->setRawValue(!!(ekfStatus.flags & EKF_VELOCITY_HORIZ));
+    goodVertVelEstimate()->setRawValue(!!(ekfStatus.flags & EKF_VELOCITY_VERT));
+    goodHorizPosRelEstimate()->setRawValue(!!(ekfStatus.flags & EKF_POS_HORIZ_REL));
+    goodHorizPosAbsEstimate()->setRawValue(!!(ekfStatus.flags & EKF_POS_HORIZ_ABS));
+    goodVertPosAbsEstimate()->setRawValue(!!(ekfStatus.flags & EKF_POS_VERT_ABS));
+    goodVertPosAGLEstimate()->setRawValue(!!(ekfStatus.flags & EKF_POS_VERT_AGL));
+    goodConstPosModeEstimate()->setRawValue(!!(ekfStatus.flags & EKF_CONST_POS_MODE));
+    goodPredHorizPosRelEstimate()->setRawValue(!!(ekfStatus.flags & EKF_PRED_POS_HORIZ_REL));
+    goodPredHorizPosAbsEstimate()->setRawValue(!!(ekfStatus.flags & EKF_PRED_POS_HORIZ_ABS));
+    gpsGlitch()->setRawValue(!!(ekfStatus.flags & EKF_GPS_GLITCHING));
+
+    // The fields are named "variance" but carry the same normalised innovation test ratios that
+    // ESTIMATOR_STATUS calls ratios, on the same scale, so they fill the same facts.
+    velRatio()->setRawValue(ekfStatus.velocity_variance);
+    horizPosRatio()->setRawValue(ekfStatus.pos_horiz_variance);
+    vertPosRatio()->setRawValue(ekfStatus.pos_vert_variance);
+    magRatio()->setRawValue(ekfStatus.compass_variance);
+    haglRatio()->setRawValue(ekfStatus.terrain_alt_variance);
+    tasRatio()->setRawValue(ekfStatus.airspeed_variance);
+
+    // EKF_STATUS_REPORT carries no position accuracy, so those facts are deliberately left alone
+    // rather than filled with a stand-in that would read as a measurement.
 }

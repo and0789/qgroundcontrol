@@ -173,6 +173,27 @@ QGCPopupDialog {
                 }
             }
 
+            // The suggested values are the one actionable output of the whole run, so they sit
+            // outside the scrolling report. Inside it they land below the fold, where a reader who
+            // does not think to scroll sees a result with no numbers attached to it.
+            Rectangle {
+                Layout.fillWidth:       true
+                Layout.preferredHeight: suggestionLabel.contentHeight + ScreenTools.defaultFontPixelHeight
+                visible:                _calibrator && _calibrator.hasSuggestions
+                color:                  qgcPal.windowShade
+                radius:                 ScreenTools.defaultFontPixelHeight / 4
+
+                QGCLabel {
+                    id:                 suggestionLabel
+                    anchors.centerIn:   parent
+                    width:              parent.width - ScreenTools.defaultFontPixelWidth * 2
+                    wrapMode:           Text.WordWrap
+                    font.family:        ScreenTools.fixedFontFamily
+                    font.bold:          true
+                    text:               _calibrator ? _calibrator.suggestionSummary : ""
+                }
+            }
+
             QGCLabel {
                 Layout.fillWidth:   true
                 wrapMode:           Text.WordWrap

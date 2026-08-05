@@ -126,6 +126,10 @@ Item {
 
         property string label
         property var    fact
+        /// These facts default to false, so a group that has never received telemetry looks
+        /// identical to one reporting a real failure. Without this the panel reports a broken EKF
+        /// when the truth is that EKF_STATUS_REPORT is not being streamed on this link at all.
+        property bool   received: _root._estimatorStatus ? _root._estimatorStatus.telemetryAvailable : false
 
         QGCLabel {
             Layout.preferredWidth:  _root._labelWidth
@@ -138,10 +142,12 @@ Item {
             Layout.preferredWidth:  _root._valueWidth
             horizontalAlignment:    Text.AlignRight
             font.pointSize:         ScreenTools.smallFontPointSize
-            text:                   flagRow.fact ? (flagRow.fact.rawValue ? qsTr("OK") : qsTr("NO")) : qsTr("n/a")
-            color:                  flagRow.fact
-                                        ? (flagRow.fact.rawValue ? qgcPal.colorGreen : qgcPal.colorRed)
-                                        : qgcPal.text
+            text:                   (!flagRow.fact || !flagRow.received)
+                                        ? qsTr("no data")
+                                        : (flagRow.fact.rawValue ? qsTr("OK") : qsTr("NO"))
+            color:                  (!flagRow.fact || !flagRow.received)
+                                        ? qgcPal.text
+                                        : (flagRow.fact.rawValue ? qgcPal.colorGreen : qgcPal.colorRed)
         }
     }
 
