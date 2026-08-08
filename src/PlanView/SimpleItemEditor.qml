@@ -47,6 +47,53 @@ Rectangle {
     property real _bearingFromHome:  _azimuthFromHome
     property real _displayDistance:  QGroundControl.unitsConversion.metersToAppSettingsHorizontalDistanceUnits(_distanceFromHome)
 
+    /// The coordinate this waypoint's leg starts from: the nearest earlier item that has one, or
+    /// the planned home for the first. Index 0 is the mission settings item, which is home anyway.
+    function _findPreviousCoordinate() {
+        var items = missionItem.masterController.missionController.visualItems
+        if (!items) {
+            return _plannedHome
+        }
+        var myIndex = -1
+        for (var i = 0; i < items.count; i++) {
+            if (items.get(i) === missionItem) {
+                myIndex = i
+                break
+            }
+        }
+        for (var j = myIndex - 1; j > 0; j--) {
+            var earlier = items.get(j)
+            if (earlier.specifiesCoordinate && earlier.coordinate.isValid) {
+                return earlier.coordinate
+            }
+        }
+        return _plannedHome
+    }
+
+    // Reading missionItem.distance here is deliberate, not a stray statement: it is the controller's
+    // own distance-to-previous, recomputed whenever any item in the plan moves. Touching it makes
+    // this binding depend on it, so the leg figures refresh when an earlier waypoint is dragged --
+    // something a plain function call would never notice.
+    property var  _previousCoord: {
+        missionItem.distance
+        missionItem.coordinate
+        return _findPreviousCoordinate()
+    }
+    property bool _prevValid:        _previousCoord && _previousCoord.isValid && missionItem.coordinate.isValid
+    property real _bearingFromPrev:  _prevValid ? _previousCoord.azimuthTo(missionItem.coordinate) : 0
+    property real _legDistance:      _prevValid ? _previousCoord.distanceTo(missionItem.coordinate) : 0
+    property real _displayLegDistance: QGroundControl.unitsConversion.metersToAppSettingsHorizontalDistanceUnits(_legDistance)
+
+    /// Moves the item so its leg from the previous waypoint has the given bearing and length.
+    function _applyLeg(bearingText, distanceText) {
+        var bearing  = parseFloat(bearingText)
+        var distance = QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsToMeters(parseFloat(distanceText))
+        if (!_prevValid || isNaN(bearing) || isNaN(distance) || distance < 0) {
+            return
+        }
+        missionItem.coordinate = _previousCoord.atDistanceAndAzimuth(distance, bearing)
+    }
+
     /// Moves the item to a bearing and distance from the planned home. Same destination as the
     /// north/east pair above and the same guards; only the way of saying it differs.
     function _applyPolar(bearingText, distanceText) {
@@ -246,6 +293,44 @@ Rectangle {
                         unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
                         text: root._displayDistance.toFixed(1)
                         onEditingFinished: root._applyPolar(bearingField.text, distanceField.text)
+                    }
+                }
+            }
+
+            // The leg that reaches this waypoint, rather than its place in the plan. A route without
+            // a map is built one leg at a time -- "from there, ninety degrees for twenty metres" --
+            // and each leg is what the vehicle actually flies. Bearings stay measured from north, so
+            // they can be read straight off a compass; only the point they start from differs.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: _fieldSpacing
+                visible: tabBar.showBasicItems && missionItem.specifiesCoordinate && root._prevValid
+
+                QGCLabel {
+                    text: qsTr("Leg From Previous")
+                    Layout.fillWidth: true
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: _fieldSpacing
+
+                    QGCLabel { text: qsTr("Bearing") }
+                    QGCTextField {
+                        id: legBearingField
+                        Layout.fillWidth: true
+                        unitsLabel: qsTr("deg")
+                        text: root._bearingFromPrev.toFixed(1)
+                        onEditingFinished: root._applyLeg(legBearingField.text, legDistanceField.text)
+                    }
+
+                    QGCLabel { text: qsTr("Distance") }
+                    QGCTextField {
+                        id: legDistanceField
+                        Layout.fillWidth: true
+                        unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                        text: root._displayLegDistance.toFixed(1)
+                        onEditingFinished: root._applyLeg(legBearingField.text, legDistanceField.text)
                     }
                 }
             }
