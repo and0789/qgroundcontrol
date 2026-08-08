@@ -25,6 +25,8 @@ Item {
     property var    _distanceSensors:   _activeVehicle ? _activeVehicle.distanceSensors : null
     property var    _vibration:         _activeVehicle ? _activeVehicle.vibration : null
     property var    _localPosition:     _activeVehicle ? _activeVehicle.localPosition : null
+    property var    _estimatorOrigin:   _activeVehicle ? _activeVehicle.estimatorOrigin : null
+    property bool   _originIsSet:       _estimatorOrigin ? _estimatorOrigin.isValid : false
 
     property real   _margins:           ScreenTools.defaultFontPixelHeight / 2
     property real   _labelWidth:        ScreenTools.defaultFontPixelWidth * 12
@@ -176,6 +178,34 @@ Item {
         anchors.left:       parent.left
         anchors.top:        parent.top
         spacing:            0
+
+        SectionHeader { text: qsTr("Estimator Origin") }
+
+        TextRow {
+            label:      qsTr("Status")
+            value:      _root._originIsSet ? qsTr("Set") : qsTr("NOT SET")
+            valueColor: _root._originIsSet ? qgcPal.colorGreen : qgcPal.colorRed
+        }
+
+        TextRow {
+            label:      qsTr("Position")
+            value:      _root._originIsSet
+                            ? _root._estimatorOrigin.latitude.toFixed(7) + ", " + _root._estimatorOrigin.longitude.toFixed(7)
+                            : qsTr("—")
+            visible:    _root._originIsSet
+        }
+
+        // Spelled out because the consequence is invisible in flight: without an origin the vehicle
+        // has no home, an altitude relative to home cannot be resolved, and an auto takeoff climbs
+        // and then hangs forever on the mission's first item with nothing reported to the operator.
+        QGCLabel {
+            Layout.preferredWidth:  _root._labelWidth + _root._valueWidth + ScreenTools.defaultFontPixelWidth
+            visible:                !_root._originIsSet
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorRed
+            text:                   qsTr("Missions cannot run. Click the map and choose 'Set Estimator Origin'.")
+        }
 
         SectionHeader { text: qsTr("Optical Flow") }
 
