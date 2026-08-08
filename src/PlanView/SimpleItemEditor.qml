@@ -26,7 +26,6 @@ Rectangle {
     property bool _globalAltFrameIsMixed: _globalAltFrame == QGroundControl.AltitudeFrameMixed
     property real _radius: ScreenTools.defaultFontPixelWidth / 2
     property real _fieldSpacing: ScreenTools.defaultFontPixelHeight / 2
-    property real _numberFieldWidth: ScreenTools.defaultFontPixelWidth * 8
 
     property var  _plannedHome: missionItem.masterController.missionController.plannedHomePosition
     property bool _homeValid:   _plannedHome.isValid && missionItem.coordinate.isValid
@@ -244,25 +243,23 @@ Rectangle {
 
             GridLayout {
                 Layout.fillWidth:   true
-                columns:            4
+                columns:            2
                 columnSpacing:      _fieldSpacing
                 rowSpacing:         _fieldSpacing
                 visible:            positionSection.visible && positionSection.checked
 
-                QGCLabel { text: qsTr("North") }
+                QGCLabel { text: qsTr("North"); Layout.alignment: Qt.AlignRight }
                 QGCTextField {
                     id:                 northField
                     Layout.fillWidth:   true
-                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._displayNorth.toFixed(1)
                     onEditingFinished:  root._applyOffsets(northField.text, eastField.text)
                 }
 
-                QGCLabel { text: qsTr("East") }
+                QGCLabel { text: qsTr("East"); Layout.alignment: Qt.AlignRight }
                 QGCTextField {
                     id:                 eastField
                     Layout.fillWidth:   true
-                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._displayEast.toFixed(1)
                     onEditingFinished:  root._applyOffsets(northField.text, eastField.text)
                 }
@@ -270,20 +267,18 @@ Rectangle {
                 // The same point said the other way round. A vehicle flying without a map is
                 // briefed as "bearing 180, twenty metres", and a compass bearing is what the
                 // operator can check against the field they are standing in.
-                QGCLabel { text: qsTr("Bearing") }
+                QGCLabel { text: qsTr("Bearing"); Layout.alignment: Qt.AlignRight }
                 QGCTextField {
                     id:                 bearingField
                     Layout.fillWidth:   true
-                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._bearingFromHome.toFixed(1)
                     onEditingFinished:  root._applyPolar(bearingField.text, distanceField.text)
                 }
 
-                QGCLabel { text: qsTr("Distance") }
+                QGCLabel { text: qsTr("Distance"); Layout.alignment: Qt.AlignRight }
                 QGCTextField {
                     id:                 distanceField
                     Layout.fillWidth:   true
-                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._displayDistance.toFixed(1)
                     onEditingFinished:  root._applyPolar(bearingField.text, distanceField.text)
                 }
@@ -302,25 +297,23 @@ Rectangle {
 
             GridLayout {
                 Layout.fillWidth:   true
-                columns:            4
+                columns:            2
                 columnSpacing:      _fieldSpacing
                 rowSpacing:         _fieldSpacing
                 visible:            legSection.visible && legSection.checked
 
-                QGCLabel { text: qsTr("Bearing") }
+                QGCLabel { text: qsTr("Bearing"); Layout.alignment: Qt.AlignRight }
                 QGCTextField {
                     id:                 legBearingField
                     Layout.fillWidth:   true
-                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._bearingFromPrev.toFixed(1)
                     onEditingFinished:  root._applyLeg(legBearingField.text, legDistanceField.text)
                 }
 
-                QGCLabel { text: qsTr("Distance") }
+                QGCLabel { text: qsTr("Distance"); Layout.alignment: Qt.AlignRight }
                 QGCTextField {
                     id:                 legDistanceField
                     Layout.fillWidth:   true
-                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._displayLegDistance.toFixed(1)
                     onEditingFinished:  root._applyLeg(legBearingField.text, legDistanceField.text)
                 }
