@@ -1112,6 +1112,9 @@ void Vehicle::_handleSysStatus(mavlink_message_t& message)
         _onboardControlSensorsPresent = sysStatus.onboard_control_sensors_present;
         emit sensorsPresentBitsChanged(_onboardControlSensorsPresent);
         emit requiresGpsFixChanged();
+        // Firmware QGC cannot ask about its estimator sources answers navigatingWithoutGNSS from
+        // these bits, so they change the answer too.
+        emit navigatingWithoutGNSSChanged();
     }
     if (_onboardControlSensorsEnabled != sysStatus.onboard_control_sensors_enabled) {
         _onboardControlSensorsEnabled = sysStatus.onboard_control_sensors_enabled;
@@ -1238,6 +1241,28 @@ void Vehicle::_handleGpsGlobalOrigin(const mavlink_message_t& message)
         _estimatorOrigin = newOrigin;
         emit estimatorOriginChanged(_estimatorOrigin);
     }
+}
+
+bool Vehicle::navigatingWithoutGNSS() const
+{
+    return _firmwarePlugin && _firmwarePlugin->navigatingWithoutGNSS(this);
+}
+
+void Vehicle::_watchEstimatorSourceParameters()
+{
+    for (const QString &paramName : _firmwarePlugin->estimatorSourceParameterNames()) {
+        if (!_parameterManager->parameterExists(ParameterManager::defaultComponentId, paramName)) {
+            continue;
+        }
+        // Signal to signal, so the answer is recomputed on demand rather than cached here: the
+        // firmware plugin owns what these values mean, and only it can say what they add up to.
+        Fact *const sourceFact = _parameterManager->getParameter(ParameterManager::defaultComponentId, paramName);
+        (void) connect(sourceFact, &Fact::rawValueChanged, this, &Vehicle::navigatingWithoutGNSSChanged, Qt::UniqueConnection);
+    }
+
+    // The parameters have only now arrived, so anything that asked before this was answered from
+    // the fallback path and may have been told the opposite.
+    emit navigatingWithoutGNSSChanged();
 }
 
 void Vehicle::requestEstimatorOrigin()
@@ -1737,6 +1762,7 @@ void Vehicle::_parametersReady(bool parametersReady)
     if (parametersReady) {
         disconnect(_parameterManager, &ParameterManager::parametersReadyChanged, this, &Vehicle::_parametersReady);
         _setupAutoDisarmSignalling();
+        _watchEstimatorSourceParameters();
     }
 
     _multirotor_speed_limits_available = _firmwarePlugin->mulirotorSpeedLimitsAvailable(this);

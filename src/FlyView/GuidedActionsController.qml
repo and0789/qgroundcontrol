@@ -141,7 +141,10 @@ Item {
     property bool showLandAbort:            _guidedActionsEnabled && _vehicleFlying && _fixedWingOnApproach
     property bool showGotoLocation:         _guidedActionsEnabled && _vehicleFlying
     property bool showSetHome:              _guidedActionsEnabled
-    property bool showSetEstimatorOrigin:   _activeVehicle && !(_activeVehicle.sensorsPresentBits & MAVLinkEnums.MAV_SYS_STATUS_SENSOR_GPS)
+    // Asks the estimator what it navigates by rather than whether a GPS is fitted. A GNSS-denied
+    // aircraft normally carries one anyway to log ground truth, and keying off its presence hid
+    // this action on exactly the vehicles that cannot fly without it.
+    property bool showSetEstimatorOrigin:   _activeVehicle && _activeVehicle.navigatingWithoutGNSS
     property bool showChangeHeading:        _guidedActionsEnabled && _vehicleFlying
 
     /// A vehicle flying without GNSS gets no estimator origin on its own, and without one it has no
@@ -149,7 +152,7 @@ Item {
     /// never reports completion, and the mission stalls on its first item -- silently, with the
     /// aircraft hovering. Warn before that costs a flight rather than after.
     property bool _missionNeedsEstimatorOrigin: _activeVehicle
-                                                && !(_activeVehicle.sensorsPresentBits & MAVLinkEnums.MAV_SYS_STATUS_SENSOR_GPS)
+                                                && _activeVehicle.navigatingWithoutGNSS
                                                 && !_activeVehicle.estimatorOrigin.isValid
 
     property string changeSpeedTitle:   _vehicleInFwdFlight ? changeAirspeedTitle : changeCruiseSpeedTitle

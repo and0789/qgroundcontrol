@@ -112,6 +112,18 @@ QString FirmwarePlugin::missionCommandOverrides(QGCMAVLink::VehicleClass_t vehic
     }
 }
 
+bool FirmwarePlugin::navigatingWithoutGNSS(const Vehicle *vehicle) const
+{
+    if (!vehicle) {
+        return false;
+    }
+
+    // Without a firmware-specific way to ask the estimator what it is using, the presence of a GPS
+    // is the only signal available. It is a weak one -- it cannot tell a GPS the estimator ignores
+    // from one it navigates by -- so plugins that can read their estimator's sources override this.
+    return !static_cast<bool>(vehicle->sensorsPresentBits() & MAV_SYS_STATUS_SENSOR_GPS);
+}
+
 void FirmwarePlugin::setGuidedMode(Vehicle *vehicle, bool guidedMode) const
 {
     Q_UNUSED(vehicle);

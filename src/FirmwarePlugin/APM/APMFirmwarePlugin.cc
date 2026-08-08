@@ -628,6 +628,36 @@ bool APMFirmwarePlugin::hasGripper(const Vehicle *vehicle) const
     return false;
 }
 
+bool APMFirmwarePlugin::navigatingWithoutGNSS(const Vehicle *vehicle) const
+{
+    if (!vehicle) {
+        return false;
+    }
+
+    // EK3_SRC1_POSXY names where EKF3 takes horizontal position from, so it answers this directly
+    // rather than by inference. Anything other than GPS means the estimator is navigating without
+    // GNSS -- including NONE, which is what an optical flow aircraft uses. Only the primary source
+    // set is read: sets 2 and 3 are selectable in flight from an RC switch, and QGC has no
+    // dependable way to know which one is live, so reporting on the configured primary is the one
+    // honest answer available here.
+    const QString posXYSourceParam = estimatorSourceParameterNames().constFirst();
+    if (!vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, posXYSourceParam)) {
+        // EKF2-era or non-EKF3 firmware. Nothing to read, so fall back to asking whether a GPS is
+        // even fitted rather than claiming the vehicle navigates without one.
+        return FirmwarePlugin::navigatingWithoutGNSS(vehicle);
+    }
+
+    const int posXYSource = vehicle->parameterManager()
+                                ->getParameter(ParameterManager::defaultComponentId, posXYSourceParam)
+                                ->rawValue().toInt();
+    return posXYSource != static_cast<int>(EK3SourceXY::GPS);
+}
+
+QStringList APMFirmwarePlugin::estimatorSourceParameterNames() const
+{
+    return QStringList{ QStringLiteral("EK3_SRC1_POSXY") };
+}
+
 const QVariantList &APMFirmwarePlugin::toolIndicators(const Vehicle *vehicle)
 {
     if (_toolIndicatorList.isEmpty()) {

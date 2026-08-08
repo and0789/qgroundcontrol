@@ -214,6 +214,7 @@ public:
     Q_PROPERTY(QObject*             sysStatusSensorInfo         READ sysStatusSensorInfo                                            CONSTANT)
     Q_PROPERTY(bool                 allSensorsHealthy           READ allSensorsHealthy                                              NOTIFY allSensorsHealthyChanged)    //< true: all sensors in SYS_STATUS reported as healthy
     Q_PROPERTY(bool                 requiresGpsFix              READ requiresGpsFix                                                 NOTIFY requiresGpsFixChanged)
+    Q_PROPERTY(bool                 navigatingWithoutGNSS       READ navigatingWithoutGNSS                                          NOTIFY navigatingWithoutGNSSChanged)
     Q_PROPERTY(double               loadProgress                READ loadProgress                                                   NOTIFY loadProgressChanged)
     Q_PROPERTY(bool                 initialConnectComplete      READ isInitialConnectComplete                                       NOTIFY initialConnectComplete)
 
@@ -558,6 +559,13 @@ public:
     bool            allSensorsHealthy           () const{ return _allSensorsHealthy; }
     QObject*        sysStatusSensorInfo         ();
     bool            requiresGpsFix              () const { return static_cast<bool>(_onboardControlSensorsPresent & MAV_SYS_STATUS_SENSOR_GPS); }
+
+    /// True when this vehicle's estimator is not using GNSS for horizontal position, and so needs
+    /// an estimator origin set by hand before it has a home to fly a mission against. Distinct from
+    /// requiresGpsFix, which only reports whether a GPS is fitted -- a GNSS-denied aircraft
+    /// commonly carries one purely to log ground truth.
+    bool            navigatingWithoutGNSS       () const;
+
     bool            hilMode                     () const { return _base_mode & MAV_MODE_FLAG_HIL_ENABLED; }
     Actuators*      actuators                   () const { return _actuators; }
     VehicleSigningController* signingController() { return _signingController; }
@@ -809,6 +817,7 @@ signals:
     void readyToFlyChanged              (bool readyToFy);
     void allSensorsHealthyChanged       (bool allSensorsHealthy);
     void requiresGpsFixChanged          ();
+    void navigatingWithoutGNSSChanged   ();
     void haveMRSpeedLimChanged          ();
     void haveFWSpeedLimChanged          ();
     void hasGripperChanged              ();
@@ -884,6 +893,12 @@ private slots:
 
 private:
     void _activeVehicleChanged          (Vehicle* newActiveVehicle);
+
+    /// Re-reports navigatingWithoutGNSS and keeps it live by watching the estimator source
+    /// parameters it is read from. Those get edited during bring-up, and a stale answer decides
+    /// whether the operator is offered the estimator origin controls at all.
+    void _watchEstimatorSourceParameters();
+
     void _handlePing                    (LinkInterface* link, mavlink_message_t& message);
     void _handleHomePosition            (mavlink_message_t& message);
     void _handleHeartbeat               (mavlink_message_t& message);

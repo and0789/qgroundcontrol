@@ -215,6 +215,18 @@ public:
     /// @return Return true if the GCS has enabled Grip_enable option
     virtual bool hasGripper(const Vehicle* /*vehicle*/) const { return false; }
 
+    /// @return true when the vehicle's estimator is not using GNSS for horizontal position.
+    ///
+    /// A vehicle in that state gets no estimator origin on its own, so it has no home and cannot
+    /// resolve an altitude relative to one until an origin is set by hand. Asking whether a GPS is
+    /// fitted answers a different question: a GNSS-denied research aircraft often carries one for
+    /// ground truth logging while the estimator ignores it entirely.
+    virtual bool navigatingWithoutGNSS(const Vehicle *vehicle) const;
+
+    /// @return Names of the parameters whose value navigatingWithoutGNSS() reads, so Vehicle can
+    /// watch them and re-report when the operator changes the estimator's sources.
+    virtual QStringList estimatorSourceParameterNames() const { return QStringList(); }
+
     /// @return Return true if we have received the ground speed limits for the mulirotor.
     virtual bool mulirotorSpeedLimitsAvailable(Vehicle* /*vehicle*/) const { return false; }
 
