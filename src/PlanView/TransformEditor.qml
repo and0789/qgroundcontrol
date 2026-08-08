@@ -20,6 +20,13 @@ Rectangle {
     property real _labelWidth:     ScreenTools.defaultFontPixelWidth * 14
     property bool _hasHome:        missionController ? missionController.plannedHomePosition.isValid : false
 
+    // The origin the vehicle is actually using. A plan anchored anywhere else flies somewhere else,
+    // and nothing on screen says so: a stale plan uploads cleanly, flies smoothly, and simply lands
+    // in the wrong place. Two field flights on 8 Aug were lost that way, 1.5 m and 4.2 m out.
+    property var  _activeVehicle:    globals.activeVehicle
+    property var  _estimatorOrigin:  _activeVehicle ? _activeVehicle.estimatorOrigin : null
+    property bool _originValid:      _estimatorOrigin ? _estimatorOrigin.isValid : false
+
     TransformPositionController {
         id: positionController
         Component.onCompleted: {
@@ -268,6 +275,35 @@ Rectangle {
                     positionController.setFromVehicle()
                     _root.missionController.repositionMission(positionController.coordinate)
                 }
+            }
+
+            // Deliberately not behind the coordinate system selector above. For a vehicle flying
+            // without GNSS this is not one way of repositioning among several -- it is the only
+            // anchor that makes the mission fly where it was drawn, because the autopilot converts
+            // every waypoint into an offset from this origin.
+            QGCButton {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: _margins
+                text:             qsTr("Move to Estimator Origin")
+                enabled:          _hasHome
+                visible:          _root._originValid
+                onClicked:        _root.missionController.repositionMission(_root._estimatorOrigin)
+            }
+
+            QGCLabel {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                visible:          _root._originValid
+                wrapMode:         Text.WordWrap
+                font.pointSize:   ScreenTools.smallFontPointSize
+                // Guarded rather than relying on visible: QML evaluates a binding whether or not
+                // the item is shown, so reading latitude off a null origin would error every time
+                // the panel is built for a vehicle that has none.
+                text:             _root._originValid
+                                    ? qsTr("Origin: %1, %2")
+                                        .arg(_root._estimatorOrigin.latitude.toFixed(7))
+                                        .arg(_root._estimatorOrigin.longitude.toFixed(7))
+                                    : ""
             }
         }
 

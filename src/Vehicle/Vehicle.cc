@@ -1242,6 +1242,13 @@ void Vehicle::_handleGpsGlobalOrigin(const mavlink_message_t& message)
 
 void Vehicle::requestEstimatorOrigin()
 {
+    // Same restraint the component information requests observe: a high latency link cannot afford
+    // an extra round trip for something this optional, and a log replay has nobody to ask.
+    SharedLinkInterfacePtr sharedLink = vehicleLinkManager()->primaryLink().lock();
+    if (!sharedLink || sharedLink->linkConfiguration()->isHighLatency() || sharedLink->isLogReplay()) {
+        return;
+    }
+
     // The reply arrives as a normal GPS_GLOBAL_ORIGIN message and is picked up by the message
     // handler, so nothing is needed here on success. A handler is still mandatory: the coordinator
     // dereferences it unconditionally, and a null one would crash on the vehicle's answer.
