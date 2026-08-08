@@ -3155,19 +3155,36 @@ void Vehicle::sendGripperAction(GRIPPER_ACTIONS gripperAction)
 
 void Vehicle::setEstimatorOrigin(const QGeoCoordinate& centerCoord)
 {
+    if (!centerCoord.isValid()) {
+        qCDebug(VehicleLog) << "setEstimatorOrigin: coordinate not valid, ignoring";
+        return;
+    }
+
+    // The map click this arrives from produces a 2D coordinate, so altitude() is NaN. Both the
+    // command and the legacy message carry that altitude verbatim, and an autopilot has to refuse
+    // a NaN (ArduPilot rejects it in GCS_MAVLINK::location_from_command_t and answers DENIED), so
+    // anchor it to a finite value before it goes out. Zero is the honest choice here: the origin
+    // altitude is only an AMSL reference for the estimator, and the terrain lookup doSetHome uses
+    // to resolve one needs a network round trip this feature cannot rely on -- it exists precisely
+    // for vehicles operating without GNSS, often off-grid.
+    QGeoCoordinate originCoord = centerCoord;
+    if (!qIsFinite(originCoord.altitude())) {
+        originCoord.setAltitude(0.0);
+    }
+
     // Prefer MAV_CMD_DO_SET_GLOBAL_ORIGIN (sent as COMMAND_INT, supersedes SET_GPS_GLOBAL_ORIGIN).
     sendMavCommandIntWithLambdaFallback(
-        [this, centerCoord]() {  // fallback: deprecated SET_GPS_GLOBAL_ORIGIN message
-            setEstimatorOrigin_SET_GPS_GLOBAL_ORIGIN(centerCoord);
+        [this, originCoord]() {  // fallback: deprecated SET_GPS_GLOBAL_ORIGIN message
+            setEstimatorOrigin_SET_GPS_GLOBAL_ORIGIN(originCoord);
         },
         defaultComponentId(),
         MAV_CMD_DO_SET_GLOBAL_ORIGIN,
         MAV_FRAME_GLOBAL,
-        false,                                          // showError
+        true,                                           // showError: a refused origin must not pass unnoticed
         0.0f, 0.0f, 0.0f, 0.0f,                         // param 1-4 empty
-        centerCoord.latitude(),                         // param5: latitude (deg) -> degE7
-        centerCoord.longitude(),                        // param6: longitude (deg) -> degE7
-        static_cast<float>(centerCoord.altitude())      // param7: altitude (m)
+        originCoord.latitude(),                         // param5: latitude (deg) -> degE7
+        originCoord.longitude(),                        // param6: longitude (deg) -> degE7
+        static_cast<float>(originCoord.altitude())      // param7: altitude (m)
     );
 }
 
