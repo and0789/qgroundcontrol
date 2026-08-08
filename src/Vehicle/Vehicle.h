@@ -149,6 +149,7 @@ public:
     Q_PROPERTY(AutoPilotPlugin*     autopilotPlugin             MEMBER _autopilotPlugin                                             CONSTANT)
     Q_PROPERTY(QGeoCoordinate       coordinate                  READ coordinate                                                     NOTIFY coordinateChanged)
     Q_PROPERTY(QGeoCoordinate       homePosition                READ homePosition                                                   NOTIFY homePositionChanged)
+    Q_PROPERTY(QGeoCoordinate       estimatorOrigin             READ estimatorOrigin                                                NOTIFY estimatorOriginChanged)
     Q_PROPERTY(QGeoCoordinate       armedPosition               READ armedPosition                                                  NOTIFY armedPositionChanged)
     Q_PROPERTY(bool                 armed                       READ armed                      WRITE setArmedShowError             NOTIFY armedChanged)
     Q_PROPERTY(bool                 autoDisarm                  READ autoDisarm                                                     NOTIFY autoDisarmChanged)
@@ -365,6 +366,9 @@ public:
     /// Fallback for setEstimatorOrigin which sends the deprecated SET_GPS_GLOBAL_ORIGIN message.
     void setEstimatorOrigin_SET_GPS_GLOBAL_ORIGIN(const QGeoCoordinate& centerCoord);
 
+    /// Records the estimator origin reported by the vehicle.
+    void _handleGpsGlobalOrigin(const mavlink_message_t& message);
+
     /// Used to check if running current version is equal or higher than the one being compared.
     //  returns 1 if current > compare, 0 if current == compare, -1 if current < compare
     Q_INVOKABLE int versionCompare(const QString& compare) const;
@@ -454,6 +458,18 @@ public:
 
 
     QGeoCoordinate homePosition();
+
+    /// The estimator origin the vehicle is currently using, or an invalid coordinate when it has
+    /// none. Vehicles flying without GNSS have no origin until one is set, and until then they
+    /// cannot resolve a mission altitude that is relative to home -- an auto takeoff started in
+    /// that state climbs and then never reports completion, stalling the mission on its first item.
+    QGeoCoordinate estimatorOrigin() const { return _estimatorOrigin; }
+
+    /// Asks the vehicle to report its estimator origin. ArduPilot emits GPS_GLOBAL_ORIGIN when the
+    /// origin is first set and whenever it is requested, so QGC asks once the initial connection
+    /// completes to learn about an origin that was set before we connected. Callable again to
+    /// refresh, since the vehicle gives no other notification that its origin has gone away.
+    Q_INVOKABLE void requestEstimatorOrigin();
 
     bool armed              () const{ return _armed; }
     void setArmed           (bool armed, bool showError);
@@ -759,6 +775,7 @@ signals:
     void coordinateChanged              (QGeoCoordinate coordinate);
     void mavlinkMessageReceived         (const mavlink_message_t& message);
     void homePositionChanged            (const QGeoCoordinate& homePosition);
+    void estimatorOriginChanged         (const QGeoCoordinate& estimatorOrigin);
     void armedPositionChanged();
     void armedChanged                   (bool armed);
     void flightModeChanged              (const QString& flightMode);
@@ -940,6 +957,7 @@ private:
 
     QGeoCoordinate  _coordinate;
     QGeoCoordinate  _homePosition;
+    QGeoCoordinate  _estimatorOrigin;
     QGeoCoordinate  _armedPosition;
 
     qreal           _initialGCSPressure = 0.;

@@ -192,4 +192,39 @@ void SetEstimatorOriginTest::_invalidCoordinate_sendsNothing()
     verifyExpectedLogMessage();
 }
 
+/// Until the vehicle reports an origin, Vehicle::estimatorOrigin must stay invalid. A vehicle
+/// without one answers the request with zeros, and reading that as a real coordinate would put the
+/// origin in the Gulf of Guinea -- and make QGC claim an origin exists when none does.
+void SetEstimatorOriginTest::_vehicleWithoutOrigin_reportsInvalidCoordinate()
+{
+    QVERIFY(_vehicle);
+    QVERIFY(!_vehicle->estimatorOrigin().isValid());
+}
+
+/// Once an origin is set, the vehicle reports it and Vehicle must surface it. This is the state
+/// that decides whether a mission can fly at all: without an origin the vehicle has no home, a
+/// takeoff to an altitude relative to home never completes, and the mission stalls on its first
+/// item with nothing shown to the user.
+void SetEstimatorOriginTest::_originSetOnVehicle_isReportedBack()
+{
+    QVERIFY(_vehicle);
+    FirmwarePluginInstanceData* instanceData = _vehicle->firmwarePluginInstanceData();
+    QVERIFY(instanceData);
+    QVERIFY(!_vehicle->estimatorOrigin().isValid());
+
+    // Cached-unsupported drives the legacy SET_GPS_GLOBAL_ORIGIN message, which MockLink records.
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN, CommandSupportedResult::UNSUPPORTED);
+    _vehicle->setEstimatorOrigin(kOrigin);
+    QVERIFY_TRUE_WAIT(_mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) == 1,
+                      TestTimeout::longMs());
+
+    QSignalSpy originSpy(_vehicle, &Vehicle::estimatorOriginChanged);
+    _vehicle->requestEstimatorOrigin();
+
+    QVERIFY_TRUE_WAIT(_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
+    QCOMPARE(originSpy.count(), 1);
+    QVERIFY(qAbs(_vehicle->estimatorOrigin().latitude() - kOrigin.latitude()) < 0.0000001);
+    QVERIFY(qAbs(_vehicle->estimatorOrigin().longitude() - kOrigin.longitude()) < 0.0000001);
+}
+
 UT_REGISTER_TEST(SetEstimatorOriginTest, TestLabel::Integration, TestLabel::Vehicle)

@@ -232,6 +232,7 @@ void Vehicle::_commonInit(LinkInterface* link)
 
     connect(_firmwarePlugin, &FirmwarePlugin::toolIndicatorsChanged, this, &Vehicle::toolIndicatorsChanged);
 
+    connect(this, &Vehicle::initialConnectComplete, this, &Vehicle::requestEstimatorOrigin);
     connect(this, &Vehicle::coordinateChanged,      this, &Vehicle::_updateDistanceHeadingHome);
     connect(this, &Vehicle::coordinateChanged,      this, &Vehicle::_updateDistanceHeadingGCS);
     connect(this, &Vehicle::homePositionChanged,    this, &Vehicle::_updateDistanceHeadingHome);
@@ -594,6 +595,9 @@ void Vehicle::_mavlinkMessageReceived(LinkInterface* link, mavlink_message_t mes
     switch (message.msgid) {
     case MAVLINK_MSG_ID_HOME_POSITION:
         _handleHomePosition(message);
+        break;
+    case MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN:
+        _handleGpsGlobalOrigin(message);
         break;
     case MAVLINK_MSG_ID_HEARTBEAT:
         _handleHeartbeat(message);
@@ -1214,6 +1218,41 @@ void Vehicle::_handleHomePosition(mavlink_message_t& message)
                                     homePos.longitude / 10000000.0,
                                     homePos.altitude / 1000.0);
     _setHomePosition(newHomePosition);
+}
+
+void Vehicle::_handleGpsGlobalOrigin(const mavlink_message_t& message)
+{
+    mavlink_gps_global_origin_t origin;
+    mavlink_msg_gps_global_origin_decode(&message, &origin);
+
+    // A vehicle without an origin reports zeros rather than staying silent on a direct request,
+    // so treat that as "no origin" instead of a point in the Gulf of Guinea.
+    QGeoCoordinate newOrigin;
+    if ((origin.latitude != 0) || (origin.longitude != 0)) {
+        newOrigin = QGeoCoordinate(origin.latitude / 1.0e7,
+                                   origin.longitude / 1.0e7,
+                                   origin.altitude / 1.0e3);
+    }
+
+    if (newOrigin != _estimatorOrigin) {
+        _estimatorOrigin = newOrigin;
+        emit estimatorOriginChanged(_estimatorOrigin);
+    }
+}
+
+void Vehicle::requestEstimatorOrigin()
+{
+    // The reply arrives as a normal GPS_GLOBAL_ORIGIN message and is picked up by the message
+    // handler, so nothing is needed here on success. A handler is still mandatory: the coordinator
+    // dereferences it unconditionally, and a null one would crash on the vehicle's answer.
+    auto resultHandler = [](void*, MAV_RESULT commandResult, RequestMessageResultHandlerFailureCode_t failureCode, const mavlink_message_t&) {
+        if ((commandResult != MAV_RESULT_ACCEPTED) || (failureCode != RequestMessageNoFailure)) {
+            // Expected on vehicles that never had an origin, and on firmware that cannot report
+            // one. Neither is worth troubling the user with -- the origin simply stays invalid.
+            qCDebug(VehicleLog) << "GPS_GLOBAL_ORIGIN request not answered, result:" << commandResult << "failureCode:" << failureCode;
+        }
+    };
+    requestMessage(resultHandler, nullptr, defaultComponentId(), MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN);
 }
 
 void Vehicle::_updateArmed(bool armed)

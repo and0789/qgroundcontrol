@@ -27,4 +27,6 @@ private slots:
     void _mapClickCoordinate_commandCarriesFiniteAltitude();
     void _mapClickCoordinate_legacyMessageCarriesFiniteAltitude();
     void _invalidCoordinate_sendsNothing();
+    void _vehicleWithoutOrigin_reportsInvalidCoordinate();
+    void _originSetOnVehicle_isReportedBack();
 };

@@ -287,6 +287,8 @@ private:
     void _handleSetupSigning(const mavlink_message_t &msg);
     void _sendParamError(int componentId, const char *paramId, int16_t paramIndex, uint8_t errorCode);
     void _handleRequestMessage(const mavlink_command_long_t &request, bool &accepted, bool &noAck);
+    void _handleSetGpsGlobalOrigin(const mavlink_message_t &msg);
+    void _handleRequestMessageGpsGlobalOrigin(bool &accepted);
     void _handleRequestMessageAutopilotVersion(const mavlink_command_long_t &request, bool &accepted);
     void _handleRequestMessageDebug(const mavlink_command_long_t &request, bool &accepted, bool &noAck);
     void _handleRequestMessageAvailableModes(const mavlink_command_long_t &request, bool &accepted);
@@ -490,6 +492,12 @@ private:
     QMap<int, QMap<int, int>> _receivedRequestMessageByCompAndMsgCountMap;
     QMap<uint32_t, int> _receivedMavlinkMessageCountMap;
     QMap<uint32_t, mavlink_message_t> _lastReceivedMavlinkMessageMap;
+
+    // Estimator origin as the vehicle knows it. Zero means "no origin", matching a real vehicle
+    // that has not been given one.
+    int32_t _estimatorOriginLat = 0;
+    int32_t _estimatorOriginLon = 0;
+    int32_t _estimatorOriginAlt = 0;
     QMap<int, QMap<QString, QVariant>> _mapParamName2Value;
     QMap<int, QMap<QString, MAV_PARAM_TYPE>> _mapParamName2MavParamType;
 

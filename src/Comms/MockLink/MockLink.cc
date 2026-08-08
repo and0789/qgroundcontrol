@@ -1111,6 +1111,9 @@ void MockLink::_handleIncomingMavlinkMsg(const mavlink_message_t &msg)
     case MAVLINK_MSG_ID_COMMAND_INT:
         _handleCommandInt(msg);
         break;
+    case MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN:
+        _handleSetGpsGlobalOrigin(msg);
+        break;
     case MAVLINK_MSG_ID_MANUAL_CONTROL:
         _handleManualControl(msg);
         break;
@@ -2953,7 +2956,39 @@ void MockLink::_handleRequestMessage(const mavlink_command_long_t &request, bool
     case MAVLINK_MSG_ID_AVAILABLE_MODES:
         _handleRequestMessageAvailableModes(request, accepted);
         break;
+    case MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN:
+        _handleRequestMessageGpsGlobalOrigin(accepted);
+        break;
     }
+}
+
+void MockLink::_handleSetGpsGlobalOrigin(const mavlink_message_t &msg)
+{
+    mavlink_set_gps_global_origin_t request{};
+    mavlink_msg_set_gps_global_origin_decode(&msg, &request);
+
+    _estimatorOriginLat = request.latitude;
+    _estimatorOriginLon = request.longitude;
+    _estimatorOriginAlt = request.altitude;
+}
+
+void MockLink::_handleRequestMessageGpsGlobalOrigin(bool &accepted)
+{
+    accepted = true;
+
+    // Mirrors ArduPilot: a vehicle with no origin still answers, reporting zeros. That distinction
+    // matters to QGC, which must tell "no origin yet" apart from "vehicle never replied".
+    mavlink_message_t message{};
+    (void) mavlink_msg_gps_global_origin_pack_chan(
+        _vehicleSystemId,
+        _vehicleComponentId,
+        _outgoingMavlinkChannel,
+        &message,
+        _estimatorOriginLat,
+        _estimatorOriginLon,
+        _estimatorOriginAlt,
+        0);   // time_usec
+    respondWithMavlinkMessage(message);
 }
 
 void MockLink::_sendGeneralMetaData()
