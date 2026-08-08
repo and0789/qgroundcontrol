@@ -42,6 +42,22 @@ Rectangle {
     property real _displayNorth: QGroundControl.unitsConversion.metersToAppSettingsHorizontalDistanceUnits(_northMetres)
     property real _displayEast:  QGroundControl.unitsConversion.metersToAppSettingsHorizontalDistanceUnits(_eastMetres)
 
+    // Compass convention, matching the vehicle's own heading: 0 is north, 90 east. azimuthTo
+    // already returns that, so no conversion is needed -- only a name the operator recognises.
+    property real _bearingFromHome:  _azimuthFromHome
+    property real _displayDistance:  QGroundControl.unitsConversion.metersToAppSettingsHorizontalDistanceUnits(_distanceFromHome)
+
+    /// Moves the item to a bearing and distance from the planned home. Same destination as the
+    /// north/east pair above and the same guards; only the way of saying it differs.
+    function _applyPolar(bearingText, distanceText) {
+        var bearing  = parseFloat(bearingText)
+        var distance = QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsToMeters(parseFloat(distanceText))
+        if (!_homeValid || isNaN(bearing) || isNaN(distance) || distance < 0) {
+            return
+        }
+        missionItem.coordinate = _plannedHome.atDistanceAndAzimuth(distance, bearing)
+    }
+
     /// Moves the item to the given offsets from the planned home, taking the user's distance unit.
     /// Rejects anything non-finite so a half-typed or cleared field cannot throw the waypoint to an
     /// undefined position.
@@ -204,6 +220,32 @@ Rectangle {
                         unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
                         text: root._displayEast.toFixed(1)
                         onEditingFinished: root._applyOffsets(northField.text, eastField.text)
+                    }
+                }
+
+                // The same point said the other way round. A vehicle flying without a map is
+                // briefed as "bearing 180, twenty metres", not as a pair of offsets, and a compass
+                // bearing is what the operator can check against the field they are standing in.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: _fieldSpacing
+
+                    QGCLabel { text: qsTr("Bearing") }
+                    QGCTextField {
+                        id: bearingField
+                        Layout.fillWidth: true
+                        unitsLabel: qsTr("deg")
+                        text: root._bearingFromHome.toFixed(1)
+                        onEditingFinished: root._applyPolar(bearingField.text, distanceField.text)
+                    }
+
+                    QGCLabel { text: qsTr("Distance") }
+                    QGCTextField {
+                        id: distanceField
+                        Layout.fillWidth: true
+                        unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                        text: root._displayDistance.toFixed(1)
+                        onEditingFinished: root._applyPolar(bearingField.text, distanceField.text)
                     }
                 }
             }
