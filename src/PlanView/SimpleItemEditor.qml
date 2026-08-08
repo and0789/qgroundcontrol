@@ -27,6 +27,35 @@ Rectangle {
     property real _radius: ScreenTools.defaultFontPixelWidth / 2
     property real _fieldSpacing: ScreenTools.defaultFontPixelHeight / 2
 
+    property var  _plannedHome: missionItem.masterController.missionController.plannedHomePosition
+    property bool _homeValid:   _plannedHome.isValid && missionItem.coordinate.isValid
+
+    // Geodesic, via QtPositioning, rather than a flat-earth approximation: the same maths the rest
+    // of the plan uses, so a waypoint typed here lands where a waypoint dragged there would.
+    property real _distanceFromHome: _homeValid ? _plannedHome.distanceTo(missionItem.coordinate) : 0
+    property real _azimuthFromHome:  _homeValid ? _plannedHome.azimuthTo(missionItem.coordinate) : 0
+    property real _northMetres:      _distanceFromHome * Math.cos(_azimuthFromHome * Math.PI / 180)
+    property real _eastMetres:       _distanceFromHome * Math.sin(_azimuthFromHome * Math.PI / 180)
+
+    // Shown in whatever horizontal distance unit the user has chosen, like every other distance in
+    // QGC. The maths above stays in metres; only the two fields convert.
+    property real _displayNorth: QGroundControl.unitsConversion.metersToAppSettingsHorizontalDistanceUnits(_northMetres)
+    property real _displayEast:  QGroundControl.unitsConversion.metersToAppSettingsHorizontalDistanceUnits(_eastMetres)
+
+    /// Moves the item to the given offsets from the planned home, taking the user's distance unit.
+    /// Rejects anything non-finite so a half-typed or cleared field cannot throw the waypoint to an
+    /// undefined position.
+    function _applyOffsets(northText, eastText) {
+        var north = QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsToMeters(parseFloat(northText))
+        var east  = QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsToMeters(parseFloat(eastText))
+        if (!_homeValid || isNaN(north) || isNaN(east)) {
+            return
+        }
+        var distance = Math.sqrt((north * north) + (east * east))
+        var azimuth  = Math.atan2(east, north) * 180 / Math.PI
+        missionItem.coordinate = _plannedHome.atDistanceAndAzimuth(distance, azimuth)
+    }
+
     QGCPalette { id: qgcPal; colorGroupEnabled: root.enabled }
 
     Column {
@@ -137,6 +166,45 @@ Rectangle {
                     id: advancedItemsTab
                     icon.source: "/res/PlanSimpleItemAdvanced.svg"
                     visible: tabBar._advancedItemsAvailable
+                }
+            }
+
+            // Distance from home, in metres. QGC otherwise offers only latitude and longitude, so
+            // placing a waypoint a known distance away means working out decimal degrees by hand --
+            // which is how a vehicle navigating by dead reckoning is actually flown and measured.
+            // The reference is the planned home: the point the mission is anchored to, and the one
+            // an autopilot measures every waypoint offset from.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: _fieldSpacing
+                visible: tabBar.showBasicItems && missionItem.specifiesCoordinate && root._homeValid
+
+                QGCLabel {
+                    text: qsTr("Distance From Home")
+                    Layout.fillWidth: true
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: _fieldSpacing
+
+                    QGCLabel { text: qsTr("North") }
+                    QGCTextField {
+                        id: northField
+                        Layout.fillWidth: true
+                        unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                        text: root._displayNorth.toFixed(1)
+                        onEditingFinished: root._applyOffsets(northField.text, eastField.text)
+                    }
+
+                    QGCLabel { text: qsTr("East") }
+                    QGCTextField {
+                        id: eastField
+                        Layout.fillWidth: true
+                        unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                        text: root._displayEast.toFixed(1)
+                        onEditingFinished: root._applyOffsets(northField.text, eastField.text)
+                    }
                 }
             }
 
