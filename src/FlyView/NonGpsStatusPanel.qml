@@ -38,6 +38,12 @@ Item {
     readonly property real _vibeWarnThreshold:   30
     readonly property real _vibeBadThreshold:    60
 
+    // EKF innovation test ratios are normalised, so 1.0 is the gate: above it the estimator is
+    // rejecting the measurement outright. The warning level is ArduPilot's own FS_EKF_THRESH
+    // default, the point at which Copter declares an EKF failsafe.
+    readonly property real _ekfRatioWarnThreshold: 0.8
+    readonly property real _ekfRatioBadThreshold:  1.0
+
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     NonGpsFlowHealth {
@@ -50,6 +56,16 @@ Item {
             return qgcPal.text
         }
         return (quality > _minFlowQuality) ? qgcPal.colorGreen : qgcPal.colorRed
+    }
+
+    function _ekfRatioColor(ratio) {
+        if (isNaN(ratio)) {
+            return qgcPal.text
+        }
+        if (ratio > _ekfRatioBadThreshold) {
+            return qgcPal.colorRed
+        }
+        return (ratio > _ekfRatioWarnThreshold) ? qgcPal.colorOrange : qgcPal.colorGreen
     }
 
     function _vibeColor(vibe) {
@@ -262,6 +278,25 @@ Item {
 
         ValueRow { label: qsTr("Down");          fact: _distanceSensors ? _distanceSensors.rotationPitch270 : null }
 
+        // Optical flow gives velocity but no direction, so with EK3_SRC1_YAW=1 the compass is the
+        // only thing telling the estimator which way that velocity points. A heading error does not
+        // show up as a bad position -- it shows up as a track rotated away from the one planned,
+        // which looks like ordinary drift in the log unless the heading was being watched.
+        SectionHeader { text: qsTr("Compass") }
+
+        ValueRow { label: qsTr("Heading");       fact: _activeVehicle ? _activeVehicle.heading : null }
+
+        // The estimator's verdict on the compass rather than the magnetometer's own. A sensor can
+        // report itself perfectly healthy while disagreeing with the rest of the solution, and it
+        // is the disagreement that turns into a rotated track. Unlike the EKF health flags this
+        // fact starts as NaN, so a link carrying no EKF status reads as "--" rather than as a
+        // flawless compass.
+        ValueRow {
+            label:      qsTr("Mag Ratio")
+            fact:       _estimatorStatus ? _estimatorStatus.magRatio : null
+            valueColor: _ekfRatioColor(_estimatorStatus ? _estimatorStatus.magRatio.rawValue : NaN)
+        }
+
         SectionHeader { text: qsTr("EKF") }
 
         FlagRow  { label: qsTr("Horiz Pos");     fact: _estimatorStatus ? _estimatorStatus.goodHorizPosRelEstimate : null }
@@ -283,6 +318,7 @@ Item {
         ValueRow { label: qsTr("Down");          fact: _localPosition ? _localPosition.z : null }
         ValueRow { label: qsTr("Vel North");     fact: _localPosition ? _localPosition.vx : null }
         ValueRow { label: qsTr("Vel East");      fact: _localPosition ? _localPosition.vy : null }
+        ValueRow { label: qsTr("Vel Down");      fact: _localPosition ? _localPosition.vz : null }
 
         SectionHeader { text: qsTr("Vibration") }
 

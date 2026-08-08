@@ -11,4 +11,7 @@ class NonGpsStatusPanelTest : public VehicleTest
 
 private slots:
     void _panelFactsExist_test();
+    void _panelVehicleValuesExist_test();
+    void _panelBuildsWithoutBindingErrors_test();
+    void _magRatioStartsUnknownRatherThanZero_test();
 };
