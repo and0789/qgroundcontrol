@@ -26,6 +26,7 @@ Rectangle {
     property bool _globalAltFrameIsMixed: _globalAltFrame == QGroundControl.AltitudeFrameMixed
     property real _radius: ScreenTools.defaultFontPixelWidth / 2
     property real _fieldSpacing: ScreenTools.defaultFontPixelHeight / 2
+    property real _numberFieldWidth: ScreenTools.defaultFontPixelWidth * 8
 
     property var  _plannedHome: missionItem.masterController.missionController.plannedHomePosition
     property bool _homeValid:   _plannedHome.isValid && missionItem.coordinate.isValid
@@ -252,8 +253,7 @@ Rectangle {
                 QGCTextField {
                     id:                 northField
                     Layout.fillWidth:   true
-                    showUnits:          true
-                    unitsLabel:         QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._displayNorth.toFixed(1)
                     onEditingFinished:  root._applyOffsets(northField.text, eastField.text)
                 }
@@ -262,8 +262,7 @@ Rectangle {
                 QGCTextField {
                     id:                 eastField
                     Layout.fillWidth:   true
-                    showUnits:          true
-                    unitsLabel:         QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._displayEast.toFixed(1)
                     onEditingFinished:  root._applyOffsets(northField.text, eastField.text)
                 }
@@ -275,8 +274,7 @@ Rectangle {
                 QGCTextField {
                     id:                 bearingField
                     Layout.fillWidth:   true
-                    showUnits:          true
-                    unitsLabel:         qsTr("deg")
+                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._bearingFromHome.toFixed(1)
                     onEditingFinished:  root._applyPolar(bearingField.text, distanceField.text)
                 }
@@ -285,8 +283,7 @@ Rectangle {
                 QGCTextField {
                     id:                 distanceField
                     Layout.fillWidth:   true
-                    showUnits:          true
-                    unitsLabel:         QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._displayDistance.toFixed(1)
                     onEditingFinished:  root._applyPolar(bearingField.text, distanceField.text)
                 }
@@ -314,8 +311,7 @@ Rectangle {
                 QGCTextField {
                     id:                 legBearingField
                     Layout.fillWidth:   true
-                    showUnits:          true
-                    unitsLabel:         qsTr("deg")
+                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._bearingFromPrev.toFixed(1)
                     onEditingFinished:  root._applyLeg(legBearingField.text, legDistanceField.text)
                 }
@@ -324,8 +320,7 @@ Rectangle {
                 QGCTextField {
                     id:                 legDistanceField
                     Layout.fillWidth:   true
-                    showUnits:          true
-                    unitsLabel:         QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                    Layout.minimumWidth: root._numberFieldWidth
                     text:               root._displayLegDistance.toFixed(1)
                     onEditingFinished:  root._applyLeg(legBearingField.text, legDistanceField.text)
                 }
