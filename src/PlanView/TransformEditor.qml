@@ -285,17 +285,21 @@ Rectangle {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: _margins
                 text:             qsTr("Move to Estimator Origin")
-                enabled:          _hasHome
-                visible:          _root._originValid
+                // Shown even with no origin to anchor to, greyed rather than hidden. A control that
+                // vanishes cannot be found, and this one matters most to the operator who has not
+                // set an origin yet -- the label below says why it is off.
+                enabled:          _hasHome && _root._originValid
+                visible:          _root._activeVehicle
                 onClicked:        _root.missionController.repositionMission(_root._estimatorOrigin)
             }
 
             QGCLabel {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
-                visible:          _root._originValid
+                visible:          _root._activeVehicle
                 wrapMode:         Text.WordWrap
                 font.pointSize:   ScreenTools.smallFontPointSize
+                color:            _root._originValid ? QGroundControl.globalPalette.text : QGroundControl.globalPalette.colorOrange
                 // Guarded rather than relying on visible: QML evaluates a binding whether or not
                 // the item is shown, so reading latitude off a null origin would error every time
                 // the panel is built for a vehicle that has none.
@@ -303,7 +307,7 @@ Rectangle {
                                     ? qsTr("Origin: %1, %2")
                                         .arg(_root._estimatorOrigin.latitude.toFixed(7))
                                         .arg(_root._estimatorOrigin.longitude.toFixed(7))
-                                    : ""
+                                    : qsTr("Vehicle has no estimator origin yet. Set one from the Fly view map first.")
             }
         }
 
