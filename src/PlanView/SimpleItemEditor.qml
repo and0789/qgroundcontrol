@@ -231,69 +231,64 @@ Rectangle {
                     visible: tabBar._advancedItemsAvailable
                 }
             }
+            // QGC otherwise offers only latitude and longitude, so placing a waypoint a known
+            // distance away means working out decimal degrees by hand -- which is how a vehicle
+            // navigating by dead reckoning is actually flown and measured.
+            SectionHeader {
+                id:                 positionSection
+                Layout.fillWidth:   true
+                text:               qsTr("Position From Home")
+                visible:            tabBar.showBasicItems && missionItem.specifiesCoordinate && root._homeValid
+            }
 
-            // Distance from home, in metres. QGC otherwise offers only latitude and longitude, so
-            // placing a waypoint a known distance away means working out decimal degrees by hand --
-            // which is how a vehicle navigating by dead reckoning is actually flown and measured.
-            // The reference is the planned home: the point the mission is anchored to, and the one
-            // an autopilot measures every waypoint offset from.
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: _fieldSpacing
-                visible: tabBar.showBasicItems && missionItem.specifiesCoordinate && root._homeValid
+            GridLayout {
+                Layout.fillWidth:   true
+                columns:            4
+                columnSpacing:      _fieldSpacing
+                rowSpacing:         _fieldSpacing
+                visible:            positionSection.visible && positionSection.checked
 
-                QGCLabel {
-                    text: qsTr("Distance From Home")
-                    Layout.fillWidth: true
+                QGCLabel { text: qsTr("North") }
+                QGCTextField {
+                    id:                 northField
+                    Layout.fillWidth:   true
+                    showUnits:          true
+                    unitsLabel:         QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                    text:               root._displayNorth.toFixed(1)
+                    onEditingFinished:  root._applyOffsets(northField.text, eastField.text)
                 }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: _fieldSpacing
-
-                    QGCLabel { text: qsTr("North") }
-                    QGCTextField {
-                        id: northField
-                        Layout.fillWidth: true
-                        unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
-                        text: root._displayNorth.toFixed(1)
-                        onEditingFinished: root._applyOffsets(northField.text, eastField.text)
-                    }
-
-                    QGCLabel { text: qsTr("East") }
-                    QGCTextField {
-                        id: eastField
-                        Layout.fillWidth: true
-                        unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
-                        text: root._displayEast.toFixed(1)
-                        onEditingFinished: root._applyOffsets(northField.text, eastField.text)
-                    }
+                QGCLabel { text: qsTr("East") }
+                QGCTextField {
+                    id:                 eastField
+                    Layout.fillWidth:   true
+                    showUnits:          true
+                    unitsLabel:         QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                    text:               root._displayEast.toFixed(1)
+                    onEditingFinished:  root._applyOffsets(northField.text, eastField.text)
                 }
 
                 // The same point said the other way round. A vehicle flying without a map is
-                // briefed as "bearing 180, twenty metres", not as a pair of offsets, and a compass
-                // bearing is what the operator can check against the field they are standing in.
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: _fieldSpacing
+                // briefed as "bearing 180, twenty metres", and a compass bearing is what the
+                // operator can check against the field they are standing in.
+                QGCLabel { text: qsTr("Bearing") }
+                QGCTextField {
+                    id:                 bearingField
+                    Layout.fillWidth:   true
+                    showUnits:          true
+                    unitsLabel:         qsTr("deg")
+                    text:               root._bearingFromHome.toFixed(1)
+                    onEditingFinished:  root._applyPolar(bearingField.text, distanceField.text)
+                }
 
-                    QGCLabel { text: qsTr("Bearing") }
-                    QGCTextField {
-                        id: bearingField
-                        Layout.fillWidth: true
-                        unitsLabel: qsTr("deg")
-                        text: root._bearingFromHome.toFixed(1)
-                        onEditingFinished: root._applyPolar(bearingField.text, distanceField.text)
-                    }
-
-                    QGCLabel { text: qsTr("Distance") }
-                    QGCTextField {
-                        id: distanceField
-                        Layout.fillWidth: true
-                        unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
-                        text: root._displayDistance.toFixed(1)
-                        onEditingFinished: root._applyPolar(bearingField.text, distanceField.text)
-                    }
+                QGCLabel { text: qsTr("Distance") }
+                QGCTextField {
+                    id:                 distanceField
+                    Layout.fillWidth:   true
+                    showUnits:          true
+                    unitsLabel:         QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                    text:               root._displayDistance.toFixed(1)
+                    onEditingFinished:  root._applyPolar(bearingField.text, distanceField.text)
                 }
             }
 
@@ -301,37 +296,38 @@ Rectangle {
             // a map is built one leg at a time -- "from there, ninety degrees for twenty metres" --
             // and each leg is what the vehicle actually flies. Bearings stay measured from north, so
             // they can be read straight off a compass; only the point they start from differs.
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: _fieldSpacing
-                visible: tabBar.showBasicItems && missionItem.specifiesCoordinate && root._prevValid
+            SectionHeader {
+                id:                 legSection
+                Layout.fillWidth:   true
+                text:               qsTr("Leg From Previous")
+                visible:            tabBar.showBasicItems && missionItem.specifiesCoordinate && root._prevValid
+            }
 
-                QGCLabel {
-                    text: qsTr("Leg From Previous")
-                    Layout.fillWidth: true
+            GridLayout {
+                Layout.fillWidth:   true
+                columns:            4
+                columnSpacing:      _fieldSpacing
+                rowSpacing:         _fieldSpacing
+                visible:            legSection.visible && legSection.checked
+
+                QGCLabel { text: qsTr("Bearing") }
+                QGCTextField {
+                    id:                 legBearingField
+                    Layout.fillWidth:   true
+                    showUnits:          true
+                    unitsLabel:         qsTr("deg")
+                    text:               root._bearingFromPrev.toFixed(1)
+                    onEditingFinished:  root._applyLeg(legBearingField.text, legDistanceField.text)
                 }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: _fieldSpacing
-
-                    QGCLabel { text: qsTr("Bearing") }
-                    QGCTextField {
-                        id: legBearingField
-                        Layout.fillWidth: true
-                        unitsLabel: qsTr("deg")
-                        text: root._bearingFromPrev.toFixed(1)
-                        onEditingFinished: root._applyLeg(legBearingField.text, legDistanceField.text)
-                    }
-
-                    QGCLabel { text: qsTr("Distance") }
-                    QGCTextField {
-                        id: legDistanceField
-                        Layout.fillWidth: true
-                        unitsLabel: QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
-                        text: root._displayLegDistance.toFixed(1)
-                        onEditingFinished: root._applyLeg(legBearingField.text, legDistanceField.text)
-                    }
+                QGCLabel { text: qsTr("Distance") }
+                QGCTextField {
+                    id:                 legDistanceField
+                    Layout.fillWidth:   true
+                    showUnits:          true
+                    unitsLabel:         QGroundControl.unitsConversion.appSettingsHorizontalDistanceUnitsString
+                    text:               root._displayLegDistance.toFixed(1)
+                    onEditingFinished:  root._applyLeg(legBearingField.text, legDistanceField.text)
                 }
             }
 
