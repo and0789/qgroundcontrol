@@ -108,6 +108,9 @@ public:
     int receivedRequestMessageCount(uint32_t messageId) const { return _receivedRequestMessageCountMap.value(messageId, 0); }
     void clearReceivedMavlinkMessageCounts() { _receivedMavlinkMessageCountMap.clear(); _lastReceivedMavlinkMessageMap.clear(); _hashCheckRequestCount = 0; _missionItemHandler->clearRequestListCounts(); }
     int receivedMavlinkMessageCount(uint32_t messageId) const { return _receivedMavlinkMessageCountMap.value(messageId, 0); }
+
+    /// Drops the recorded estimator origin, as an autopilot reboot would.
+    void clearEstimatorOrigin() { _estimatorOriginLat = 0; _estimatorOriginLon = 0; _estimatorOriginAlt = 0; }
     /// Returns the last received message with the given id. Returns false if none received.
     bool lastReceivedMavlinkMessage(uint32_t messageId, mavlink_message_t &message) const {
         if (!_lastReceivedMavlinkMessageMap.contains(messageId)) {

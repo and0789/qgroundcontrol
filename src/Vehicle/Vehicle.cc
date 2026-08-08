@@ -1249,6 +1249,17 @@ void Vehicle::requestEstimatorOrigin()
         return;
     }
 
+    // Forget what we knew before asking. An autopilot that has lost its origin -- rebooted, or
+    // replaced by a different vehicle on the same link -- says nothing at all: ArduPilot's
+    // send_gps_global_origin() simply returns when get_origin() fails. Keeping the previous answer
+    // would leave QGC reporting an origin that no longer exists, which is the exact false
+    // reassurance this property was added to prevent. A vehicle that still has one repopulates this
+    // within a round trip.
+    if (_estimatorOrigin.isValid()) {
+        _estimatorOrigin = QGeoCoordinate();
+        emit estimatorOriginChanged(_estimatorOrigin);
+    }
+
     // The reply arrives as a normal GPS_GLOBAL_ORIGIN message and is picked up by the message
     // handler, so nothing is needed here on success. A handler is still mandatory: the coordinator
     // dereferences it unconditionally, and a null one would crash on the vehicle's answer.

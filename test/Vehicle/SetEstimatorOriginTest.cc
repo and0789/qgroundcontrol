@@ -227,4 +227,30 @@ void SetEstimatorOriginTest::_originSetOnVehicle_isReportedBack()
     QVERIFY(qAbs(_vehicle->estimatorOrigin().longitude() - kOrigin.longitude()) < 0.0000001);
 }
 
+/// A vehicle that has lost its origin does not say so -- ArduPilot answers a request for
+/// GPS_GLOBAL_ORIGIN with silence when it has none. Requesting must therefore drop what was known
+/// first, or QGC keeps reporting an origin from a vehicle that rebooted or was replaced. Caught in
+/// SITL on 8 Aug: the panel read "Set" with a previous run's coordinate while the live vehicle had
+/// none, and the mission failed at takeoff with an ArduPilot internal error for an uninitialised
+/// current location.
+void SetEstimatorOriginTest::_requestAfterOriginLost_clearsStaleValue()
+{
+    QVERIFY(_vehicle);
+    FirmwarePluginInstanceData* instanceData = _vehicle->firmwarePluginInstanceData();
+    QVERIFY(instanceData);
+
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN, CommandSupportedResult::UNSUPPORTED);
+    _vehicle->setEstimatorOrigin(kOrigin);
+    QVERIFY_TRUE_WAIT(_mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) == 1,
+                      TestTimeout::longMs());
+    _vehicle->requestEstimatorOrigin();
+    QVERIFY_TRUE_WAIT(_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
+
+    // The vehicle loses its origin, exactly as a reboot would leave it.
+    _mockLink->clearEstimatorOrigin();
+
+    _vehicle->requestEstimatorOrigin();
+    QVERIFY_TRUE_WAIT(!_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
+}
+
 UT_REGISTER_TEST(SetEstimatorOriginTest, TestLabel::Integration, TestLabel::Vehicle)
