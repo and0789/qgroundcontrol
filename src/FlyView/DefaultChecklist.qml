@@ -31,6 +31,20 @@ Item {
                 allowOverrideSatCount:  true
             }
 
+            // Only shown on a vehicle whose estimator navigates without GNSS. On any other vehicle
+            // these pass silently and take up no room.
+            PreFlightEstimatorOriginCheck {
+            }
+
+            PreFlightOpticalFlowCheck {
+            }
+
+            PreFlightRangefinderCheck {
+            }
+
+            PreFlightEkfNavigationCheck {
+            }
+
             PreFlightRCCheck {
             }
         }
