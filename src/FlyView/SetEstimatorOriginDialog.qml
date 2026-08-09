@@ -16,9 +16,11 @@ import QGroundControl.Controls
 /// the situation this exists for: map tiles need a network, and finding your own position on a map
 /// is exactly the knowledge GNSS was providing. Indoors it is meaningless.
 ///
-/// For a mission flown entirely in relative terms the absolute value does not matter -- the
-/// autopilot only needs some origin so it has a home and can resolve an altitude relative to it. So
-/// the operator is offered a coordinate they can accept as it stands, not made to find a real one.
+/// The value cannot be invented, though it does not have to be surveyed. Before it will arm,
+/// ArduPilot compares what the compass reads against the world magnetic model at the vehicle's
+/// position -- which, with no GNSS, comes from this origin. An origin on the wrong continent makes
+/// that comparison fail and the vehicle refuses to arm with "Check mag field", so the coordinate has
+/// to be roughly right even when the mission itself is flown purely as offsets in metres.
 QGCPopupDialog {
     id:         _root
     title:      qsTr("Set Estimator Origin")
@@ -40,6 +42,22 @@ QGCPopupDialog {
 
     property real   _fieldWidth:        ScreenTools.defaultFontPixelWidth * 46
 
+    /// Recomputed from the field text so the apply button cannot send a half-typed coordinate.
+    /// Latitude and longitude are range checked because a transposed pair -- 47 typed into the
+    /// longitude box of a place at longitude 8 -- is the kind of slip that produces a valid
+    /// coordinate a thousand kilometres away, and a compass check failure rather than an error.
+    property bool   _typedCoordinateValid: _isLatitude(latitudeField.text) && _isLongitude(longitudeField.text)
+
+    function _isLatitude(text) {
+        const value = parseFloat(text)
+        return !isNaN(value) && (value >= -90) && (value <= 90)
+    }
+
+    function _isLongitude(text) {
+        const value = parseFloat(text)
+        return !isNaN(value) && (value >= -180) && (value <= 180)
+    }
+
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     Component.onCompleted: _prefillFields()
@@ -48,6 +66,10 @@ QGCPopupDialog {
     /// likely to want: where they flew last, then where the ground station says it is. Both are only
     /// a suggestion -- nothing is sent until a button is pressed, so whatever the vehicle receives is
     /// a value the operator has seen.
+    ///
+    /// When neither is known the fields are left empty rather than seeded with a made-up coordinate.
+    /// A convenient default that puts the origin on the wrong continent is not convenient: it arms
+    /// nothing, because the compass check below fails against it.
     function _prefillFields() {
         if (_lastOriginValid) {
             latitudeField.text = _lastLatitude.toFixed(7)
@@ -55,11 +77,6 @@ QGCPopupDialog {
         } else if (_gcsPositionValid) {
             latitudeField.text = _gcsPosition.latitude.toFixed(7)
             longitudeField.text = _gcsPosition.longitude.toFixed(7)
-        } else {
-            // A placeholder rather than a discovered position. Shown, not hidden, so an origin that
-            // means nothing geographically cannot be mistaken later for a surveyed one.
-            latitudeField.text = "1.0000000"
-            longitudeField.text = "1.0000000"
         }
         altitudeField.text = "0"
     }
@@ -136,7 +153,7 @@ QGCPopupDialog {
                                         ? qsTr("%1, %2 — the ground station is usually at the launch point, which is where the origin belongs.")
                                             .arg(_root._gcsPosition.latitude.toFixed(7))
                                             .arg(_root._gcsPosition.longitude.toFixed(7))
-                                        : qsTr("The ground station has no position of its own. Enter a coordinate below instead.")
+                                        : qsTr("The ground station has no position of its own, so there is nothing to prefill. Enter roughly where the vehicle is below.")
         }
 
         // ---------------- Typed coordinate ----------------
@@ -181,18 +198,18 @@ QGCPopupDialog {
             Layout.fillWidth:   true
             primary:            true
             text:               qsTr("Set origin to this coordinate")
-            enabled:            _root._activeVehicle
+            enabled:            _root._activeVehicle && _root._typedCoordinateValid
             onClicked:          _root._applyTypedCoordinate()
         }
 
-        // The point most operators need to hear, and the one that makes this usable indoors. Said
-        // plainly rather than left to be inferred, and paired with its limit so a made-up origin
-        // never ends up quoted as a measurement.
+        // The constraint that actually bites, stated where it is needed rather than discovered at
+        // the flight line. An earlier version of this dialog said any coordinate would do; it will
+        // not, and the failure it produces names the compass rather than the origin.
         QGCLabel {
             Layout.preferredWidth:  _fieldWidth
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
-            text:                   qsTr("For a mission flown entirely as offsets in metres, any coordinate works — the autopilot only needs an origin so it has a home. Use a surveyed one when the flight has to be compared against anything outside itself.")
+            text:                   qsTr("It does not have to be surveyed, but it does have to be roughly where the vehicle really is. Before arming, the autopilot compares the compass against the world magnetic model at this position — an origin in the wrong region fails pre-arm with \"Check mag field\", which names the compass rather than the origin that caused it.")
         }
     }
 }

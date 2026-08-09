@@ -65,10 +65,13 @@ void SetEstimatorOriginUITest::_originCanBeSetFromTheGridWithoutAMap_test()
                 findVisibleItem(_rootItem, QStringLiteral("setOrigin_longitudeField"), 1000);
             QVERIFY(longitudeField);
 
-            // Pre-filled with something usable rather than blank: with no remembered origin and no
-            // ground station position, the operator must still be able to press one button.
-            QVERIFY2(!latitudeField->property("text").toString().isEmpty(),
-                     "the latitude field was left empty with nothing to accept");
+            // Nothing remembered and no ground station fix, so nothing is offered. A convenient
+            // default here would be a coordinate on the wrong continent, which arms nothing: the
+            // autopilot checks the compass against the magnetic model at the origin.
+            QVERIFY2(latitudeField->property("text").toString().isEmpty(),
+                     "an unknown origin must not be prefilled with an invented coordinate");
+            QVERIFY(verifyEnabled(QStringLiteral("setOrigin_applyTypedButton"), false,
+                                  QStringLiteral("with no coordinate typed")));
 
             latitudeField->setProperty("text", QString::number(kOriginLatitude, 'f', 7));
             longitudeField->setProperty("text", QString::number(kOriginLongitude, 'f', 7));
@@ -97,5 +100,14 @@ void SetEstimatorOriginUITest::_originCanBeSetFromTheGridWithoutAMap_test()
             vehicle->requestEstimatorOrigin();
             QTRY_VERIFY_WITH_TIMEOUT(vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
             QVERIFY(qAbs(vehicle->estimatorOrigin().latitude() - kOriginLatitude) < 0.0000001);
+
+            // Still reachable with an origin already set. An origin in the wrong region is not a
+            // cosmetic mistake -- it fails the pre-arm compass check -- so correcting one must not
+            // require reconnecting the vehicle.
+            QQuickItem *const originButton =
+                findVisibleItem(_rootItem, QStringLiteral("localGrid_setOriginButton"), 2000);
+            QVERIFY2(originButton, "the origin can no longer be changed once one is set");
+            QVERIFY2(originButton->property("text").toString().contains(QStringLiteral("Change")),
+                     "the button must say it changes the existing origin rather than setting a first one");
         });
 }
