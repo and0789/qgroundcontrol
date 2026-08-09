@@ -1,0 +1,26 @@
+#pragma once
+
+#include "BaseClasses/VehicleTest.h"
+
+/// Tests how the local grid view follows a vehicle.
+///
+/// The drawing is not asserted on -- what is, is the state the drawing reads: whether there is a
+/// position at all, where it is in the estimator's frame, and where the view is looking. A grid
+/// centred on stale or absent telemetry is the failure that matters, because it looks exactly like
+/// a grid centred on a stationary aircraft.
+class LocalGridViewTest : public VehicleTest
+{
+    Q_OBJECT
+
+public:
+    explicit LocalGridViewTest(QObject *parent = nullptr);
+
+protected slots:
+    void init() override;
+
+private slots:
+    void _withoutVehicle_reportsNoPosition_test();
+    void _localPosition_isReadInEstimatorFrame_test();
+    void _followingVehicle_keepsItCentred_test();
+    void _centreOnOrigin_stopsFollowing_test();
+};

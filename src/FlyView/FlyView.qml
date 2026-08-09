@@ -21,6 +21,12 @@ Item {
     readonly property bool _is3DMode:       QGCViewer3DManager.displayMode === QGCViewer3DManager.View3D
     readonly property bool _keepSceneAlive: QGroundControl.settingsManager.viewer3DSettings.keepSceneAlive.rawValue
 
+    /// The local grid replaces the map rather than sitting over it. A vehicle navigating without
+    /// GNSS puts no meaningful position on a world map, and showing both invites reading the wrong
+    /// one -- the map would keep drawing a plausible aircraft wherever the estimator's drift had
+    /// carried it.
+    readonly property bool _isLocalGridMode: QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue && !_is3DMode
+
     // These should only be used by MainRootWindow
     property var planController:    _planController
     property var guidedController:  _guidedController
@@ -80,8 +86,17 @@ Item {
             pipMode:                !_mainWindowIsMap
             toolInsets:             customOverlay.totalToolInsets
             mapName:                "FlightDisplayView"
-            enabled:                !_is3DMode
-            visible:                !_is3DMode
+            enabled:                !_is3DMode && !_isLocalGridMode
+            visible:                !_is3DMode && !_isLocalGridMode
+        }
+
+        LocalGridView {
+            id:             localGridView
+            anchors.fill:   parent
+            vehicle:        _activeVehicle
+            z:              _fullItemZorder
+            enabled:        _isLocalGridMode
+            visible:        _isLocalGridMode
         }
 
         FlyViewVideo {

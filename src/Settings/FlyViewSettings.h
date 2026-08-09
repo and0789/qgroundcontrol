@@ -25,6 +25,7 @@ public:
     DEFINE_SETTINGFACT(keepMapCenteredOnVehicle)
     DEFINE_SETTINGFACT(showSimpleCameraControl)
     DEFINE_SETTINGFACT(showObstacleDistanceOverlay)
+    DEFINE_SETTINGFACT(showLocalGridView)
     DEFINE_SETTINGFACT(showNonGpsStatusPanel)
     DEFINE_SETTINGFACT(updateHomePosition)
     DEFINE_SETTINGFACT(instrumentQmlFile2)

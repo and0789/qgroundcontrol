@@ -13,6 +13,7 @@ ToolStripActionList {
     model: [
         Viewer3DShowAction { },
         PreFlightCheckListShowAction { onTriggered: displayPreFlightChecklist() },
+        LocalGridShowAction { },
         NonGpsStatusShowAction { },
         OpticalFlowCalibrationShowAction { onTriggered: displayOpticalFlowCalibration() },
         GuidedActionTakeoff { },

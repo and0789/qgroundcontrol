@@ -47,6 +47,12 @@ qt_add_qml_module(FlyViewModule
         GuidedActionTakeoff.qml
         GuidedToolStripAction.qml
         GuidedValueSlider.qml
+        LocalGridCompassRose.qml
+        LocalGridReadout.qml
+        LocalGridScaleBar.qml
+        LocalGridShowAction.qml
+        LocalGridTransform.qml
+        LocalGridView.qml
         MultiRotorChecklist.qml
         MultiVehicleList.qml
         NonGpsFlowHealth.qml
