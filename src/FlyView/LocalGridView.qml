@@ -209,6 +209,38 @@ Item {
         return true
     }
 
+    /// Where the leg that reaches a waypoint starts, in grid metres: the waypoint drawn before it,
+    /// or the origin for the first one, since that is where the vehicle starts.
+    ///     @return { north, east }, or null when the index names no drawn waypoint
+    function legStartFor(index) {
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            if (points[i].index !== index) {
+                continue
+            }
+            return (i > 0)
+                ? { north: points[i - 1].north, east: points[i - 1].east }
+                : { north: 0, east: 0 }
+        }
+        return null
+    }
+
+    /// Moves a waypoint so the leg reaching it runs on the given bearing for the given distance.
+    /// A route without a map is built one leg at a time -- "from there, ninety degrees for twenty
+    /// metres" -- and each leg is what the vehicle actually flies.
+    ///     @return true if it moved
+    function moveWaypointToLeg(index, bearingDegrees, distanceMetres) {
+        const start = legStartFor(index)
+        if (!start || isNaN(bearingDegrees) || isNaN(distanceMetres) || (distanceMetres < 0)) {
+            return false
+        }
+
+        const radians = bearingDegrees * Math.PI / 180
+        return moveWaypointTo(index,
+                              start.north + (distanceMetres * Math.cos(radians)),
+                              start.east + (distanceMetres * Math.sin(radians)))
+    }
+
     /// Moves a waypoint to a bearing and range from the origin. The same point as the offsets below,
     /// said the way a leg is briefed and flown.
     ///     @return true if it moved

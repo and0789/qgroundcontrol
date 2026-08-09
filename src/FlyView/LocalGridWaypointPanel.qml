@@ -7,19 +7,24 @@ import QGroundControl.FactControls
 
 /// What a selected waypoint is, in the terms it will be flown in, and what can be done to it.
 ///
-/// The offsets are the point of selecting one at all: a waypoint on this grid is briefed and
-/// measured as so many metres north and east of the origin, and until now reading that back meant
-/// leaving for the Plan view.
+/// The same fields the Plan view offers, said in the frame the grid is already in. Adjusting a
+/// mission is mostly nudging a leg by a few metres, and leaving the grid to do it means losing sight
+/// of the aircraft and the pattern it is flying.
+///
+/// Every field describes the same point from a different place, and any of them can be typed into:
+/// where it sits relative to the origin, and what the leg reaching it looks like from the waypoint
+/// before. A route flown without a map is briefed the second way -- "from there, ninety degrees for
+/// twenty metres" -- and each leg is what the vehicle actually flies.
 Rectangle {
     id: _root
 
     property var gridView: null
 
     /// Index into the mission's visual items, or -1 when nothing is selected
-    property int visualItemIndex: -1
-    property int sequenceNumber:  0
-    property real north:          NaN
-    property real east:           NaN
+    property int  visualItemIndex: -1
+    property int  sequenceNumber:  0
+    property real north:           NaN
+    property real east:            NaN
 
     signal deleteRequested()
     signal closeRequested()
@@ -32,8 +37,9 @@ Rectangle {
     border.color:   qgcPal.text
     border.width:   1
 
-    property real _margins:     ScreenTools.defaultFontPixelHeight / 3
-    property real _fieldWidth:  ScreenTools.defaultFontPixelWidth * 11
+    property real _margins:     ScreenTools.defaultFontPixelHeight / 2
+    property real _labelWidth:  ScreenTools.defaultFontPixelWidth * 8
+    property real _fieldWidth:  ScreenTools.defaultFontPixelWidth * 15
 
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
@@ -42,31 +48,56 @@ Rectangle {
                                             ? gridView.waypointAltitudeFact(visualItemIndex)
                                             : null
 
-    /// Compass bearing and range from the origin, the pair a leg is briefed on
-    readonly property real _range:   (isNaN(north) || isNaN(east)) ? NaN : Math.sqrt((north * north) + (east * east))
-    readonly property real _bearing: (isNaN(north) || isNaN(east))
-                                        ? NaN
-                                        : ((Math.atan2(east, north) * 180 / Math.PI) + 360) % 360
+    readonly property string _distanceUnits: _transform ? _transform.displayUnits : ""
+
+    /// atan2 of east over north, rather than the usual y over x, is what turns a maths angle into a
+    /// bearing measured clockwise from north
+    function _bearingBetween(fromNorth, fromEast, toNorth, toEast) {
+        return ((Math.atan2(toEast - fromEast, toNorth - fromNorth) * 180 / Math.PI) + 360) % 360
+    }
+
+    function _distanceBetween(fromNorth, fromEast, toNorth, toEast) {
+        return Math.sqrt(Math.pow(toNorth - fromNorth, 2) + Math.pow(toEast - fromEast, 2))
+    }
 
     // Refilled whenever the selection changes or the waypoint moves, so dragging a marker updates
-    // the numbers and typing a number moves the marker. Skipped for the field being edited, or the
+    // the numbers and typing a number moves the marker. The field being edited is left alone, or the
     // operator's half-typed value would be overwritten under their cursor.
     onNorthChanged:             _refillFields()
     onEastChanged:              _refillFields()
     onVisualItemIndexChanged:   _refillFields()
     Component.onCompleted:      _refillFields()
 
+    /// Everything shown is derived here rather than from bound properties. A change handler runs
+    /// before the bindings that depend on the same value have been recomputed, so reading a derived
+    /// property from one leaves the fields a step behind -- which showed as bearing and distance
+    /// reading NaN while north and east beside them were already correct.
     function _refillFields() {
         if (!_transform || isNaN(north) || isNaN(east)) {
             return
         }
-        if (!northField.activeFocus && !eastField.activeFocus) {
-            northField.text = _transform.toDisplay(north).toFixed(1)
-            eastField.text = _transform.toDisplay(east).toFixed(1)
+
+        if (!northRow.field.activeFocus && !eastRow.field.activeFocus) {
+            northRow.field.text = _transform.toDisplay(north).toFixed(1)
+            eastRow.field.text = _transform.toDisplay(east).toFixed(1)
         }
-        if (!bearingField.activeFocus && !distanceField.activeFocus) {
-            bearingField.text = _bearing.toFixed(1)
-            distanceField.text = _transform.toDisplay(_range).toFixed(1)
+
+        if (!bearingRow.field.activeFocus && !distanceRow.field.activeFocus) {
+            bearingRow.field.text = _bearingBetween(0, 0, north, east).toFixed(1)
+            distanceRow.field.text = _transform.toDisplay(_distanceBetween(0, 0, north, east)).toFixed(1)
+        }
+
+        if (!legBearingRow.field.activeFocus && !legDistanceRow.field.activeFocus) {
+            const legStart = (gridView && (visualItemIndex >= 0)) ? gridView.legStartFor(visualItemIndex) : null
+            if (legStart) {
+                legBearingRow.field.text =
+                    _bearingBetween(legStart.north, legStart.east, north, east).toFixed(1)
+                legDistanceRow.field.text =
+                    _transform.toDisplay(_distanceBetween(legStart.north, legStart.east, north, east)).toFixed(1)
+            } else {
+                legBearingRow.field.text = ""
+                legDistanceRow.field.text = ""
+            }
         }
     }
 
@@ -74,8 +105,8 @@ Rectangle {
         if (!gridView || !_transform) {
             return
         }
-        const newNorth = parseFloat(northField.text)
-        const newEast = parseFloat(eastField.text)
+        const newNorth = parseFloat(northRow.field.text)
+        const newEast = parseFloat(eastRow.field.text)
         if (isNaN(newNorth) || isNaN(newEast)) {
             _refillFields()
             return
@@ -87,8 +118,8 @@ Rectangle {
         if (!gridView || !_transform) {
             return
         }
-        const bearing = parseFloat(bearingField.text)
-        const distance = parseFloat(distanceField.text)
+        const bearing = parseFloat(bearingRow.field.text)
+        const distance = parseFloat(distanceRow.field.text)
         if (isNaN(bearing) || isNaN(distance) || (distance < 0)) {
             _refillFields()
             return
@@ -96,95 +127,157 @@ Rectangle {
         gridView.moveWaypointToPolar(visualItemIndex, bearing, _transform.fromDisplay(distance))
     }
 
+    function _applyLeg() {
+        if (!gridView || !_transform) {
+            return
+        }
+        const bearing = parseFloat(legBearingRow.field.text)
+        const distance = parseFloat(legDistanceRow.field.text)
+        if (isNaN(bearing) || isNaN(distance) || (distance < 0)) {
+            _refillFields()
+            return
+        }
+        gridView.moveWaypointToLeg(visualItemIndex, bearing, _transform.fromDisplay(distance))
+    }
+
+    component SectionHeader: QGCLabel {
+        Layout.fillWidth:   true
+        Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
+        font.pointSize:     ScreenTools.smallFontPointSize
+        font.bold:          true
+        color:              qgcPal.text
+    }
+
+    /// One labelled entry field, so every row lines up without repeating the widths at each one
+    component EntryRow: RowLayout {
+        id:         entryRow
+        spacing:    ScreenTools.defaultFontPixelWidth
+
+        property string label
+        property alias  field: entryField
+        property string units
+        signal applied()
+
+        QGCLabel {
+            Layout.preferredWidth:  _root._labelWidth
+            horizontalAlignment:    Text.AlignRight
+            font.pointSize:         ScreenTools.smallFontPointSize
+            text:                   entryRow.label
+        }
+
+        QGCTextField {
+            id:                     entryField
+            Layout.preferredWidth:  _root._fieldWidth
+            font.pointSize:         ScreenTools.smallFontPointSize
+            unitsLabel:             entryRow.units
+            onEditingFinished:      entryRow.applied()
+        }
+    }
+
     ColumnLayout {
         id:                 layout
         anchors.margins:    _root._margins
         anchors.left:       parent.left
         anchors.top:        parent.top
-        spacing:            ScreenTools.defaultFontPixelHeight / 6
+        spacing:            ScreenTools.defaultFontPixelHeight / 5
 
         QGCLabel {
-            font.pointSize: ScreenTools.smallFontPointSize
-            font.bold:      true
-            text:           qsTr("Waypoint %1").arg(_root.sequenceNumber)
+            font.bold:  true
+            text:       qsTr("Waypoint %1").arg(_root.sequenceNumber)
         }
 
-        // The same four fields the Plan view offers, in the frame the grid is already in. Adjusting
-        // a mission is mostly nudging a leg by a few metres, and leaving the grid to do it means
-        // losing sight of the aircraft and the pattern it is flying.
-        GridLayout {
-            Layout.fillWidth:   true
-            columns:            2
-            columnSpacing:      ScreenTools.defaultFontPixelWidth
-            rowSpacing:         ScreenTools.defaultFontPixelHeight / 6
+        SectionHeader { text: qsTr("Position From Origin") }
 
-            QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("North") }
-            QGCTextField {
-                id:                     northField
-                Layout.preferredWidth:  _root._fieldWidth
-                font.pointSize:         ScreenTools.smallFontPointSize
-                onEditingFinished:      _root._applyOffsets()
-            }
+        EntryRow {
+            id:         northRow
+            label:      qsTr("North")
+            units:      _root._distanceUnits
+            onApplied:  _root._applyOffsets()
+        }
 
-            QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("East") }
-            QGCTextField {
-                id:                     eastField
-                Layout.preferredWidth:  _root._fieldWidth
-                font.pointSize:         ScreenTools.smallFontPointSize
-                onEditingFinished:      _root._applyOffsets()
-            }
+        EntryRow {
+            id:         eastRow
+            label:      qsTr("East")
+            units:      _root._distanceUnits
+            onApplied:  _root._applyOffsets()
+        }
 
-            QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Bearing") }
-            QGCTextField {
-                id:                     bearingField
-                Layout.preferredWidth:  _root._fieldWidth
-                font.pointSize:         ScreenTools.smallFontPointSize
-                onEditingFinished:      _root._applyPolar()
-            }
+        EntryRow {
+            id:         bearingRow
+            label:      qsTr("Bearing")
+            units:      "°"
+            onApplied:  _root._applyPolar()
+        }
 
-            QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Distance") }
-            QGCTextField {
-                id:                     distanceField
-                Layout.preferredWidth:  _root._fieldWidth
-                font.pointSize:         ScreenTools.smallFontPointSize
-                onEditingFinished:      _root._applyPolar()
-            }
+        EntryRow {
+            id:         distanceRow
+            label:      qsTr("Distance")
+            units:      _root._distanceUnits
+            onApplied:  _root._applyPolar()
+        }
 
-            // Only for items that have an altitude of their own. A complex item may not, and the
-            // row is dropped rather than shown holding nothing.
+        SectionHeader { text: qsTr("Leg From Previous") }
+
+        EntryRow {
+            id:         legBearingRow
+            label:      qsTr("Bearing")
+            units:      "°"
+            onApplied:  _root._applyLeg()
+        }
+
+        EntryRow {
+            id:         legDistanceRow
+            label:      qsTr("Distance")
+            units:      _root._distanceUnits
+            onApplied:  _root._applyLeg()
+        }
+
+        // Only for items carrying an altitude of their own. A complex item may not, and the row is
+        // dropped rather than shown holding nothing.
+        RowLayout {
+            Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
+            visible:            _root._altitudeFact !== null
+            spacing:            ScreenTools.defaultFontPixelWidth
+
             QGCLabel {
-                visible:        _root._altitudeFact !== null
-                font.pointSize: ScreenTools.smallFontPointSize
-                text:           qsTr("Altitude")
+                Layout.preferredWidth:  _root._labelWidth
+                horizontalAlignment:    Text.AlignRight
+                font.pointSize:         ScreenTools.smallFontPointSize
+                text:                   qsTr("Altitude")
             }
+
             FactTextField {
                 Layout.preferredWidth:  _root._fieldWidth
-                visible:                _root._altitudeFact !== null
                 font.pointSize:         ScreenTools.smallFontPointSize
                 fact:                   _root._altitudeFact
             }
         }
 
         QGCLabel {
-            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 24
+            Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 3
+            Layout.maximumWidth:    _root._labelWidth + _root._fieldWidth + ScreenTools.defaultFontPixelWidth
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
-            text:                   qsTr("Drag the marker to move it, or type a position here.")
+            color:                  qgcPal.colorGrey
+            text:                   qsTr("Drag the marker, or type into any field.")
         }
 
         RowLayout {
-            Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 6
+            Layout.fillWidth:   true
+            Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
             spacing:            ScreenTools.defaultFontPixelWidth
 
             QGCButton {
-                objectName: "localGrid_deleteWaypointButton"
-                text:       qsTr("Delete")
-                onClicked:  _root.deleteRequested()
+                objectName:         "localGrid_deleteWaypointButton"
+                Layout.fillWidth:   true
+                text:               qsTr("Delete")
+                onClicked:          _root.deleteRequested()
             }
 
             QGCButton {
-                text:       qsTr("Close")
-                onClicked:  _root.closeRequested()
+                Layout.fillWidth:   true
+                text:               qsTr("Close")
+                onClicked:          _root.closeRequested()
             }
         }
     }

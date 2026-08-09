@@ -544,4 +544,53 @@ void LocalGridViewTest::_bearingAndRangeAgreeWithOffsets_test()
     QVERIFY(!moved.toBool());
 }
 
+/// A route without a map is built one leg at a time -- "from there, ninety degrees for twenty
+/// metres" -- so a leg is measured from the waypoint before, and from the origin for the first.
+/// Measuring it from the origin throughout would silently turn every leg into a radial.
+void LocalGridViewTest::_legIsMeasuredFromThePreviousWaypoint_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    // One waypoint 20 m due north, then a second somewhere that will be moved
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 0.0))), Q_ARG(QVariant, 1)));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(5.0, 90.0))), Q_ARG(QVariant, 2)));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // The leg to the first waypoint starts at the origin, since that is where the vehicle starts
+    QVariant legStart;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "legStartFor", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, legStart), Q_ARG(QVariant, 0)));
+    QVERIFY(qAbs(legStart.toMap().value(QStringLiteral("north")).toDouble()) < 1e-9);
+    QVERIFY(qAbs(legStart.toMap().value(QStringLiteral("east")).toDouble()) < 1e-9);
+
+    // The leg to the second starts at the first, not at the origin
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "legStartFor", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, legStart), Q_ARG(QVariant, 1)));
+    QVERIFY(qAbs(legStart.toMap().value(QStringLiteral("north")).toDouble() - 20.0) < 0.05);
+
+    // Ninety degrees for twenty metres, from a waypoint already 20 m north, lands at (20, 20).
+    // Measured from the origin it would land at (0, 20) instead.
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointToLeg", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 1), Q_ARG(QVariant, 90.0), Q_ARG(QVariant, 20.0)));
+    QVERIFY(moved.toBool());
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05);
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("east")).toNumber() - 20.0) < 0.05);
+}
+
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)

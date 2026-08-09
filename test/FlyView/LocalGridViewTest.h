@@ -31,4 +31,5 @@ private slots:
     void _deleteWithoutASelection_doesNothing_test();
     void _dragMovesTheWaypointToTheDroppedOffsets_test();
     void _bearingAndRangeAgreeWithOffsets_test();
+    void _legIsMeasuredFromThePreviousWaypoint_test();
 };
