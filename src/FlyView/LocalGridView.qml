@@ -584,8 +584,12 @@ Item {
     LocalGridReadout {
         anchors.right:          parent.right
         anchors.top:            parent.top
+        // Hugs the right edge, but drops below whatever the fly view has stacked in that corner --
+        // the terrain progress bar, or the instrument panel. Only the vertical inset is honoured:
+        // the horizontal one reserves the panel's full width whether or not it is showing, which
+        // left the readout floating in the middle of the grid.
         anchors.rightMargin:    _root._margins
-        anchors.topMargin:      _root.topEdgeOffset + _root._margins
+        anchors.topMargin:      _root.topEdgeOffset + _root._margins + _root._inset("topEdgeRightInset")
         gridView:               _root
         onSetOriginRequested:   _root.showSetOriginDialog()
     }

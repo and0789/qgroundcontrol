@@ -42,12 +42,15 @@ Item {
         leftEdgeTopInset:       toolStrip.leftEdgeTopInset
         leftEdgeCenterInset:    toolStrip.leftEdgeCenterInset
         leftEdgeBottomInset:    virtualJoystickMultiTouch.visible ? virtualJoystickMultiTouch.leftEdgeBottomInset : parentToolInsets.leftEdgeBottomInset
-        rightEdgeTopInset:      topRightPanel.rightEdgeTopInset
-        rightEdgeCenterInset:   topRightPanel.rightEdgeCenterInset
+        // Whichever of the two top right stacks is actually showing. They are alternatives, and
+        // reporting the hidden one's size left anything laying out against this edge overlapping the
+        // visible one -- the terrain progress bar landed on top of the local grid's readout.
+        rightEdgeTopInset:      topRightPanel.visible ? topRightPanel.rightEdgeTopInset : topRightColumnLayout.rightEdgeTopInset
+        rightEdgeCenterInset:   topRightPanel.visible ? topRightPanel.rightEdgeCenterInset : topRightColumnLayout.rightEdgeCenterInset
         rightEdgeBottomInset:   bottomRightRowLayout.rightEdgeBottomInset
         topEdgeLeftInset:       toolStrip.topEdgeLeftInset
         topEdgeCenterInset:     mapScale.topEdgeCenterInset
-        topEdgeRightInset:      topRightPanel.topEdgeRightInset
+        topEdgeRightInset:      topRightPanel.visible ? topRightPanel.topEdgeRightInset : topRightColumnLayout.topEdgeRightInset
         bottomEdgeLeftInset:    virtualJoystickMultiTouch.visible ? virtualJoystickMultiTouch.bottomEdgeLeftInset : parentToolInsets.bottomEdgeLeftInset
         bottomEdgeCenterInset:  bottomRightRowLayout.bottomEdgeCenterInset
         bottomEdgeRightInset:   virtualJoystickMultiTouch.visible ? virtualJoystickMultiTouch.bottomEdgeRightInset : bottomRightRowLayout.bottomEdgeRightInset
