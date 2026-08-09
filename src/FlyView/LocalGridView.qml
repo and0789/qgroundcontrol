@@ -85,6 +85,21 @@ Item {
         id: projection
     }
 
+    LocalGridAltitudeLimit {
+        id:      altitudeLimit
+        vehicle: _root.vehicle
+    }
+
+    /// Exposed so the waypoint panel can warn against it without reaching for parameters itself
+    readonly property alias altitudeLimitMetres: altitudeLimit.limitMetres
+    readonly property alias altitudeLimitKnown:  altitudeLimit.limitKnown
+
+    /// @return true when this altitude would climb past the rangefinder the estimator takes its
+    /// height from
+    function altitudeExceedsLimit(metres) {
+        return altitudeLimit.exceeds(metres)
+    }
+
     /// Walks the plan and places each item that has a coordinate on the grid. Reading
     /// missionController.visualItems.count and the origin here is deliberate: both are what this
     /// depends on, and touching them makes the binding re-run when a waypoint is added or the
@@ -338,6 +353,33 @@ Item {
     function waypointCommand(index) {
         const item = _visualItemAt(index)
         return (item && (item.command !== undefined)) ? item.command : -1
+    }
+
+    /// The altitude frame of a waypoint, so the panel can say which datum its number is measured
+    /// from rather than showing a bare figure that could mean either
+    function waypointAltitudeFrame(index) {
+        const item = _visualItemAt(index)
+        return (item && (item.altitudeFrame !== undefined)) ? item.altitudeFrame : -1
+    }
+
+    /// Gives every placed item the same altitude. A pattern is flown at one height, and comparing
+    /// drift at two heights means retyping every waypoint otherwise.
+    ///     @return how many items were changed
+    function setAllWaypointAltitudes(metres) {
+        if (isNaN(metres)) {
+            return 0
+        }
+
+        var changed = 0
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            const fact = waypointAltitudeFact(points[i].index)
+            if (fact) {
+                fact.rawValue = metres
+                changed++
+            }
+        }
+        return changed
     }
 
     /// Turns a placed item into a takeoff, a landing or a plain waypoint without deleting and

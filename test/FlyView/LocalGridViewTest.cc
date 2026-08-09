@@ -36,6 +36,7 @@ void sendLocalPosition(Vehicle *vehicle, float north, float east, float down)
 constexpr const char *kMissionControllerStub = R"(
     import QtQuick
     import QtPositioning
+    import QGC
 
     QtObject {
         property var lastCoordinate: null
@@ -54,6 +55,10 @@ constexpr const char *kMissionControllerStub = R"(
                 property int  sequenceNumber: 0
                 property bool isCurrentItem: false
                 property int  command: 16
+                property int  altitudeFrame: 1
+                // A real Fact, not a look-alike: the panel binds it into a FactTextField, which
+                // refuses anything else and says so on every rebuild.
+                property Fact altitude: Fact { }
             }
         }
 
@@ -783,6 +788,49 @@ void LocalGridViewTest::_itemTypeChangesInPlace_test()
                                       Q_RETURN_ARG(QVariant, changed),
                                       Q_ARG(QVariant, 7), Q_ARG(QVariant, static_cast<int>(MAV_CMD_NAV_TAKEOFF))));
     QVERIFY(!changed.toBool());
+}
+
+/// A pattern is flown at one height, and comparing drift at two heights means retyping every
+/// waypoint otherwise. Items that carry no altitude of their own are stepped over rather than
+/// stopping the sweep at the first one.
+void LocalGridViewTest::_altitudeCanBeAppliedToEveryItem_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    for (int i = 0; i < 3; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0 * (i + 1), 0.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant changed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointAltitudes", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, 8.0)));
+    QCOMPARE(changed.toInt(), 3);
+
+    for (int i = 0; i < 3; i++) {
+        QVariant fact;
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointAltitudeFact", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, fact), Q_ARG(QVariant, i)));
+        QObject *const altitude = fact.value<QObject *>();
+        QVERIFY(altitude);
+        QCOMPARE(altitude->property("rawValue").toDouble(), 8.0);
+    }
+
+    // An altitude that is not a number must leave every item alone rather than blanking the plan
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointAltitudes", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, qQNaN())));
+    QCOMPARE(changed.toInt(), 0);
 }
 
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)

@@ -50,6 +50,29 @@ Rectangle {
 
     readonly property string _distanceUnits: _transform ? _transform.displayUnits : ""
 
+    readonly property int    _altitudeFrame: (gridView && (visualItemIndex >= 0))
+                                                ? gridView.waypointAltitudeFrame(visualItemIndex)
+                                                : -1
+    readonly property string _altitudeFrameLabel: (_altitudeFrame >= 0)
+                                                    ? QGroundControl.altitudeFrameExtraUnits(_altitudeFrame)
+                                                    : qsTr("?")
+
+    /// Warned about only while the rangefinder really is the height source, so a vehicle on the
+    /// barometer is not told its range matters
+    readonly property bool _altitudeAboveLimit: (gridView && _altitudeFact)
+                                                    ? gridView.altitudeExceedsLimit(_altitudeFact.rawValue)
+                                                    : false
+    readonly property string _limitText: (gridView && gridView.altitudeLimitKnown && _transform)
+                                            ? (_transform.toDisplay(gridView.altitudeLimitMetres).toFixed(1)
+                                               + " " + _distanceUnits)
+                                            : qsTr("--")
+
+    function _applyAltitudeToAll() {
+        if (gridView && _altitudeFact) {
+            gridView.setAllWaypointAltitudes(_altitudeFact.rawValue)
+        }
+    }
+
     /// The item's current command, or -1 for one whose type cannot be changed
     readonly property int  _command:      (gridView && (visualItemIndex >= 0)) ? gridView.waypointCommand(visualItemIndex) : -1
     readonly property bool _commandKnown: _command >= 0
@@ -306,7 +329,10 @@ Rectangle {
                 Layout.preferredWidth:  _root._labelWidth
                 horizontalAlignment:    Text.AlignRight
                 font.pointSize:         ScreenTools.smallFontPointSize
-                text:                   qsTr("Altitude")
+                // Which datum the number is measured from. Without it a bare figure could mean
+                // height above the launch point or height above sea level, and on this aircraft the
+                // launch point is the estimator origin.
+                text:                   qsTr("Alt (%1)").arg(_root._altitudeFrameLabel)
             }
 
             FactTextField {
@@ -314,6 +340,26 @@ Rectangle {
                 font.pointSize:         ScreenTools.smallFontPointSize
                 fact:                   _root._altitudeFact
             }
+        }
+
+        // The failure this catches is silent: the plan uploads cleanly and the aircraft climbs out
+        // of the rangefinder's range in flight, taking the estimator's height reference with it.
+        QGCLabel {
+            Layout.maximumWidth:    _root._labelWidth + _root._fieldWidth + ScreenTools.defaultFontPixelWidth
+            visible:                _root._altitudeAboveLimit
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorOrange
+            text:                   qsTr("Above the rangefinder's %1 range. The estimator takes its height from it, and loses the reference above that.")
+                                        .arg(_root._limitText)
+        }
+
+        QGCButton {
+            objectName:         "localGrid_applyAltitudeToAllButton"
+            Layout.fillWidth:   true
+            visible:            _root._altitudeFact !== null
+            text:               qsTr("Set this altitude on all")
+            onClicked:          _root._applyAltitudeToAll()
         }
 
         QGCLabel {

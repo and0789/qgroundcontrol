@@ -35,4 +35,5 @@ private slots:
     void _takeoffAndLandingUseTheirOwnInsertions_test();
     void _firstItemOfAnEmptyPlanBecomesATakeoff_test();
     void _itemTypeChangesInPlace_test();
+    void _altitudeCanBeAppliedToEveryItem_test();
 };
