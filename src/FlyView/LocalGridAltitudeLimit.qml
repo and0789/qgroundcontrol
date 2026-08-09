@@ -17,21 +17,42 @@ QtObject {
 
     property var vehicle
 
-    /// Which source EKF3 takes vertical position from, and how far the first rangefinder can see
+    /// Which sources EKF3 takes vertical position and horizontal velocity from, and how far the
+    /// first rangefinder can see
     property string altitudeSourceParameterName: "EK3_SRC1_POSZ"
+    property string velocitySourceParameterName: "EK3_SRC1_VELXY"
     property string rangefinderMaxParameterName: "RNGFND1_MAX"
 
     /// EK3_SRC1_POSZ value meaning the rangefinder, from AP_NavEKF_Source::SourceZ
     readonly property int rangefinderSourceValue: 2
+    /// EK3_SRC1_VELXY value meaning optical flow, from AP_NavEKF_Source::SourceXY
+    readonly property int opticalFlowSourceValue: 5
 
-    /// True only when the rangefinder really is the height source. On a vehicle using the barometer
-    /// the rangefinder's range says nothing about how high it may fly, and warning about it would be
-    /// noise the operator learns to ignore.
+    /// The rangefinder is the only thing holding the vehicle's height up
     readonly property bool rangefinderIsAltitudeSource: (_sourceFact !== null)
                                                             && (_sourceFact.rawValue === rangefinderSourceValue)
 
-    readonly property bool limitKnown:  rangefinderIsAltitudeSource && (_maxFact !== null)
-    readonly property real limitMetres: limitKnown ? _maxFact.rawValue : NaN
+    /// Horizontal velocity comes from optical flow, which needs a height to be scaled into a
+    /// velocity at all. Above the rangefinder's range there is no height to scale it with, so the
+    /// vehicle loses its horizontal aiding even when the barometer is holding its altitude.
+    readonly property bool opticalFlowIsVelocitySource: (_velocityFact !== null)
+                                                            && (_velocityFact.rawValue === opticalFlowSourceValue)
+
+    /// The ceiling applies for either reason. Where neither holds, the rangefinder's range says
+    /// nothing about how high the vehicle may fly, and warning about it would be noise the operator
+    /// learns to ignore.
+    readonly property bool limitApplies: rangefinderIsAltitudeSource || opticalFlowIsVelocitySource
+    readonly property bool limitKnown:   limitApplies && (_maxFact !== null)
+    readonly property real limitMetres:  limitKnown ? _maxFact.rawValue : NaN
+
+    /// Why the ceiling exists, so the warning can name the consequence rather than the parameter.
+    /// Both reasons can hold at once; the altitude one is stated first because it is the one that
+    /// runs away rather than merely degrading.
+    readonly property string limitReason: !limitKnown
+                                            ? ""
+                                            : (rangefinderIsAltitudeSource
+                                                ? qsTr("the estimator takes its height from it, and loses the reference above that")
+                                                : qsTr("optical flow is scaled into a velocity using it, and has nothing to scale with above that"))
 
     /// @return true when this altitude would take the vehicle past the rangefinder's range. False
     /// whenever the answer is not known, so an unrecognised setup warns about nothing rather than
@@ -45,8 +66,9 @@ QtObject {
 
     property bool _parametersReady: vehicle ? vehicle.parameterManager.parametersReady : false
 
-    property var _sourceFact: _factOrNull(altitudeSourceParameterName)
-    property var _maxFact:    _factOrNull(rangefinderMaxParameterName)
+    property var _sourceFact:   _factOrNull(altitudeSourceParameterName)
+    property var _velocityFact: _factOrNull(velocitySourceParameterName)
+    property var _maxFact:      _factOrNull(rangefinderMaxParameterName)
 
     function _factOrNull(parameterName) {
         return (_controller && _parametersReady && _controller.parameterExists(-1, parameterName))

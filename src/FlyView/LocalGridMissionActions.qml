@@ -19,6 +19,12 @@ Rectangle {
 
     property var planMasterController: null
 
+    /// The grid this belongs to, for the altitude ceiling it knows about
+    property var gridView: null
+
+    readonly property var  _itemsTooHigh:   gridView ? gridView.itemsAboveAltitudeLimit : []
+    readonly property bool _anyItemTooHigh: _itemsTooHigh.length > 0
+
     readonly property var _missionController: planMasterController ? planMasterController.missionController : null
     readonly property bool _hasController:    planMasterController !== null
     readonly property bool _offline:          _hasController ? planMasterController.offline : true
@@ -33,6 +39,11 @@ Rectangle {
     visible:        _hasController
 
     property real _margins: ScreenTools.defaultFontPixelHeight / 3
+
+    readonly property string _limitText: (gridView && gridView.altitudeLimitKnown)
+                                            ? (gridView.gridTransform.toDisplay(gridView.altitudeLimitMetres).toFixed(1)
+                                               + " " + gridView.gridTransform.displayUnits)
+                                            : qsTr("--")
 
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
@@ -101,6 +112,21 @@ Rectangle {
             text:           qsTr("Mission")
         }
 
+        // Placed where the plan is committed, and holding Upload shut while it stands. A warning
+        // beside the button that sends the plan is one the operator meets at the moment it matters;
+        // one tucked into an item editor is met only by chance.
+        QGCLabel {
+            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 28
+            visible:                _root._anyItemTooHigh
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorOrange
+            text:                   qsTr("Item %1 climbs past the rangefinder's %2 range — %3. Lower it before flying.")
+                                        .arg(_root._itemsTooHigh.join(", "))
+                                        .arg(_root._limitText)
+                                        .arg(_root.gridView ? _root.gridView.altitudeLimitReason : "")
+        }
+
         RowLayout {
             spacing: ScreenTools.defaultFontPixelWidth / 2
 
@@ -110,7 +136,9 @@ Rectangle {
                 // since that difference is invisible otherwise
                 primary:    _root._dirtyForUpload
                 text:       qsTr("Upload")
-                enabled:    !_root._offline && _root._hasItems
+                // Held shut rather than warned about twice. This is the failure that runs a vehicle
+                // away rather than merely degrading it, and the remedy is one field.
+                enabled:    !_root._offline && _root._hasItems && !_root._anyItemTooHigh
                 onClicked:  _root.planMasterController.sendToVehicle()
             }
 

@@ -17,5 +17,6 @@ public:
 
 private slots:
     void _rangefinderSource_reportsTheRangeAsTheCeiling_test();
-    void _barometerSource_warnsAboutNothing_test();
+    void _flowVelocitySource_keepsTheCeiling_test();
+    void _neitherSource_warnsAboutNothing_test();
 };

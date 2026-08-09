@@ -833,4 +833,37 @@ void LocalGridViewTest::_altitudeCanBeAppliedToEveryItem_test()
     QCOMPARE(changed.toInt(), 0);
 }
 
+/// The regression this exists for. A warning shown only for the selected item is not a warning: the
+/// item that ran a flight away was the takeoff, while the item on screen was the landing. The scan
+/// has to cover the whole plan and name what it found.
+void LocalGridViewTest::_everyItemAboveTheCeilingIsFound_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    for (int i = 0; i < 3; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0 * (i + 1), 0.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // The mock vehicle's estimator takes its height from the barometer and nothing from optical
+    // flow, so no ceiling applies and nothing may be reported however high the plan goes
+    QVERIFY(!gridView->property("altitudeLimitKnown").toBool());
+    QVariant applied;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointAltitudes", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, applied), Q_ARG(QVariant, 500.0)));
+    QVERIFY2(gridView->property("itemsAboveAltitudeLimit").value<QJSValue>()
+                 .property(QStringLiteral("length")).toInt() == 0,
+             "a vehicle that does not depend on the rangefinder has no ceiling to breach");
+}
+
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)

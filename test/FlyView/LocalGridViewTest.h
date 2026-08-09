@@ -36,4 +36,5 @@ private slots:
     void _firstItemOfAnEmptyPlanBecomesATakeoff_test();
     void _itemTypeChangesInPlace_test();
     void _altitudeCanBeAppliedToEveryItem_test();
+    void _everyItemAboveTheCeilingIsFound_test();
 };

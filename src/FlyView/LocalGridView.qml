@@ -96,6 +96,32 @@ Item {
     /// Exposed so the waypoint panel can warn against it without reaching for parameters itself
     readonly property alias altitudeLimitMetres: altitudeLimit.limitMetres
     readonly property alias altitudeLimitKnown:  altitudeLimit.limitKnown
+    readonly property alias altitudeLimitReason: altitudeLimit.limitReason
+
+    /// Sequence numbers of every item in the plan whose altitude climbs past that ceiling.
+    ///
+    /// Scanned across the whole plan rather than reported per selected item. A warning that appears
+    /// only when the operator happens to be looking at the offending waypoint is not a warning: the
+    /// item that ran a flight away was the takeoff, while the item on screen was the landing.
+    readonly property var itemsAboveAltitudeLimit: _findItemsAboveAltitudeLimit()
+
+    function _findItemsAboveAltitudeLimit() {
+        const offenders = []
+        if (!altitudeLimit.limitKnown) {
+            return offenders
+        }
+
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            const fact = waypointAltitudeFact(points[i].index)
+            // rawValue is read inside the loop on purpose: it makes this binding depend on every
+            // item's altitude, so editing one re-runs the scan
+            if (fact && altitudeLimit.exceeds(fact.rawValue)) {
+                offenders.push(points[i].sequence)
+            }
+        }
+        return offenders
+    }
 
     /// @return true when this altitude would climb past the rangefinder the estimator takes its
     /// height from
@@ -874,6 +900,7 @@ Item {
         anchors.bottomMargin:   _root._margins + (ScreenTools.defaultFontPixelHeight * 2.5)
         z:                      2
         planMasterController:   _root.planMasterController
+        gridView:               _root
     }
 
     LocalGridScaleBar {
