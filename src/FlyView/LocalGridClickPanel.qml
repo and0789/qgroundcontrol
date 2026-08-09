@@ -14,6 +14,10 @@ Rectangle {
 
     property var gridView: null
 
+    /// Raised when the operator asks to set an origin from here, so the view that owns this panel
+    /// decides how the dialog is shown rather than this panel reaching out to build one
+    signal setOriginRequested()
+
     visible:        false
     width:          layout.implicitWidth + (_margins * 2)
     height:         layout.implicitHeight + (_margins * 2)
@@ -103,6 +107,19 @@ Rectangle {
             text:                   (_root.gridView && !_root.gridView.originKnown)
                                         ? qsTr("The vehicle has no estimator origin, so this grid is not anchored to anything a mission can be stored against.")
                                         : qsTr("No plan is loaded.")
+        }
+
+        // The way out of that message. Without it the operator has to turn the grid off, find the
+        // spot on a map and turn the grid back on -- and a map is the one thing that may not be
+        // available where this is being flown.
+        QGCButton {
+            Layout.fillWidth:   true
+            visible:            _root.gridView ? !_root.gridView.originKnown : false
+            text:               qsTr("Set Estimator Origin…")
+            onClicked: {
+                _root.visible = false
+                _root.setOriginRequested()
+            }
         }
 
         QGCButton {

@@ -14,6 +14,9 @@ Rectangle {
 
     property var gridView: null
 
+    /// Raised when the operator asks to set an origin, handled by the view that owns this readout
+    signal setOriginRequested()
+
     implicitWidth:  layout.implicitWidth + (_margins * 2)
     implicitHeight: layout.implicitHeight + (_margins * 2)
     color:          qgcPal.window
@@ -112,6 +115,18 @@ Rectangle {
             font.pointSize:     ScreenTools.smallFontPointSize
             color:              qgcPal.colorOrange
             text:               qsTr("No local position telemetry")
+        }
+
+        // Only while there is no origin. Once one is set this is the least interesting control here,
+        // and re-setting it mid-flight moves the frame every reading above is measured in.
+        QGCButton {
+            objectName:         "localGrid_setOriginButton"
+            Layout.fillWidth:   true
+            Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
+            visible:            _root.gridView ? !_root.gridView.originKnown : false
+            primary:            true
+            text:               qsTr("Set Estimator Origin…")
+            onClicked:          _root.setOriginRequested()
         }
 
         RowLayout {

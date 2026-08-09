@@ -525,9 +525,29 @@ Item {
     /// mis-aimed pan into an edit of the plan, and the offsets shown here are the point of placing a
     /// waypoint this way at all -- the operator sees the metres before committing to them.
     LocalGridClickPanel {
-        id:         clickPanel
-        gridView:   _root
-        z:          1
+        id:                     clickPanel
+        gridView:               _root
+        z:                      1
+        onSetOriginRequested:   _root.showSetOriginDialog()
+    }
+
+    /// Built on demand rather than kept alive: it is opened rarely, and once per flight at most.
+    function showSetOriginDialog() {
+        setOriginDialogFactory.open()
+    }
+
+    // The factory rather than a Loader: QGCPopupDialog destroys itself on close, which would leave
+    // a Loader holding a dangling item and nothing to open the second time.
+    QGCPopupDialogFactory {
+        id:                 setOriginDialogFactory
+        dialogComponent:    setOriginDialogComponent
+    }
+
+    Component {
+        id: setOriginDialogComponent
+
+        SetEstimatorOriginDialog {
+        }
     }
 
     /// @return the given inset, or 0 when the fly view has not supplied any
@@ -567,5 +587,6 @@ Item {
         anchors.rightMargin:    _root._margins
         anchors.topMargin:      _root.topEdgeOffset + _root._margins
         gridView:               _root
+        onSetOriginRequested:   _root.showSetOriginDialog()
     }
 }

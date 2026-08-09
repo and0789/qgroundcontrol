@@ -68,6 +68,20 @@
             "label": "Show obstacle distance overlay on map and video."
         },
         {
+            "name": "lastEstimatorOriginLatitude",
+            "shortDesc": "Latitude of the estimator origin last set, offered as a starting point next time.",
+            "type": "double",
+            "default": 0,
+            "label": "Last estimator origin latitude"
+        },
+        {
+            "name": "lastEstimatorOriginLongitude",
+            "shortDesc": "Longitude of the estimator origin last set, offered as a starting point next time.",
+            "type": "double",
+            "default": 0,
+            "label": "Last estimator origin longitude"
+        },
+        {
             "name": "showLocalGridView",
             "shortDesc": "Replace the fly view map with a local NED grid measured in metres.",
             "type": "bool",

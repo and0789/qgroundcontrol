@@ -220,7 +220,7 @@ Item {
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
             color:                  qgcPal.colorRed
-            text:                   qsTr("Missions cannot run. Click the map and choose 'Set Estimator Origin'.")
+            text:                   qsTr("Missions cannot run. Set an origin from the local grid, or click the map and choose 'Set Estimator Origin'.")
         }
 
         SectionHeader { text: qsTr("Optical Flow") }
