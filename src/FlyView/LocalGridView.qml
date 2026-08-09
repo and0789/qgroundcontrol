@@ -21,6 +21,16 @@ Item {
     /// The plan being flown, so its waypoints can be drawn on the frame they will be flown in
     property var missionController: null
 
+    /// Where the fly view's own widgets already are. The grid draws behind them, so its readouts
+    /// have to be kept out from under the tool strip and the instrument panels rather than laid out
+    /// against the bare edges of the window.
+    property var toolInsets: null
+
+    /// How much of the top of this item the toolbar covers. The grid fills the whole window, while
+    /// toolInsets are measured from below the toolbar, so without this the top row of the grid's own
+    /// widgets is laid out into a strip that is already painted over.
+    property real topEdgeOffset: 0
+
     /// Keeps the vehicle in the middle of the view. Dragging turns it off, since the operator has
     /// then said where they want to look.
     property bool followVehicle: true
@@ -239,6 +249,9 @@ Item {
             // at a glance without labelling every one of them
             const majorEvery = 5
 
+            /// How close to an edge a label may sit before it would be cut off
+            const labelEdgeMargin = ScreenTools.defaultFontPixelWidth * 3
+
             const westEdge = transform.eastForPixelX(0)
             const eastEdge = transform.eastForPixelX(width)
             const southEdge = transform.northForPixelY(height)
@@ -251,7 +264,9 @@ Item {
                 _root._drawLine(ctx, x, 0, x, height,
                                 east === 0 ? _root._axisColor : (isMajor ? _root._gridMajorColor : _root._gridMinorColor),
                                 east === 0 ? 2 : 1)
-                if (isMajor) {
+                // Skipped near the edges, where a centred label would be sliced in half and read as
+                // a different number entirely
+                if (isMajor && (x > labelEdgeMargin) && (x < (width - labelEdgeMargin))) {
                     ctx.fillStyle = _root._axisColor
                     ctx.textAlign = "center"
                     ctx.fillText(_root._label(east), x, height - (_root._margins * 2))
@@ -515,26 +530,37 @@ Item {
         z:          1
     }
 
+    /// @return the given inset, or 0 when the fly view has not supplied any
+    function _inset(name) {
+        return toolInsets ? toolInsets[name] : 0
+    }
+
+    // Top centre rather than a corner. The corners of the fly view are all spoken for -- tool strip,
+    // instrument panel, telemetry bar -- and their insets are wide enough that honouring them would
+    // push a rose this size into the middle of the grid, on top of the aircraft it is describing.
     LocalGridCompassRose {
-        id:                 compassRose
-        anchors.right:      parent.right
-        anchors.top:        parent.top
-        anchors.margins:    _root._margins
-        headingDegrees:     _root._headingDegrees
-        diameter:           ScreenTools.defaultFontPixelHeight * 8
+        id:                         compassRose
+        anchors.horizontalCenter:   parent.horizontalCenter
+        anchors.top:                parent.top
+        // Doubled so the ring of cardinal labels clears the toolbar rather than starting against it
+        anchors.topMargin:          _root.topEdgeOffset + _root._margins + _root._inset("topEdgeCenterInset")
+        headingDegrees:             _root._headingDegrees
+        diameter:                   ScreenTools.defaultFontPixelHeight * 8
     }
 
     LocalGridScaleBar {
-        anchors.left:       parent.left
-        anchors.bottom:     parent.bottom
-        anchors.margins:    _root._margins
-        gridTransform:      transform
+        anchors.left:           parent.left
+        anchors.bottom:         parent.bottom
+        anchors.leftMargin:     _root._margins + _root._inset("leftEdgeBottomInset")
+        anchors.bottomMargin:   _root._margins + _root._inset("bottomEdgeLeftInset")
+        gridTransform:          transform
     }
 
     LocalGridReadout {
-        anchors.left:       parent.left
-        anchors.top:        parent.top
-        anchors.margins:    _root._margins
-        gridView:           _root
+        anchors.left:           parent.left
+        anchors.top:            parent.top
+        anchors.leftMargin:     _root._margins + _root._inset("leftEdgeTopInset")
+        anchors.topMargin:      _root.topEdgeOffset + _root._margins + _root._inset("topEdgeLeftInset")
+        gridView:               _root
     }
 }

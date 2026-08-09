@@ -92,9 +92,12 @@ Item {
 
         LocalGridView {
             id:                 localGridView
+            objectName:         "localGridView"
             anchors.fill:       parent
             vehicle:            _activeVehicle
             missionController:  _missionController
+            toolInsets:         customOverlay.totalToolInsets
+            topEdgeOffset:      toolbar.height
             z:                  _fullItemZorder
             enabled:            _isLocalGridMode
             visible:            _isLocalGridMode

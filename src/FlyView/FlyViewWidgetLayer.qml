@@ -185,7 +185,10 @@ Item {
         anchors.top:        parent.top
         mapControl:         _mapControl
         autoHide:           true
-        visible:            !ScreenTools.isTinyScreen && QGroundControl.corePlugin.options.flyView.showMapScale && QGCViewer3DManager.displayMode !== QGCViewer3DManager.View3D && mapControl.pipState.state === mapControl.pipState.fullState
+        // Hidden with the map it measures. The local grid carries its own scale bar in ground metres,
+        // and leaving this one up would put two different scales on screen, one of them describing a
+        // map that is not being shown.
+        visible:            !ScreenTools.isTinyScreen && QGroundControl.corePlugin.options.flyView.showMapScale && QGCViewer3DManager.displayMode !== QGCViewer3DManager.View3D && mapControl.pipState.state === mapControl.pipState.fullState && !QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
 
         property real topEdgeCenterInset: visible ? y + height : 0
     }
