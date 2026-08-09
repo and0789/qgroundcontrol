@@ -114,7 +114,7 @@ void NonGpsFlowHealthTest::_countsRejectedAboveLimit_test()
 
     const QScopedPointer<QObject> flowHealth(component.createWithInitialProperties({
         { QStringLiteral("vehicle"), QVariant::fromValue(vehicle()) },
-        { QStringLiteral("limitParameterName"), QString::fromLatin1(kLimitParameterName) },
+        { QStringLiteral("limitParameterNames"), QVariantList{ QString::fromLatin1(kLimitParameterName) } },
     }));
     QVERIFY(flowHealth);
 
@@ -154,7 +154,7 @@ void NonGpsFlowHealthTest::_missingLimitParameterGivesNoVerdict_test()
 
     const QScopedPointer<QObject> flowHealth(component.createWithInitialProperties({
         { QStringLiteral("vehicle"), QVariant::fromValue(vehicle()) },
-        { QStringLiteral("limitParameterName"), QStringLiteral("NO_SUCH_PARAMETER") },
+        { QStringLiteral("limitParameterNames"), QVariantList{ QStringLiteral("NO_SUCH_PARAMETER") } },
     }));
     QVERIFY(flowHealth);
 
@@ -212,7 +212,7 @@ void NonGpsFlowHealthTest::_limitFoundWhenVehicleArrivesLater_test()
 
     // Created with no vehicle, the way the fly view creates it at startup
     const QScopedPointer<QObject> flowHealth(component.createWithInitialProperties({
-        { QStringLiteral("limitParameterName"), QString::fromLatin1(kLimitParameterName) },
+        { QStringLiteral("limitParameterNames"), QVariantList{ QString::fromLatin1(kLimitParameterName) } },
     }));
     QVERIFY(flowHealth);
     QVERIFY2(!flowHealth->property("limitKnown").toBool(), "no vehicle means no limit");

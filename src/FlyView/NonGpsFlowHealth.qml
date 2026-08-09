@@ -19,10 +19,12 @@ QtObject {
     property var vehicle
     property int windowSecs: 10
 
-    /// The vehicle parameter holding the flow magnitude the EKF will still accept
-    property string limitParameterName: "EK3_MAX_FLOW"
+    /// The vehicle parameters holding the flow magnitude the EKF will still accept, newest name
+    /// first. ArduPilot calls it EK3_FLOW_MAX; the older EK3_MAX_FLOW is kept as a fallback so this
+    /// still reads on firmware that predates the rename.
+    property var limitParameterNames: [ "EK3_FLOW_MAX", "EK3_MAX_FLOW" ]
 
-    /// EK3_MAX_FLOW only exists on ArduPilot, so there is no verdict to give on other firmware
+    /// The limit only exists on ArduPilot, so there is no verdict to give on other firmware
     readonly property bool  limitKnown:         _limitFact !== null
     readonly property real  flowLimit:          _limitFact ? _limitFact.rawValue : NaN
 
@@ -43,9 +45,19 @@ QtObject {
     property var    _opticalFlow:       vehicle ? vehicle.opticalFlow : null
     property var    _magnitudeFact:     _opticalFlow ? _opticalFlow.flowCompMagnitude : null
     property bool   _parametersReady:   vehicle ? vehicle.parameterManager.parametersReady : false
-    property var    _limitFact:         (_controller && _parametersReady && _controller.parameterExists(-1, limitParameterName))
-                                            ? _controller.getParameterFact(-1, limitParameterName)
-                                            : null
+    property var    _limitFact:         _findLimitFact()
+
+    function _findLimitFact() {
+        if (!_controller || !_parametersReady) {
+            return null
+        }
+        for (var i = 0; i < limitParameterNames.length; i++) {
+            if (_controller.parameterExists(-1, limitParameterNames[i])) {
+                return _controller.getParameterFact(-1, limitParameterNames[i])
+            }
+        }
+        return null
+    }
 
     property var    _samples:           []
     property int    _sampleCount:       0
