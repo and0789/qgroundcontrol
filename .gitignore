@@ -188,3 +188,9 @@ Qt*-linux*.tar.*
 .tool-versions
 .python-version
 !tools/.python-version
+
+# Local SITL helper and MAVProxy artefacts: machine-specific paths, not shared
+sitl-lapangan.sh
+mav.parm
+mav.tlog
+mav.tlog.raw
