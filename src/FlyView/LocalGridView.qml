@@ -161,6 +161,14 @@ Item {
             return false
         }
 
+        // The first point of a plan is a takeoff, whatever it was asked for. A mission whose first
+        // item is a waypoint does not climb -- the aircraft sits there -- and asking the operator to
+        // remember that on every new plan is asking them to remember it on the one flight they
+        // forget. The plan being empty is the only case, so nothing already built is reinterpreted.
+        if ((kind === "waypoint") && _planIsEmpty() && _takeoffAllowed()) {
+            kind = "takeoff"
+        }
+
         // -1 appends, which is what clicking past the end of a route means
         switch (kind) {
         case "takeoff":
@@ -175,6 +183,8 @@ Item {
             missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
             break
         }
+
+        _selectNewestItem()
         return true
     }
 
@@ -190,16 +200,33 @@ Item {
             return false
         }
 
-        // 21 is MAV_CMD_NAV_LAND, written out because MAVLinkEnums exposes no values to QML in this
-        // build -- moc emits an empty enum list for the generated namespace, so every member of it
-        // reads as undefined. LocalGridViewTest pins the number.
-        item.command = 21
+        item.command = commandLand
+        _selectNewestItem()
         return true
     }
 
     /// @return true if it was added
     function addWaypointAt(north, east) {
         return addMissionItemAt("waypoint", north, east)
+    }
+
+    /// True when the plan holds nothing that has been placed on the ground yet. Mission settings and
+    /// other item types that carry no coordinate are not part of a route.
+    function _planIsEmpty() {
+        return missionPoints.length === 0
+    }
+
+    function _takeoffAllowed() {
+        return missionController.isInsertTakeoffValid === true
+    }
+
+    /// Selects whatever the plan just gained, so its altitude can be set straight away rather than
+    /// found afterwards. The item is appended, so it is the last one drawn.
+    function _selectNewestItem() {
+        const points = missionPoints
+        if (points.length > 0) {
+            selectWaypoint(points[points.length - 1].index)
+        }
     }
 
     /// Adds a waypoint under a point on screen, which is what a click on the grid means
@@ -298,6 +325,31 @@ Item {
     function waypointAltitudeFact(index) {
         const item = _visualItemAt(index)
         return (item && item.altitude) ? item.altitude : null
+    }
+
+    // Written out because MAVLinkEnums exposes no values to QML in this build: moc emits an empty
+    // enum list for the generated namespace, so every member of it reads as undefined.
+    // LocalGridViewTest pins each number against the MAVLink header.
+    readonly property int commandWaypoint:  16  // MAV_CMD_NAV_WAYPOINT
+    readonly property int commandLand:      21  // MAV_CMD_NAV_LAND
+    readonly property int commandTakeoff:   22  // MAV_CMD_NAV_TAKEOFF
+
+    /// @return the command of a mission item, or -1 for one that does not carry a settable command
+    function waypointCommand(index) {
+        const item = _visualItemAt(index)
+        return (item && (item.command !== undefined)) ? item.command : -1
+    }
+
+    /// Turns a placed item into a takeoff, a landing or a plain waypoint without deleting and
+    /// replacing it -- so the position already typed or dragged into place is kept.
+    ///     @return true if the command was changed
+    function setWaypointCommand(index, command) {
+        const item = _visualItemAt(index)
+        if (!item || (item.command === undefined)) {
+            return false
+        }
+        item.command = command
+        return true
     }
 
     /// Moves a waypoint to a point on the grid, in metres from the origin.

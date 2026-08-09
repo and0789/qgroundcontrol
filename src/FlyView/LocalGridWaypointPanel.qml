@@ -50,6 +50,43 @@ Rectangle {
 
     readonly property string _distanceUnits: _transform ? _transform.displayUnits : ""
 
+    /// The item's current command, or -1 for one whose type cannot be changed
+    readonly property int  _command:      (gridView && (visualItemIndex >= 0)) ? gridView.waypointCommand(visualItemIndex) : -1
+    readonly property bool _commandKnown: _command >= 0
+
+    /// Position in the type list, so the box shows what the item already is rather than always
+    /// reading "Waypoint" and inviting a change nobody asked for
+    function _typeIndexFor(command) {
+        if (!gridView) {
+            return 0
+        }
+        switch (command) {
+        case gridView.commandTakeoff:   return 1
+        case gridView.commandLand:      return 2
+        default:                        return 0
+        }
+    }
+
+    function _commandForTypeIndex(index) {
+        if (!gridView) {
+            return -1
+        }
+        switch (index) {
+        case 1:     return gridView.commandTakeoff
+        case 2:     return gridView.commandLand
+        default:    return gridView.commandWaypoint
+        }
+    }
+
+    function _applyType(index) {
+        const command = _commandForTypeIndex(index)
+        if ((command >= 0) && gridView) {
+            gridView.setWaypointCommand(visualItemIndex, command)
+        }
+    }
+
+    on_CommandChanged: typeCombo.currentIndex = _typeIndexFor(_command)
+
     /// atan2 of east over north, rather than the usual y over x, is what turns a maths angle into a
     /// bearing measured clockwise from north
     function _bearingBetween(fromNorth, fromEast, toNorth, toEast) {
@@ -183,7 +220,33 @@ Rectangle {
 
         QGCLabel {
             font.bold:  true
-            text:       qsTr("Waypoint %1").arg(_root.sequenceNumber)
+            text:       qsTr("Item %1").arg(_root.sequenceNumber)
+        }
+
+        // Changing the type in place rather than deleting and re-adding, so the position already
+        // dragged or typed into place survives the change. Turning the last waypoint of a pattern
+        // into a landing is the common edit, and rebuilding it from scratch to do that loses the
+        // offsets that were the point of placing it.
+        RowLayout {
+            Layout.fillWidth:   true
+            spacing:            ScreenTools.defaultFontPixelWidth
+
+            QGCLabel {
+                Layout.preferredWidth:  _root._labelWidth
+                horizontalAlignment:    Text.AlignRight
+                font.pointSize:         ScreenTools.smallFontPointSize
+                text:                   qsTr("Type")
+            }
+
+            QGCComboBox {
+                id:                     typeCombo
+                Layout.preferredWidth:  _root._fieldWidth
+                font.pointSize:         ScreenTools.smallFontPointSize
+                enabled:                _root._commandKnown
+                model:                  [ qsTr("Waypoint"), qsTr("Takeoff"), qsTr("Land") ]
+
+                onActivated: (index) => _root._applyType(index)
+            }
         }
 
         SectionHeader { text: qsTr("Position From Origin") }

@@ -33,4 +33,6 @@ private slots:
     void _bearingAndRangeAgreeWithOffsets_test();
     void _legIsMeasuredFromThePreviousWaypoint_test();
     void _takeoffAndLandingUseTheirOwnInsertions_test();
+    void _firstItemOfAnEmptyPlanBecomesATakeoff_test();
+    void _itemTypeChangesInPlace_test();
 };

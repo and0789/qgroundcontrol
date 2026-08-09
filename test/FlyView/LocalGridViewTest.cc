@@ -81,7 +81,8 @@ constexpr const char *kMissionControllerStub = R"(
             lastCoordinate = coordinate
             lastIndex = index
             insertCount++
-            lastInsertedItem = itemComponent.createObject(null, { coordinate: coordinate })
+            addItem(coordinate, items.length + 1)
+            lastInsertedItem = items[items.length - 1]
             return lastInsertedItem
         }
 
@@ -96,14 +97,18 @@ constexpr const char *kMissionControllerStub = R"(
             lastCoordinate = coordinate
             lastIndex = index
             takeoffCount++
-            return null
+            // Appended like any other insertion. Without this the plan looks empty to the grid,
+            // which keeps treating the next item as the first one.
+            addItem(coordinate, items.length + 1)
+            return items[items.length - 1]
         }
 
         function insertLandItem(coordinate, index, makeCurrentItem) {
             lastCoordinate = coordinate
             lastIndex = index
             landCount++
-            return null
+            addItem(coordinate, items.length + 1)
+            return items[items.length - 1]
         }
 
         property int removedIndex: -99
@@ -194,6 +199,10 @@ void LocalGridViewTest::init()
     // Building a real view lays out labels, which makes the headless runner resolve fonts once
     ignoreLogMessage("qt.qpa.fonts", QtWarningMsg,
                      QRegularExpression(QStringLiteral("Populating font family aliases")));
+    // The type selector's drop-down indicator is a coloured SVG, and a bare QML engine has no image
+    // provider registered for it. Nothing to do with the grid.
+    ignoreLogMessage("default", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Invalid image provider")));
 }
 
 #define MAKE_GRID_VIEW(name)                                                       \
@@ -360,7 +369,9 @@ void LocalGridViewTest::_waypointPlacedInMetres_reachesThePlanAsACoordinate_test
                                       Q_RETURN_ARG(QVariant, placed),
                                       Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
     QVERIFY(placed.toBool());
-    QCOMPARE(stub->property("insertCount").toInt(), 1);
+    // The first item of an empty plan is a takeoff whatever was asked for, so what is asserted here
+    // is the coordinate it was given rather than which insertion carried it
+    QCOMPARE(stub->property("takeoffCount").toInt(), 1);
     // -1 appends, which is what clicking past the end of a route means
     QCOMPARE(stub->property("lastIndex").toInt(), -1);
 
@@ -652,13 +663,14 @@ void LocalGridViewTest::_takeoffAndLandingUseTheirOwnInsertions_test()
     QVERIFY(added.toBool());
     QCOMPARE(stub->property("landCount").toInt(), 1);
 
-    // An unrecognised kind must still produce a plain waypoint rather than nothing at all
+    // Once the plan holds something, a waypoint stays a waypoint
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
                                       Q_RETURN_ARG(QVariant, added),
                                       Q_ARG(QVariant, QStringLiteral("waypoint")),
                                       Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 10.0)));
     QVERIFY(added.toBool());
     QCOMPARE(stub->property("insertCount").toInt(), 1);
+    QVERIFY2(stub->property("takeoffCount").toInt() == 1, "only the first item may be turned into a takeoff");
 
     // Landing where the vehicle stands is a plain item whose command is changed afterwards, since
     // MissionController offers no insertion for it. 21 is MAV_CMD_NAV_LAND; the number is pinned
@@ -683,6 +695,94 @@ void LocalGridViewTest::_takeoffAndLandingUseTheirOwnInsertions_test()
                                       Q_ARG(QVariant, 0.0), Q_ARG(QVariant, 0.0)));
     QVERIFY2(!added.toBool(), "no item may be placed against an unanchored grid");
     QCOMPARE(stub->property("takeoffCount").toInt(), 1);
+}
+
+/// A mission whose first item is a plain waypoint does not climb -- the aircraft sits there. Making
+/// the first point a takeoff removes a step nobody remembers until the one flight they forget it.
+void LocalGridViewTest::_firstItemOfAnEmptyPlanBecomesATakeoff_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 0.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QCOMPARE(stub->property("takeoffCount").toInt(), 1);
+    QCOMPARE(stub->property("insertCount").toInt(), 0);
+
+    // Whatever it was placed as, it is selected, so its altitude can be set without hunting for it
+    QCOMPARE(gridView->property("selectedWaypointIndex").toInt(), 0);
+
+    // The second is a waypoint, and every one after it. Only an empty plan is reinterpreted.
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QCOMPARE(stub->property("takeoffCount").toInt(), 1);
+    QCOMPARE(stub->property("insertCount").toInt(), 1);
+
+    // A plan that already carries a takeoff must not gain a second one from an empty-looking list
+    stub->setProperty("isInsertTakeoffValid", false);
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 40.0), Q_ARG(QVariant, 0.0)));
+    QCOMPARE(stub->property("takeoffCount").toInt(), 1);
+}
+
+/// Turning the last waypoint of a pattern into a landing is the common edit. Doing it in place keeps
+/// the offsets that were the point of positioning it; deleting and re-adding throws them away.
+void LocalGridViewTest::_itemTypeChangesInPlace_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 90.0))), Q_ARG(QVariant, 1)));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // The numbers this view exists to show must survive the change
+    const QJSValue before = gridView->property("missionPoints").value<QJSValue>();
+    const double eastBefore = before.property(0).property(QStringLiteral("east")).toNumber();
+    QVERIFY(qAbs(eastBefore - 20.0) < 0.05);
+
+    QVariant changed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointCommand", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed),
+                                      Q_ARG(QVariant, 0),
+                                      Q_ARG(QVariant, static_cast<int>(MAV_CMD_NAV_LAND))));
+    QVERIFY(changed.toBool());
+
+    QVariant command;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointCommand", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, command), Q_ARG(QVariant, 0)));
+    QCOMPARE(command.toInt(), static_cast<int>(MAV_CMD_NAV_LAND));
+
+    const QJSValue after = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY2(qAbs(after.property(0).property(QStringLiteral("east")).toNumber() - eastBefore) < 1e-9,
+             "changing the type must not move the item");
+
+    // An index naming nothing must not write a command into whatever sits there now
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointCommand", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed),
+                                      Q_ARG(QVariant, 7), Q_ARG(QVariant, static_cast<int>(MAV_CMD_NAV_TAKEOFF))));
+    QVERIFY(!changed.toBool());
 }
 
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)
