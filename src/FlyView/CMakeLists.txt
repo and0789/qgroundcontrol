@@ -47,7 +47,9 @@ qt_add_qml_module(FlyViewModule
         GuidedActionTakeoff.qml
         GuidedToolStripAction.qml
         GuidedValueSlider.qml
+        LocalGridClickPanel.qml
         LocalGridCompassRose.qml
+        LocalGridProjection.qml
         LocalGridReadout.qml
         LocalGridScaleBar.qml
         LocalGridShowAction.qml

@@ -5,6 +5,8 @@
 
 target_sources(${CMAKE_PROJECT_NAME}
     PRIVATE
+        LocalGridProjectionTest.cc
+        LocalGridProjectionTest.h
         LocalGridTrailTest.cc
         LocalGridTrailTest.h
         LocalGridTransformTest.cc
@@ -23,6 +25,7 @@ target_sources(${CMAKE_PROJECT_NAME}
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_qgc_test(LocalGridProjectionTest LABELS Unit)
 add_qgc_test(LocalGridTrailTest LABELS Unit)
 add_qgc_test(LocalGridTransformTest LABELS Unit)
 add_qgc_test(LocalGridViewTest LABELS Integration Vehicle)

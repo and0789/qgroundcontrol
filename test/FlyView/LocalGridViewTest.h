@@ -24,4 +24,7 @@ private slots:
     void _followingVehicle_keepsItCentred_test();
     void _centreOnOrigin_stopsFollowing_test();
     void _trailAccumulatesFromTelemetry_test();
+    void _withoutEstimatorOrigin_refusesWaypoints_test();
+    void _waypointPlacedInMetres_reachesThePlanAsACoordinate_test();
+    void _planIsDrawnInGridMetres_test();
 };

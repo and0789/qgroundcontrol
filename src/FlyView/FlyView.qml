@@ -91,12 +91,13 @@ Item {
         }
 
         LocalGridView {
-            id:             localGridView
-            anchors.fill:   parent
-            vehicle:        _activeVehicle
-            z:              _fullItemZorder
-            enabled:        _isLocalGridMode
-            visible:        _isLocalGridMode
+            id:                 localGridView
+            anchors.fill:       parent
+            vehicle:            _activeVehicle
+            missionController:  _missionController
+            z:                  _fullItemZorder
+            enabled:            _isLocalGridMode
+            visible:            _isLocalGridMode
         }
 
         FlyViewVideo {

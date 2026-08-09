@@ -1,11 +1,16 @@
 #include "LocalGridViewTest.h"
 
+#include <cmath>
+
 #include <QtCore/QtNumeric>
+#include <QtPositioning/QGeoCoordinate>
+#include <QtQml/QJSValue>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlEngine>
 #include <QtTest/QTest>
 
 #include "FactGroup.h"
+#include "FirmwarePlugin.h"
 #include "Vehicle.h"
 
 namespace {
@@ -23,6 +28,84 @@ void sendLocalPosition(Vehicle *vehicle, float north, float east, float down)
     mavlink_message_t message{};
     (void) mavlink_msg_local_position_ned_encode(vehicle->id(), MAV_COMP_ID_AUTOPILOT1, &message, &localPosition);
     vehicle->getFactGroup(QStringLiteral("localPosition"))->handleMessage(vehicle, message);
+}
+
+/// A stand-in for MissionController holding just what the grid touches: the list it draws and the
+/// insertion call it makes. Using the real controller here would test QGC's mission machinery rather
+/// than whether the grid hands it the right coordinate.
+constexpr const char *kMissionControllerStub = R"(
+    import QtQuick
+    import QtPositioning
+
+    QtObject {
+        property var lastCoordinate: null
+        property int lastIndex: -99
+        property int insertCount: 0
+
+        property var items: []
+
+        function addItem(coordinate, sequenceNumber) {
+            // A copy, not the same array mutated: assigning the same reference back changes nothing
+            // as far as QML is concerned, so count would never update
+            var list = items.slice()
+            list.push({
+                specifiesCoordinate: true,
+                coordinate: coordinate,
+                sequenceNumber: sequenceNumber,
+                isCurrentItem: false
+            })
+            items = list
+        }
+
+        readonly property var visualItems: QtObject {
+            readonly property int count: items.length
+            function get(index) { return items[index] }
+        }
+
+        function insertSimpleMissionItem(coordinate, index, makeCurrentItem) {
+            lastCoordinate = coordinate
+            lastIndex = index
+            insertCount++
+            return null
+        }
+    }
+)";
+
+QObject *createMissionControllerStub(QQmlComponent &component, QString &error)
+{
+    component.setData(kMissionControllerStub, QUrl());
+    if (!component.isReady()) {
+        error = component.errorString();
+        return nullptr;
+    }
+
+    QObject *const stub = component.create();
+    if (!stub) {
+        error = component.errorString();
+    }
+    return stub;
+}
+
+/// Gives the vehicle an estimator origin, the way the operator does from the fly view map
+bool setEstimatorOrigin(Vehicle *vehicle, MockLink *mockLink, const QGeoCoordinate &origin)
+{
+    FirmwarePluginInstanceData *const instanceData = vehicle->firmwarePluginInstanceData();
+    if (!instanceData) {
+        return false;
+    }
+
+    // Cached-unsupported drives the legacy message, which MockLink records as the vehicle's origin
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN,
+                                      FirmwarePluginInstanceData::CommandSupportedResult::UNSUPPORTED);
+    vehicle->setEstimatorOrigin(origin);
+    if (!QTest::qWaitFor([mockLink]() {
+            return mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) >= 1;
+        }, TestTimeout::longMs())) {
+        return false;
+    }
+
+    vehicle->requestEstimatorOrigin();
+    return QTest::qWaitFor([vehicle]() { return vehicle->estimatorOrigin().isValid(); }, TestTimeout::longMs());
 }
 
 /// Creates the view sized like a fly view and bound to the connected vehicle, owned by the caller
@@ -179,6 +262,115 @@ void LocalGridViewTest::_trailAccumulatesFromTelemetry_test()
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearTrail"));
     QCOMPARE(gridView->property("trailPointCount").toInt(), 0);
     QCOMPARE(gridView->property("trailLengthMetres").toDouble(), 0.0);
+}
+
+/// Without an origin the grid is not anchored to anything a mission can be stored against. Placing a
+/// waypoint anyway would invent a coordinate: it would upload cleanly and be flown somewhere else.
+void LocalGridViewTest::_withoutEstimatorOrigin_refusesWaypoints_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY2(!vehicle()->estimatorOrigin().isValid(), "the mock vehicle starts without an origin");
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVERIFY(!gridView->property("originKnown").toBool());
+    QVERIFY(!gridView->property("canPlaceWaypoints").toBool());
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
+    QVERIFY2(!placed.toBool(), "no waypoint may be placed against an unanchored grid");
+    QCOMPARE(stub->property("insertCount").toInt(), 0);
+}
+
+/// The point of the whole view: a waypoint placed as metres on the grid must reach the plan as the
+/// coordinate those metres describe.
+void LocalGridViewTest::_waypointPlacedInMetres_reachesThePlanAsACoordinate_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVERIFY(gridView->property("originKnown").toBool());
+    QVERIFY(gridView->property("canPlaceWaypoints").toBool());
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
+    QVERIFY(placed.toBool());
+    QCOMPARE(stub->property("insertCount").toInt(), 1);
+    // -1 appends, which is what clicking past the end of a route means
+    QCOMPARE(stub->property("lastIndex").toInt(), -1);
+
+    const QGeoCoordinate inserted = stub->property("lastCoordinate").value<QGeoCoordinate>();
+    QVERIFY(inserted.isValid());
+    QVERIFY2(qAbs(origin.distanceTo(inserted) - std::hypot(20.0, -10.0)) < 0.05,
+             "the waypoint must be the stated distance from the origin");
+    // 20 north and 10 west is a bearing of about 333 degrees
+    const double bearing = origin.azimuthTo(inserted);
+    QVERIFY2(qAbs(bearing - 333.435) < 0.5, qPrintable(QStringLiteral("bearing came out %1").arg(bearing)));
+}
+
+/// The plan is drawn in the frame the vehicle flies in, so a waypoint sitting 20 m north of the
+/// origin has to appear 20 m north of the origin on the grid and not somewhere geodesically close.
+void LocalGridViewTest::_planIsDrawnInGridMetres_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    // A 20 m leg due north, then 20 m due east: the project's own box pattern, half walked
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "addItem", Qt::DirectConnection,
+                                      Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 0.0))),
+                                      Q_ARG(QVariant, 1)));
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "addItem", Qt::DirectConnection,
+                                      Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 90.0))),
+                                      Q_ARG(QVariant, 2)));
+
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVERIFY(gridView->property("originKnown").toBool());
+
+    // Guard the stand-in itself, so a failure below points at the grid rather than at the fake
+    const QJSValue stubItems = stub->property("items").value<QJSValue>();
+    QCOMPARE(stubItems.property(QStringLiteral("length")).toInt(), 2);
+    QObject *const visualItems = stub->property("visualItems").value<QObject *>();
+    QVERIFY2(visualItems, "the stand-in must expose a visualItems list");
+    QCOMPARE(visualItems->property("count").toInt(), 2);
+
+    // The property holds a JavaScript array, which only reads back as one through QJSValue
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY2(points.isArray(), "missionPoints must be an array of grid offsets");
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+
+    const QJSValue first = points.property(0);
+    QVERIFY(qAbs(first.property(QStringLiteral("north")).toNumber() - 20.0) < 0.05);
+    QVERIFY(qAbs(first.property(QStringLiteral("east")).toNumber()) < 0.05);
+    QCOMPARE(first.property(QStringLiteral("sequence")).toInt(), 1);
+
+    const QJSValue second = points.property(1);
+    QVERIFY(qAbs(second.property(QStringLiteral("north")).toNumber()) < 0.05);
+    QVERIFY(qAbs(second.property(QStringLiteral("east")).toNumber() - 20.0) < 0.05);
 }
 
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)

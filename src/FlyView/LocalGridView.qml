@@ -1,4 +1,5 @@
 import QtQuick
+import QtPositioning
 
 import QGroundControl
 import QGroundControl.Controls
@@ -17,9 +18,21 @@ Item {
 
     property var vehicle: null
 
+    /// The plan being flown, so its waypoints can be drawn on the frame they will be flown in
+    property var missionController: null
+
     /// Keeps the vehicle in the middle of the view. Dragging turns it off, since the operator has
     /// then said where they want to look.
     property bool followVehicle: true
+
+    /// The point the grid's (0,0) is anchored to. LOCAL_POSITION_NED is measured from the vehicle's
+    /// estimator origin, so a mission drawn against anything else would be drawn against a different
+    /// frame than the aircraft is flying in.
+    readonly property var originCoordinate: vehicle ? vehicle.estimatorOrigin : QtPositioning.coordinate()
+    readonly property bool originKnown: originCoordinate.isValid
+
+    /// Waypoints in grid metres, rebuilt whenever the plan or the origin moves
+    readonly property var missionPoints: _buildMissionPoints()
 
     readonly property bool positionValid: _localPosition
                                             ? (_localPosition.telemetryAvailable && !isNaN(_north) && !isNaN(_east))
@@ -58,6 +71,46 @@ Item {
         id: trail
     }
 
+    LocalGridProjection {
+        id: projection
+    }
+
+    /// Walks the plan and places each item that has a coordinate on the grid. Reading
+    /// missionController.visualItems.count and the origin here is deliberate: both are what this
+    /// depends on, and touching them makes the binding re-run when a waypoint is added or the
+    /// vehicle's origin changes.
+    function _buildMissionPoints() {
+        const points = []
+        if (!missionController || !originKnown) {
+            return points
+        }
+
+        const items = missionController.visualItems
+        if (!items) {
+            return points
+        }
+
+        for (var i = 0; i < items.count; i++) {
+            const item = items.get(i)
+            if (!item || !item.specifiesCoordinate || !item.coordinate.isValid) {
+                continue
+            }
+            const offsets = projection.northEastFrom(originCoordinate, item.coordinate)
+            if (!offsets) {
+                continue
+            }
+            points.push({
+                north:      offsets.north,
+                east:       offsets.east,
+                sequence:   item.sequenceNumber,
+                isCurrent:  item.isCurrentItem
+            })
+        }
+        return points
+    }
+
+    onMissionPointsChanged: missionCanvas.requestPaint()
+
     /// Exposed so the view can be driven from tests and from the surrounding fly view
     readonly property alias gridTransform: transform
     readonly property alias trailPointCount:   trail.pointCount
@@ -70,6 +123,33 @@ Item {
     function clearTrail() {
         trail.reset()
         vehicleCanvas.requestPaint()
+    }
+
+    /// True when a waypoint placed on the grid would land where it was drawn. Without an origin
+    /// there is no mapping between this frame and the coordinates a mission is stored in, and a
+    /// waypoint invented from a guessed origin uploads cleanly and flies somewhere else.
+    readonly property bool canPlaceWaypoints: originKnown && (missionController !== null)
+
+    /// Adds a waypoint at a point on the grid, in metres from the origin.
+    ///     @return true if it was added
+    function addWaypointAt(north, east) {
+        if (!canPlaceWaypoints) {
+            return false
+        }
+
+        const coordinate = projection.coordinateAt(originCoordinate, north, east)
+        if (!coordinate.isValid) {
+            return false
+        }
+
+        // -1 appends, which is what clicking past the end of a route means
+        missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
+        return true
+    }
+
+    /// Adds a waypoint under a point on screen, which is what a click on the grid means
+    function addWaypointAtPixel(x, y) {
+        return addWaypointAt(transform.northForPixelY(y), transform.eastForPixelX(x))
     }
 
     onWidthChanged:  _fitIfUnstarted()
@@ -116,6 +196,7 @@ Item {
 
     function _repaintAll() {
         gridCanvas.requestPaint()
+        missionCanvas.requestPaint()
         vehicleCanvas.requestPaint()
     }
 
@@ -192,6 +273,18 @@ Item {
             }
 
             _root._drawOrigin(ctx)
+        }
+    }
+
+    /// The plan, between the grid and the vehicle so a waypoint never hides the aircraft
+    Canvas {
+        id:             missionCanvas
+        anchors.fill:   parent
+
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.reset()
+            _root._drawMission(ctx)
         }
     }
 
@@ -279,6 +372,42 @@ Item {
         ctx.stroke()
     }
 
+    function _drawMission(ctx) {
+        const points = missionPoints
+        if (points.length === 0) {
+            return
+        }
+
+        ctx.font = ScreenTools.smallFontPointSize + "pt sans-serif"
+        ctx.textAlign = "center"
+        ctx.textBaseline = "middle"
+
+        if (points.length > 1) {
+            ctx.beginPath()
+            ctx.strokeStyle = qgcPal.colorOrange
+            ctx.lineWidth = 2
+            ctx.moveTo(transform.pixelXForEast(points[0].east), transform.pixelYForNorth(points[0].north))
+            for (var i = 1; i < points.length; i++) {
+                ctx.lineTo(transform.pixelXForEast(points[i].east), transform.pixelYForNorth(points[i].north))
+            }
+            ctx.stroke()
+        }
+
+        const radius = ScreenTools.defaultFontPixelHeight * 0.6
+        for (var j = 0; j < points.length; j++) {
+            const x = transform.pixelXForEast(points[j].east)
+            const y = transform.pixelYForNorth(points[j].north)
+
+            ctx.beginPath()
+            ctx.fillStyle = points[j].isCurrent ? qgcPal.colorGreen : qgcPal.colorOrange
+            ctx.arc(x, y, radius, 0, 2 * Math.PI)
+            ctx.fill()
+
+            ctx.fillStyle = qgcPal.window
+            ctx.fillText(points[j].sequence, x, y)
+        }
+    }
+
     /// A triangle pointing where the nose points. Heading is a compass bearing, so it is turned into
     /// a screen angle here rather than anywhere the reader has to hold both conventions at once.
     function _drawVehicle(ctx, x, y, headingDegrees) {
@@ -314,22 +443,43 @@ Item {
         anchors.fill:   parent
         acceptedButtons: Qt.LeftButton
 
-        property real _lastX: 0
-        property real _lastY: 0
+        property real _lastX:       0
+        property real _lastY:       0
+        property bool _hasDragged:  false
+
+        /// Slop before a press counts as a drag rather than a click, so a click that moves a pixel
+        /// still places a waypoint and a pan never does
+        readonly property real _dragThreshold: ScreenTools.defaultFontPixelWidth
 
         onPressed: (mouse) => {
             _lastX = mouse.x
             _lastY = mouse.y
+            _hasDragged = false
+            clickPanel.visible = false
         }
 
         onPositionChanged: (mouse) => {
             if (!pressed) {
                 return
             }
-            transform.panByPixels(mouse.x - _lastX, mouse.y - _lastY)
+            const deltaX = mouse.x - _lastX
+            const deltaY = mouse.y - _lastY
+            if (!_hasDragged && ((Math.abs(deltaX) + Math.abs(deltaY)) < _dragThreshold)) {
+                return
+            }
+
+            _hasDragged = true
+            transform.panByPixels(deltaX, deltaY)
             _lastX = mouse.x
             _lastY = mouse.y
             _root.followVehicle = false
+        }
+
+        onClicked: (mouse) => {
+            if (_hasDragged) {
+                return
+            }
+            clickPanel.showAt(mouse.x, mouse.y)
         }
 
         onWheel: (wheel) => {
@@ -354,6 +504,15 @@ Item {
             _previousScale = pinch.scale
             _root.followVehicle = false
         }
+    }
+
+    /// What a click on the grid offers. A bare click that added a waypoint outright would turn every
+    /// mis-aimed pan into an edit of the plan, and the offsets shown here are the point of placing a
+    /// waypoint this way at all -- the operator sees the metres before committing to them.
+    LocalGridClickPanel {
+        id:         clickPanel
+        gridView:   _root
+        z:          1
     }
 
     LocalGridCompassRose {
