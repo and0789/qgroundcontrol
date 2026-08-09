@@ -112,6 +112,10 @@ Item {
             points.push({
                 north:      offsets.north,
                 east:       offsets.east,
+                // The index into visualItems, which is what removal and reordering take. It is not
+                // the sequence number on the marker's face: the two diverge as soon as the plan
+                // holds anything that is not a plain waypoint.
+                index:      i,
                 sequence:   item.sequenceNumber,
                 isCurrent:  item.isCurrentItem
             })
@@ -160,6 +164,84 @@ Item {
     /// Adds a waypoint under a point on screen, which is what a click on the grid means
     function addWaypointAtPixel(x, y) {
         return addWaypointAt(transform.northForPixelY(y), transform.eastForPixelX(x))
+    }
+
+    /// Index into the mission's visual items of the waypoint being worked on, or -1 for none
+    property int selectedWaypointIndex: -1
+
+    /// @return the visual item at an index, or null when the index no longer names one. Re-fetched
+    /// at the moment of use rather than held: deleting or reordering shifts every index after the
+    /// change, and a remembered item would be operated on after it had moved or gone.
+    function _visualItemAt(index) {
+        if (!missionController || (index < 0)) {
+            return null
+        }
+        const items = missionController.visualItems
+        if (!items || (index >= items.count)) {
+            return null
+        }
+        return items.get(index)
+    }
+
+    function selectWaypoint(index) {
+        if (!_visualItemAt(index)) {
+            return
+        }
+        selectedWaypointIndex = index
+        clickPanel.visible = false
+    }
+
+    function clearWaypointSelection() {
+        selectedWaypointIndex = -1
+    }
+
+    /// @return true if a waypoint was removed
+    function removeSelectedWaypoint() {
+        const index = selectedWaypointIndex
+        if (!_visualItemAt(index)) {
+            return false
+        }
+
+        // Cleared first. Removal renumbers everything after it, so a selection held across the call
+        // would name a different waypoint than the one the operator was looking at.
+        clearWaypointSelection()
+        missionController.removeVisualItem(index)
+        return true
+    }
+
+    /// Moves a waypoint to a bearing and range from the origin. The same point as the offsets below,
+    /// said the way a leg is briefed and flown.
+    ///     @return true if it moved
+    function moveWaypointToPolar(index, bearingDegrees, rangeMetres) {
+        if (isNaN(bearingDegrees) || isNaN(rangeMetres) || (rangeMetres < 0)) {
+            return false
+        }
+        const radians = bearingDegrees * Math.PI / 180
+        return moveWaypointTo(index, rangeMetres * Math.cos(radians), rangeMetres * Math.sin(radians))
+    }
+
+    /// The altitude fact of a waypoint, or null for an item that has none. Plain waypoints carry
+    /// one; a complex item may not, and reaching for it blindly would break the panel on those.
+    function waypointAltitudeFact(index) {
+        const item = _visualItemAt(index)
+        return (item && item.altitude) ? item.altitude : null
+    }
+
+    /// Moves a waypoint to a point on the grid, in metres from the origin.
+    ///     @return true if it moved
+    function moveWaypointTo(index, north, east) {
+        const item = _visualItemAt(index)
+        if (!item || !originKnown || isNaN(north) || isNaN(east)) {
+            return false
+        }
+
+        const coordinate = projection.coordinateAt(originCoordinate, north, east)
+        if (!coordinate.isValid) {
+            return false
+        }
+
+        item.coordinate = coordinate
+        return true
     }
 
     onWidthChanged:  _fitIfUnstarted()
@@ -393,10 +475,6 @@ Item {
             return
         }
 
-        ctx.font = ScreenTools.smallFontPointSize + "pt sans-serif"
-        ctx.textAlign = "center"
-        ctx.textBaseline = "middle"
-
         if (points.length > 1) {
             ctx.beginPath()
             ctx.strokeStyle = qgcPal.colorOrange
@@ -408,19 +486,8 @@ Item {
             ctx.stroke()
         }
 
-        const radius = ScreenTools.defaultFontPixelHeight * 0.6
-        for (var j = 0; j < points.length; j++) {
-            const x = transform.pixelXForEast(points[j].east)
-            const y = transform.pixelYForNorth(points[j].north)
-
-            ctx.beginPath()
-            ctx.fillStyle = points[j].isCurrent ? qgcPal.colorGreen : qgcPal.colorOrange
-            ctx.arc(x, y, radius, 0, 2 * Math.PI)
-            ctx.fill()
-
-            ctx.fillStyle = qgcPal.window
-            ctx.fillText(points[j].sequence, x, y)
-        }
+        // The markers themselves are items rather than paint, so they can be pointed at. Only the
+        // legs between them are drawn here.
     }
 
     /// A triangle pointing where the nose points. Heading is a compass bearing, so it is turned into
@@ -494,6 +561,8 @@ Item {
             if (_hasDragged) {
                 return
             }
+            // A click on bare grid is a click away from whatever waypoint was being worked on
+            _root.clearWaypointSelection()
             clickPanel.showAt(mouse.x, mouse.y)
         }
 
@@ -519,6 +588,63 @@ Item {
             _previousScale = pinch.scale
             _root.followVehicle = false
         }
+    }
+
+    /// The waypoints themselves, above the legs drawn on the canvas and above the vehicle's own
+    /// canvas so a marker can always be picked up. Positions are bindings on the transform, so they
+    /// follow a pan or a zoom without the model being rebuilt.
+    Repeater {
+        id:     waypointRepeater
+        model:  _root.missionPoints
+
+        LocalGridWaypoint {
+            required property var modelData
+
+            gridView:        _root
+            visualItemIndex: modelData.index
+            sequenceNumber:  modelData.sequence
+            isCurrentItem:   modelData.isCurrent
+            isSelected:      _root.selectedWaypointIndex === modelData.index
+            // _root.gridTransform, not the bare id: every Item carries its own `transform` property
+            // and it shadows the id inside this delegate, which resolved to a list of graphical
+            // transforms and left the markers unplaced.
+            x:               _root.gridTransform.pixelXForEast(modelData.east) - (width / 2)
+            y:               _root.gridTransform.pixelYForNorth(modelData.north) - (height / 2)
+            z:               isSelected ? 2 : 1
+
+            onSelected:             _root.selectWaypoint(modelData.index)
+            onMovedTo:              (north, east) => _root.moveWaypointTo(modelData.index, north, east)
+        }
+    }
+
+    LocalGridWaypointPanel {
+        id:                 waypointPanel
+        anchors.left:       parent.left
+        anchors.bottom:     parent.bottom
+        anchors.leftMargin: _root._margins + _root._inset("leftEdgeBottomInset")
+        // Above the scale bar, which owns the bottom left corner
+        anchors.bottomMargin: _root._margins + (ScreenTools.defaultFontPixelHeight * 3)
+        z:                  2
+        gridView:           _root
+
+        visualItemIndex:    _root.selectedWaypointIndex
+        sequenceNumber:     _root._selectedPoint ? _root._selectedPoint.sequence : 0
+        north:              _root._selectedPoint ? _root._selectedPoint.north : NaN
+        east:               _root._selectedPoint ? _root._selectedPoint.east : NaN
+
+        onDeleteRequested:  _root.removeSelectedWaypoint()
+        onCloseRequested:   _root.clearWaypointSelection()
+    }
+
+    /// The selected entry out of missionPoints, so the panel follows a waypoint that is being dragged
+    readonly property var _selectedPoint: {
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            if (points[i].index === selectedWaypointIndex) {
+                return points[i]
+            }
+        }
+        return null
     }
 
     /// What a click on the grid offers. A bare click that added a waypoint outright would turn every

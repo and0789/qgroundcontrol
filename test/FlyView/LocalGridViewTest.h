@@ -27,4 +27,8 @@ private slots:
     void _withoutEstimatorOrigin_refusesWaypoints_test();
     void _waypointPlacedInMetres_reachesThePlanAsACoordinate_test();
     void _planIsDrawnInGridMetres_test();
+    void _deleteRemovesTheSelectedWaypoint_test();
+    void _deleteWithoutASelection_doesNothing_test();
+    void _dragMovesTheWaypointToTheDroppedOffsets_test();
+    void _bearingAndRangeAgreeWithOffsets_test();
 };

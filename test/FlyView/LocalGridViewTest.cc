@@ -44,16 +44,26 @@ constexpr const char *kMissionControllerStub = R"(
 
         property var items: []
 
+        // Real objects rather than plain JavaScript ones. The grid writes a moved waypoint straight
+        // to item.coordinate, and only a QML property raises the change that makes the grid redraw
+        // -- a plain object would take the value silently and the move would never appear.
+        property Component itemComponent: Component {
+            QtObject {
+                property bool specifiesCoordinate: true
+                property var  coordinate
+                property int  sequenceNumber: 0
+                property bool isCurrentItem: false
+            }
+        }
+
         function addItem(coordinate, sequenceNumber) {
             // A copy, not the same array mutated: assigning the same reference back changes nothing
             // as far as QML is concerned, so count would never update
             var list = items.slice()
-            list.push({
-                specifiesCoordinate: true,
+            list.push(itemComponent.createObject(null, {
                 coordinate: coordinate,
-                sequenceNumber: sequenceNumber,
-                isCurrentItem: false
-            })
+                sequenceNumber: sequenceNumber
+            }))
             items = list
         }
 
@@ -67,6 +77,17 @@ constexpr const char *kMissionControllerStub = R"(
             lastIndex = index
             insertCount++
             return null
+        }
+
+        property int removedIndex: -99
+        property int removeCount: 0
+
+        function removeVisualItem(index) {
+            removedIndex = index
+            removeCount++
+            var list = items.slice()
+            list.splice(index, 1)
+            items = list
         }
     }
 )";
@@ -371,6 +392,156 @@ void LocalGridViewTest::_planIsDrawnInGridMetres_test()
     const QJSValue second = points.property(1);
     QVERIFY(qAbs(second.property(QStringLiteral("north")).toNumber()) < 0.05);
     QVERIFY(qAbs(second.property(QStringLiteral("east")).toNumber() - 20.0) < 0.05);
+}
+
+/// Removal goes by visual item index, which is not the sequence number on the marker's face. Using
+/// the wrong one deletes a different waypoint than the operator pointed at, and the plan still looks
+/// perfectly reasonable afterwards.
+void LocalGridViewTest::_deleteRemovesTheSelectedWaypoint_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    // Sequence numbers deliberately do not start at the index: a real plan carries a settings item
+    // ahead of the waypoints, so the two run offset from each other.
+    for (int i = 0; i < 3; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0 * (i + 1), 0.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection, Q_ARG(QVariant, 1)));
+    QCOMPARE(gridView->property("selectedWaypointIndex").toInt(), 1);
+
+    QVariant removed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "removeSelectedWaypoint", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, removed)));
+    QVERIFY(removed.toBool());
+    QCOMPARE(stub->property("removeCount").toInt(), 1);
+    QVERIFY2(stub->property("removedIndex").toInt() == 1, "removal must use the visual item index");
+
+    // Cleared, because removal renumbers everything after it: a held selection would name a
+    // different waypoint than the one that was on screen.
+    QCOMPARE(gridView->property("selectedWaypointIndex").toInt(), -1);
+}
+
+/// Nothing selected, or a selection left over from a plan that has since shrunk, must not delete
+/// whatever happens to sit at that index now.
+void LocalGridViewTest::_deleteWithoutASelection_doesNothing_test()
+{
+    QVERIFY(vehicle());
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QCOMPARE(gridView->property("selectedWaypointIndex").toInt(), -1);
+
+    QVariant removed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "removeSelectedWaypoint", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, removed)));
+    QVERIFY(!removed.toBool());
+    QCOMPARE(stub->property("removeCount").toInt(), 0);
+
+    // An index past the end of a plan that shrank underneath the selection
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection, Q_ARG(QVariant, 5)));
+    QVERIFY2(gridView->property("selectedWaypointIndex").toInt() == -1,
+             "an index naming no waypoint must not become a selection");
+}
+
+/// Dragging a marker has to land the waypoint where it was dropped, in the frame it is flown in.
+void LocalGridViewTest::_dragMovesTheWaypointToTheDroppedOffsets_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 0.0))),
+        Q_ARG(QVariant, 1)));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointTo", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 0), Q_ARG(QVariant, -15.0), Q_ARG(QVariant, 35.0)));
+    QVERIFY(moved.toBool());
+
+    // Read back through the same conversion the grid draws with
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 1);
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("north")).toNumber() - (-15.0)) < 0.05);
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("east")).toNumber() - 35.0) < 0.05);
+
+    // Without an origin there is no frame to move it in, so the waypoint must be left alone
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointTo", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 0), Q_ARG(QVariant, qQNaN()), Q_ARG(QVariant, 5.0)));
+    QVERIFY2(!moved.toBool(), "a waypoint must not be moved to a position that is not a number");
+}
+
+/// Typing a bearing and a range is how a leg is briefed, so the grid accepts one. It has to land the
+/// waypoint in the same place the equivalent offsets would.
+void LocalGridViewTest::_bearingAndRangeAgreeWithOffsets_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 0.0))), Q_ARG(QVariant, 1)));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // Due east at 30 m is 0 north, 30 east
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointToPolar", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 0), Q_ARG(QVariant, 90.0), Q_ARG(QVariant, 30.0)));
+    QVERIFY(moved.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("north")).toNumber()) < 0.05);
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("east")).toNumber() - 30.0) < 0.05);
+
+    // South west at 45 degrees past south: equal negative offsets
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointToPolar", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 0), Q_ARG(QVariant, 225.0), Q_ARG(QVariant, 28.2843)));
+    QVERIFY(moved.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("north")).toNumber() - (-20.0)) < 0.05);
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("east")).toNumber() - (-20.0)) < 0.05);
+
+    // A negative range would put the waypoint on the reciprocal bearing, which is not what anyone
+    // typing one means
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointToPolar", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 0), Q_ARG(QVariant, 90.0), Q_ARG(QVariant, -10.0)));
+    QVERIFY(!moved.toBool());
 }
 
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)
