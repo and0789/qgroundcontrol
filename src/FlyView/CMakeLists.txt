@@ -51,6 +51,7 @@ qt_add_qml_module(FlyViewModule
         LocalGridReadout.qml
         LocalGridScaleBar.qml
         LocalGridShowAction.qml
+        LocalGridTrail.qml
         LocalGridTransform.qml
         LocalGridView.qml
         MultiRotorChecklist.qml

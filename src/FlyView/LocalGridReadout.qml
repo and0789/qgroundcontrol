@@ -90,6 +90,18 @@ Rectangle {
                 Layout.fillWidth:       true
                 text:                   isNaN(_root._bearing) ? qsTr("--") : Math.round(_root._bearing) + "°"
             }
+
+            // Distance along the trail rather than from the origin. Drift on this kind of navigation
+            // accumulates with ground covered, so this is the denominator the error is quoted
+            // against -- and "range 0.4 m after flying 80 m" is a very different result from
+            // "range 0.4 m after hovering".
+            QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Flown") }
+            QGCLabel {
+                font.pointSize:         ScreenTools.smallFontPointSize
+                horizontalAlignment:    Text.AlignRight
+                Layout.fillWidth:       true
+                text:                   _root.gridView ? _root._distanceText(_root.gridView.trailLengthMetres) : qsTr("--")
+            }
         }
 
         // Spelled out rather than left as an empty grid: a view with no vehicle data looks exactly
@@ -116,6 +128,12 @@ Rectangle {
                 text:       qsTr("Origin")
                 enabled:    _root.gridView !== null
                 onClicked:  _root.gridView.centreOnOrigin()
+            }
+
+            QGCButton {
+                text:       qsTr("Clear trail")
+                enabled:    _root.gridView && (_root.gridView.trailPointCount > 0)
+                onClicked:  _root.gridView.clearTrail()
             }
         }
     }

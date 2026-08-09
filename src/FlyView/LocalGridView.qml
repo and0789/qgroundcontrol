@@ -54,8 +54,23 @@ Item {
         onViewHeightChanged:    _root._repaintAll()
     }
 
+    LocalGridTrail {
+        id: trail
+    }
+
     /// Exposed so the view can be driven from tests and from the surrounding fly view
     readonly property alias gridTransform: transform
+    readonly property alias trailPointCount:   trail.pointCount
+    readonly property alias trailLengthMetres: trail.pathLengthMetres
+
+    /// A trail from the previous aircraft drawn against this one's origin is a picture of a flight
+    /// that never happened
+    onVehicleChanged: trail.reset()
+
+    function clearTrail() {
+        trail.reset()
+        vehicleCanvas.requestPaint()
+    }
 
     onWidthChanged:  _fitIfUnstarted()
     onHeightChanged: _fitIfUnstarted()
@@ -82,7 +97,21 @@ Item {
         if (followVehicle && positionValid) {
             transform.centreOn(_north, _east)
         }
+        // North and east are separate facts, so one LOCAL_POSITION_NED lands as two property
+        // changes. Sampling on each of them would record the corner between them -- a point the
+        // vehicle never occupied -- turning every diagonal into a staircase and inflating the
+        // distance flown towards a Manhattan total. callLater collapses both into one sample.
+        Qt.callLater(_sampleTrail)
         vehicleCanvas.requestPaint()
+    }
+
+    function _sampleTrail() {
+        if (!positionValid) {
+            return
+        }
+        if (trail.addPoint(_north, _east)) {
+            vehicleCanvas.requestPaint()
+        }
     }
 
     function _repaintAll() {
@@ -175,6 +204,8 @@ Item {
             const ctx = getContext("2d")
             ctx.reset()
 
+            _root._drawTrail(ctx)
+
             if (!_root.positionValid) {
                 return
             }
@@ -221,6 +252,31 @@ Item {
         ctx.fillStyle = qgcPal.colorGreen
         ctx.textAlign = "left"
         ctx.fillText(qsTr("ORIGIN"), x + (radius * 1.5), y - radius)
+    }
+
+    function _drawTrail(ctx) {
+        const points = trail.points()
+        if (points.length < 1) {
+            return
+        }
+
+        ctx.beginPath()
+        ctx.strokeStyle = qgcPal.colorBlue
+        ctx.lineWidth = 2
+        ctx.lineJoin = "round"
+        ctx.moveTo(transform.pixelXForEast(points[0].east), transform.pixelYForNorth(points[0].north))
+        for (var i = 1; i < points.length; i++) {
+            ctx.lineTo(transform.pixelXForEast(points[i].east), transform.pixelYForNorth(points[i].north))
+        }
+
+        // The trail is sampled by distance, so its newest point lags the aircraft by up to one
+        // sample. Closing that gap here keeps the line attached to the vehicle instead of trailing a
+        // gap that grows every time the sampling is thinned.
+        if (positionValid) {
+            ctx.lineTo(transform.pixelXForEast(_east), transform.pixelYForNorth(_north))
+        }
+
+        ctx.stroke()
     }
 
     /// A triangle pointing where the nose points. Heading is a compass bearing, so it is turned into

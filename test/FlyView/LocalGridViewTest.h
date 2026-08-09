@@ -23,4 +23,5 @@ private slots:
     void _localPosition_isReadInEstimatorFrame_test();
     void _followingVehicle_keepsItCentred_test();
     void _centreOnOrigin_stopsFollowing_test();
+    void _trailAccumulatesFromTelemetry_test();
 };

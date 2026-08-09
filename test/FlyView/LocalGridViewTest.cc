@@ -149,4 +149,36 @@ void LocalGridViewTest::_centreOnOrigin_stopsFollowing_test()
     QCOMPARE(transform->property("centreNorth").toDouble(), 55.0);
 }
 
+/// The trail has to be fed from the same telemetry that moves the marker, or the picture shows an
+/// aircraft with no history of how it got there.
+void LocalGridViewTest::_trailAccumulatesFromTelemetry_test()
+{
+    QVERIFY(vehicle());
+    MAKE_GRID_VIEW(gridView);
+
+    QCOMPARE(gridView->property("trailPointCount").toInt(), 0);
+
+    // A 10 m box, walked once. Each corner is a diagonal away from the last in one axis only, so
+    // sampling per axis rather than per position would show here as extra points.
+    const QList<QPointF> corners = {
+        QPointF(0.0, 0.0), QPointF(10.0, 0.0), QPointF(10.0, 10.0), QPointF(0.0, 10.0), QPointF(0.0, 0.0),
+    };
+    int expectedPoints = 0;
+    for (const QPointF &corner : corners) {
+        sendLocalPosition(vehicle(), static_cast<float>(corner.x()), static_cast<float>(corner.y()), 0.0F);
+        expectedPoints++;
+        // The sample is coalesced onto the next event loop turn, so let it land before the next
+        // corner is sent -- otherwise the whole box collapses into a single sample.
+        QTRY_COMPARE_WITH_TIMEOUT(gridView->property("trailPointCount").toInt(), expectedPoints,
+                                  TestTimeout::shortMs());
+    }
+
+    QCOMPARE(gridView->property("trailPointCount").toInt(), 5);
+    QVERIFY(qAbs(gridView->property("trailLengthMetres").toDouble() - 40.0) < 1e-6);
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearTrail"));
+    QCOMPARE(gridView->property("trailPointCount").toInt(), 0);
+    QCOMPARE(gridView->property("trailLengthMetres").toDouble(), 0.0);
+}
+
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)
