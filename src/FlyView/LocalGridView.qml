@@ -556,15 +556,16 @@ Item {
         gridTransform:          transform
     }
 
-    // Right edge, not left. The left is where the tool strip lives and where the non-GPS status
-    // panel opens, and both are things the operator has open at the same time as this -- they were
-    // landing on top of each other. The two also overlap in content, so keeping them on opposite
-    // sides makes it obvious which one is being read.
+    // Pinned to the top right corner, and deliberately not set back by the right edge inset. That
+    // inset reserves room for the instrument panel whether or not it is open, which left the readout
+    // floating in the middle of the grid with nothing beside it. The left corner is not an option:
+    // the tool strip lives there and the non-GPS status panel opens over it, and the operator has
+    // that panel open at the same time as this one.
     LocalGridReadout {
         anchors.right:          parent.right
         anchors.top:            parent.top
-        anchors.rightMargin:    _root._margins + _root._inset("rightEdgeTopInset")
-        anchors.topMargin:      _root.topEdgeOffset + _root._margins + _root._inset("topEdgeRightInset")
+        anchors.rightMargin:    _root._margins
+        anchors.topMargin:      _root.topEdgeOffset + _root._margins
         gridView:               _root
     }
 }
