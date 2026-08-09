@@ -126,6 +126,17 @@ Rectangle {
             onClicked:          _root._add("land")
         }
 
+        // Only where the button above does not already mean this. On a multirotor that button
+        // returns the aircraft to launch, which is the wrong ending for a pattern meant to finish at
+        // its far corner -- and QGC offers no other way to say it.
+        QGCButton {
+            Layout.fillWidth:   true
+            visible:            _root._isMultiRotor
+            text:               qsTr("Land here")
+            enabled:            _root._canPlace
+            onClicked:          _root._add("landHere")
+        }
+
         // Shown rather than left as a dead button. Without an origin there is no mapping between
         // this frame and the coordinates a mission is stored in, so a waypoint placed here would
         // upload cleanly and be flown somewhere else entirely.

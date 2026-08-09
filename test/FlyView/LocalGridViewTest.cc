@@ -53,6 +53,7 @@ constexpr const char *kMissionControllerStub = R"(
                 property var  coordinate
                 property int  sequenceNumber: 0
                 property bool isCurrentItem: false
+                property int  command: 16
             }
         }
 
@@ -72,11 +73,16 @@ constexpr const char *kMissionControllerStub = R"(
             function get(index) { return items[index] }
         }
 
+        // Returns the item it made, the way MissionController does, so a caller that adjusts the
+        // new item afterwards is exercised rather than silently doing nothing
+        property var lastInsertedItem: null
+
         function insertSimpleMissionItem(coordinate, index, makeCurrentItem) {
             lastCoordinate = coordinate
             lastIndex = index
             insertCount++
-            return null
+            lastInsertedItem = itemComponent.createObject(null, { coordinate: coordinate })
+            return lastInsertedItem
         }
 
         // MissionController gates its own insert strip on these, and so does the grid
@@ -653,6 +659,20 @@ void LocalGridViewTest::_takeoffAndLandingUseTheirOwnInsertions_test()
                                       Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 10.0)));
     QVERIFY(added.toBool());
     QCOMPARE(stub->property("insertCount").toInt(), 1);
+
+    // Landing where the vehicle stands is a plain item whose command is changed afterwards, since
+    // MissionController offers no insertion for it. 21 is MAV_CMD_NAV_LAND; the number is pinned
+    // here because MAVLinkEnums exposes no values to QML and the source has to write it out.
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, QStringLiteral("landHere")),
+                                      Q_ARG(QVariant, 40.0), Q_ARG(QVariant, -12.0)));
+    QVERIFY(added.toBool());
+    QCOMPARE(stub->property("insertCount").toInt(), 2);
+    QObject *const landItem = stub->property("lastInsertedItem").value<QObject *>();
+    QVERIFY(landItem);
+    QVERIFY2(landItem->property("command").toInt() == static_cast<int>(MAV_CMD_NAV_LAND),
+             "a land-here item must carry the landing command, not the waypoint one");
 
     // The same origin guard covers every kind: without one none of them may be placed
     gridView->setProperty("vehicle", QVariant::fromValue<Vehicle *>(nullptr));

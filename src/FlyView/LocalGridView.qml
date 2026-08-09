@@ -169,10 +169,31 @@ Item {
         case "land":
             missionController.insertLandItem(coordinate, -1, true /* makeCurrentItem */)
             break
+        case "landHere":
+            return _insertLandHere(coordinate)
         default:
             missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
             break
         }
+        return true
+    }
+
+    /// Lands the vehicle where it is standing on the grid, rather than flying it home first.
+    ///
+    /// QGC's own insert strip has no way to say this on a multirotor: its landing button produces a
+    /// return to launch. That is the right ending for a mission that starts and finishes in the same
+    /// place, and the wrong one for a pattern meant to finish at its far corner.
+    ///     @return true if it was added
+    function _insertLandHere(coordinate) {
+        const item = missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
+        if (!item) {
+            return false
+        }
+
+        // 21 is MAV_CMD_NAV_LAND, written out because MAVLinkEnums exposes no values to QML in this
+        // build -- moc emits an empty enum list for the generated namespace, so every member of it
+        // reads as undefined. LocalGridViewTest pins the number.
+        item.command = 21
         return true
     }
 
