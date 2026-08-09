@@ -21,6 +21,9 @@ Item {
     /// The plan being flown, so its waypoints can be drawn on the frame they will be flown in
     property var missionController: null
 
+    /// The controller that owns the plan as a whole, for sending, saving and clearing it
+    property var planMasterController: null
+
     /// Where the fly view's own widgets already are. The grid draws behind them, so its readouts
     /// have to be kept out from under the tool strip and the instrument panels rather than laid out
     /// against the bare edges of the window.
@@ -860,6 +863,17 @@ Item {
         anchors.topMargin:          _root.topEdgeOffset + _root._margins + _root._inset("topEdgeCenterInset")
         headingDegrees:             _root._headingDegrees
         diameter:                   ScreenTools.defaultFontPixelHeight * 8
+    }
+
+    // Bottom left, the corner the waypoint panel gave up when it moved under the readout. It sits
+    // above the scale bar, which owns the very corner.
+    LocalGridMissionActions {
+        anchors.left:           parent.left
+        anchors.bottom:         parent.bottom
+        anchors.leftMargin:     _root._margins + _root._inset("leftEdgeBottomInset")
+        anchors.bottomMargin:   _root._margins + (ScreenTools.defaultFontPixelHeight * 2.5)
+        z:                      2
+        planMasterController:   _root.planMasterController
     }
 
     LocalGridScaleBar {

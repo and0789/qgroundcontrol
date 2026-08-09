@@ -96,6 +96,7 @@ Item {
             anchors.fill:       parent
             vehicle:            _activeVehicle
             missionController:  _missionController
+            planMasterController: _planController
             toolInsets:         customOverlay.totalToolInsets
             topEdgeOffset:      toolbar.height
             z:                  _fullItemZorder
