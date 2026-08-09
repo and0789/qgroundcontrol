@@ -54,9 +54,9 @@ void FlyViewLocalGridUITest::_gridReplacesTheMapAndPaints_test()
             const QImage frame = _window->grabWindow();
             QVERIFY2(!frame.isNull(), "the window produced no frame to check");
 
-            // A band in the upper middle: clear of the toolbar, the readout at top left, the compass
-            // rose at top right, the scale bar at bottom left, the tool strip down the side, and the
-            // vehicle marker sitting dead centre while the view is following it. Only grid lines and
+            // A band in the upper middle: clear of the toolbar, the tool strip, the compass rose, the
+            // readout and scale bar, and the vehicle marker sitting dead centre while the view is
+            // following it. Only grid lines and
             // their labels fall here, so a flat colour means the grid did not draw. Sampling the
             // centre instead would pass on the vehicle marker alone.
             const QRect gridOnly(frame.width() * 2 / 5, frame.height() / 5,

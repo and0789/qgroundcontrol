@@ -556,11 +556,15 @@ Item {
         gridTransform:          transform
     }
 
+    // Right edge, not left. The left is where the tool strip lives and where the non-GPS status
+    // panel opens, and both are things the operator has open at the same time as this -- they were
+    // landing on top of each other. The two also overlap in content, so keeping them on opposite
+    // sides makes it obvious which one is being read.
     LocalGridReadout {
-        anchors.left:           parent.left
+        anchors.right:          parent.right
         anchors.top:            parent.top
-        anchors.leftMargin:     _root._margins + _root._inset("leftEdgeTopInset")
-        anchors.topMargin:      _root.topEdgeOffset + _root._margins + _root._inset("topEdgeLeftInset")
+        anchors.rightMargin:    _root._margins + _root._inset("rightEdgeTopInset")
+        anchors.topMargin:      _root.topEdgeOffset + _root._margins + _root._inset("topEdgeRightInset")
         gridView:               _root
     }
 }
