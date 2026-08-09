@@ -144,9 +144,14 @@ Item {
     /// waypoint invented from a guessed origin uploads cleanly and flies somewhere else.
     readonly property bool canPlaceWaypoints: originKnown && (missionController !== null)
 
-    /// Adds a waypoint at a point on the grid, in metres from the origin.
+    /// Adds a mission item at a point on the grid, in metres from the origin.
+    ///     @param kind one of "waypoint", "takeoff", "land"
     ///     @return true if it was added
-    function addWaypointAt(north, east) {
+    ///
+    /// The same three calls the Plan view's insert strip makes, so an item added here is the same
+    /// item as one added there -- including that a multirotor's "land" is a return to launch, which
+    /// is what the Plan view inserts and labels that way.
+    function addMissionItemAt(kind, north, east) {
         if (!canPlaceWaypoints) {
             return false
         }
@@ -157,8 +162,23 @@ Item {
         }
 
         // -1 appends, which is what clicking past the end of a route means
-        missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
+        switch (kind) {
+        case "takeoff":
+            missionController.insertTakeoffItem(coordinate, -1, true /* makeCurrentItem */)
+            break
+        case "land":
+            missionController.insertLandItem(coordinate, -1, true /* makeCurrentItem */)
+            break
+        default:
+            missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
+            break
+        }
         return true
+    }
+
+    /// @return true if it was added
+    function addWaypointAt(north, east) {
+        return addMissionItemAt("waypoint", north, east)
     }
 
     /// Adds a waypoint under a point on screen, which is what a click on the grid means
@@ -649,13 +669,14 @@ Item {
         }
     }
 
+    // Directly under the local position readout, sharing its edge. The bottom left corner it used to
+    // occupy is where the non-GPS status panel runs down the screen, and the two were landing on top
+    // of each other. Keeping both readouts in one column also means one place to look.
     LocalGridWaypointPanel {
         id:                 waypointPanel
-        anchors.left:       parent.left
-        anchors.bottom:     parent.bottom
-        anchors.leftMargin: _root._margins + _root._inset("leftEdgeBottomInset")
-        // Above the scale bar, which owns the bottom left corner
-        anchors.bottomMargin: _root._margins + (ScreenTools.defaultFontPixelHeight * 3)
+        anchors.right:      readout.right
+        anchors.top:        readout.bottom
+        anchors.topMargin:  _root._margins
         z:                  2
         gridView:           _root
 
@@ -740,6 +761,7 @@ Item {
     // the tool strip lives there and the non-GPS status panel opens over it, and the operator has
     // that panel open at the same time as this one.
     LocalGridReadout {
+        id:                     readout
         anchors.right:          parent.right
         anchors.top:            parent.top
         // Hugs the right edge, but drops below whatever the fly view has stacked in that corner --

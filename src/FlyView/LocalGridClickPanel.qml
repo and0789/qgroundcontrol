@@ -31,6 +31,21 @@ Rectangle {
     property real _north: NaN
     property real _east:  NaN
 
+    readonly property var  _missionController: gridView ? gridView.missionController : null
+    readonly property bool _canPlace:      gridView ? gridView.canPlaceWaypoints : false
+    // Compared against true rather than taken as-is: a controller that does not carry these answers
+    // undefined, which is not a bool and would be refused with a warning on every rebuild
+    readonly property bool _takeoffValid:  _missionController ? (_missionController.isInsertTakeoffValid === true) : false
+    readonly property bool _landValid:     _missionController ? (_missionController.isInsertLandValid === true) : false
+    readonly property bool _isMultiRotor:  (gridView && gridView.vehicle) ? gridView.vehicle.multiRotor : false
+
+    function _add(kind) {
+        if (gridView) {
+            gridView.addMissionItemAt(kind, _north, _east)
+        }
+        visible = false
+    }
+
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     readonly property var _transform: gridView ? gridView.gridTransform : null
@@ -85,14 +100,30 @@ Rectangle {
             }
         }
 
+        // The same three the Plan view's insert strip offers. A plan needs more than waypoints to
+        // fly itself, and having to leave the grid for the takeoff was the point at which building
+        // a mission here stopped being possible.
         QGCButton {
             Layout.fillWidth:   true
             text:               qsTr("Add waypoint")
-            enabled:            _root.gridView ? _root.gridView.canPlaceWaypoints : false
-            onClicked: {
-                _root.gridView.addWaypointAt(_root._north, _root._east)
-                _root.visible = false
-            }
+            enabled:            _root._canPlace
+            onClicked:          _root._add("waypoint")
+        }
+
+        QGCButton {
+            Layout.fillWidth:   true
+            text:               qsTr("Add takeoff")
+            enabled:            _root._canPlace && _root._takeoffValid
+            onClicked:          _root._add("takeoff")
+        }
+
+        QGCButton {
+            Layout.fillWidth:   true
+            // A multirotor's landing item is a return to launch, which is what the Plan view
+            // inserts here and what it calls it
+            text:               _root._isMultiRotor ? qsTr("Add return") : qsTr("Add landing")
+            enabled:            _root._canPlace && _root._landValid
+            onClicked:          _root._add("land")
         }
 
         // Shown rather than left as a dead button. Without an origin there is no mapping between

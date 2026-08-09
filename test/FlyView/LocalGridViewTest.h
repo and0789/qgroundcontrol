@@ -32,4 +32,5 @@ private slots:
     void _dragMovesTheWaypointToTheDroppedOffsets_test();
     void _bearingAndRangeAgreeWithOffsets_test();
     void _legIsMeasuredFromThePreviousWaypoint_test();
+    void _takeoffAndLandingUseTheirOwnInsertions_test();
 };

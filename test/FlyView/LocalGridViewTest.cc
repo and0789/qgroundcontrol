@@ -79,6 +79,27 @@ constexpr const char *kMissionControllerStub = R"(
             return null
         }
 
+        // MissionController gates its own insert strip on these, and so does the grid
+        property bool isInsertTakeoffValid: true
+        property bool isInsertLandValid: true
+
+        property int takeoffCount: 0
+        property int landCount: 0
+
+        function insertTakeoffItem(coordinate, index, makeCurrentItem) {
+            lastCoordinate = coordinate
+            lastIndex = index
+            takeoffCount++
+            return null
+        }
+
+        function insertLandItem(coordinate, index, makeCurrentItem) {
+            lastCoordinate = coordinate
+            lastIndex = index
+            landCount++
+            return null
+        }
+
         property int removedIndex: -99
         property int removeCount: 0
 
@@ -591,6 +612,57 @@ void LocalGridViewTest::_legIsMeasuredFromThePreviousWaypoint_test()
     const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
     QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05);
     QVERIFY(qAbs(points.property(1).property(QStringLiteral("east")).toNumber() - 20.0) < 0.05);
+}
+
+/// A plan needs more than waypoints to fly itself. Each kind goes through the call the Plan view
+/// makes for it, so an item added here is the same item as one added there -- a takeoff built by
+/// insertSimpleMissionItem would be a waypoint wearing the wrong name.
+void LocalGridViewTest::_takeoffAndLandingUseTheirOwnInsertions_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, QStringLiteral("takeoff")),
+                                      Q_ARG(QVariant, 0.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QCOMPARE(stub->property("takeoffCount").toInt(), 1);
+    QCOMPARE(stub->property("insertCount").toInt(), 0);
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, QStringLiteral("land")),
+                                      Q_ARG(QVariant, 5.0), Q_ARG(QVariant, 5.0)));
+    QVERIFY(added.toBool());
+    QCOMPARE(stub->property("landCount").toInt(), 1);
+
+    // An unrecognised kind must still produce a plain waypoint rather than nothing at all
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, QStringLiteral("waypoint")),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 10.0)));
+    QVERIFY(added.toBool());
+    QCOMPARE(stub->property("insertCount").toInt(), 1);
+
+    // The same origin guard covers every kind: without one none of them may be placed
+    gridView->setProperty("vehicle", QVariant::fromValue<Vehicle *>(nullptr));
+    QVERIFY(!gridView->property("originKnown").toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, QStringLiteral("takeoff")),
+                                      Q_ARG(QVariant, 0.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY2(!added.toBool(), "no item may be placed against an unanchored grid");
+    QCOMPARE(stub->property("takeoffCount").toInt(), 1);
 }
 
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)
