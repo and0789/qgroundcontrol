@@ -1272,4 +1272,33 @@ void LocalGridViewTest::_everyItemAboveTheCeilingIsFound_test()
              "a vehicle that does not depend on the rangefinder has no ceiling to breach");
 }
 
+/// The fields live in LocalGridWaypointEditor now, and the panel only frames them. Everything else
+/// in this file drives the grid's own API and never builds the panel at all, so a panel that loaded
+/// but lost its editor -- an empty bordered box on screen -- would pass the whole suite.
+void LocalGridViewTest::_waypointPanelCarriesTheEditorFields_test()
+{
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/qml"));
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridWaypointPanel { }
+    )", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+
+    const QScopedPointer<QObject> panel(component.create());
+    QVERIFY2(panel, qPrintable(component.errorString()));
+
+    // Reached only through the editor, so finding it proves the two are composed rather than merely
+    // that both files parse
+    QVERIFY2(panel->findChild<QObject *>(QStringLiteral("localGrid_applyAltitudeToAllButton")),
+             "the panel must still carry the editor's fields");
+    QVERIFY2(panel->findChild<QObject *>(QStringLiteral("localGrid_deleteWaypointButton")),
+             "the panel keeps the controls that are its own");
+
+    QVERIFY(panel->property("implicitHeight").toReal() > 0);
+}
+
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)

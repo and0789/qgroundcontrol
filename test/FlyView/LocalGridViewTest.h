@@ -45,4 +45,5 @@ private slots:
     void _itemTypeChangesInPlace_test();
     void _altitudeCanBeAppliedToEveryItem_test();
     void _everyItemAboveTheCeilingIsFound_test();
+    void _waypointPanelCarriesTheEditorFields_test();
 };
