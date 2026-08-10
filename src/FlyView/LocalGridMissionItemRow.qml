@@ -17,7 +17,8 @@ import QGroundControl.FlyView
 /// every editor up front would mean one set of live bindings on the transform, the altitude limit
 /// and the altitude fact per item in the plan, all recomputing on every pan of the grid.
 Rectangle {
-    id: _root
+    id:         _root
+    objectName: "localGrid_missionItemRow"
 
     property var gridView: null
 
@@ -31,6 +32,11 @@ Rectangle {
 
     /// Open, and drawn as the one being edited
     property bool isCurrentItem: false
+
+    /// The item the vehicle is flying to right now, which is not the one being edited and is not
+    /// the operator's to choose. MissionController fills it from the vehicle's own mission index
+    /// while the fly view is up.
+    property bool isVehicleTarget: false
 
     /// Raised by a click anywhere on the row. Which item is current is not this row's to decide --
     /// only the list holding all of them can answer that.
@@ -96,12 +102,23 @@ Rectangle {
                 }
             }
 
-            QGCLabel {
-                Layout.alignment:   Qt.AlignVCenter
-                font.pointSize:     ScreenTools.smallFontPointSize
-                font.bold:          true
-                color:              _root._textColor
-                text:               _root.sequenceNumber
+            // Carries the same green disc the marker on the grid wears, so the row and the marker
+            // for the waypoint the vehicle is flying to are recognisably the same thing. Being
+            // edited is shown by the row opening; this says nothing about that.
+            Rectangle {
+                Layout.preferredWidth:  _root._iconSize
+                Layout.preferredHeight: _root._iconSize
+                Layout.alignment:       Qt.AlignVCenter
+                radius:                 width / 2
+                color:                  _root.isVehicleTarget ? qgcPal.colorGreen : "transparent"
+
+                QGCLabel {
+                    anchors.centerIn:   parent
+                    font.pointSize:     ScreenTools.smallFontPointSize
+                    font.bold:          true
+                    color:              _root.isVehicleTarget ? qgcPal.window : _root._textColor
+                    text:               _root.sequenceNumber
+                }
             }
 
             // What the item is, kept on the row whether or not it is open. Scanning a pattern is

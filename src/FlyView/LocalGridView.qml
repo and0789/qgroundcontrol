@@ -1047,35 +1047,26 @@ Item {
         }
     }
 
-    // Directly under the local position readout, sharing its edge. The bottom left corner it used to
-    // occupy is where the non-GPS status panel runs down the screen, and the two were landing on top
-    // of each other. Keeping both readouts in one column also means one place to look.
-    LocalGridWaypointPanel {
-        id:                 waypointPanel
-        anchors.right:      readout.right
-        anchors.top:        readout.bottom
-        anchors.topMargin:  _root._margins
-        z:                  2
-        gridView:           _root
-
-        visualItemIndex:    _root.selectedWaypointIndex
-        sequenceNumber:     _root._selectedPoint ? _root._selectedPoint.sequence : 0
-        north:              _root._selectedPoint ? _root._selectedPoint.north : NaN
-        east:               _root._selectedPoint ? _root._selectedPoint.east : NaN
-
-        onDeleteRequested:  _root.removeSelectedWaypoint()
-        onCloseRequested:   _root.clearWaypointSelection()
-    }
-
-    /// The selected entry out of missionPoints, so the panel follows a waypoint that is being dragged
-    readonly property var _selectedPoint: {
-        const points = missionPoints
-        for (var i = 0; i < points.length; i++) {
-            if (points[i].index === selectedWaypointIndex) {
-                return points[i]
-            }
-        }
-        return null
+    // The plan runs down the right edge under the readout, in one column with it. A floating panel
+    // showing only the selected item stood here before: it said nothing about the pattern as a
+    // whole, so reading a route meant clicking each marker in turn to find out what it was.
+    LocalGridMissionList {
+        id:                     missionList
+        objectName:             "localGrid_missionList"
+        anchors.right:          parent.right
+        anchors.top:            readout.bottom
+        anchors.rightMargin:    _root._margins
+        anchors.topMargin:      _root._margins
+        width:                  ScreenTools.defaultFontPixelWidth * 28
+        // Anchored top only, and given a height, so folding it away shrinks the panel to its header
+        // instead of leaving an empty box down to the bottom edge
+        height:                 collapsed
+                                    ? collapsedHeight
+                                    : Math.max(collapsedHeight,
+                                               _root.height - y - _root._margins
+                                                   - _root._inset("bottomEdgeRightInset"))
+        z:                      2
+        gridView:               _root
     }
 
     /// What a click on the grid offers. A bare click that added a waypoint outright would turn every

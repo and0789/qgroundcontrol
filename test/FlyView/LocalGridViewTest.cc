@@ -1397,18 +1397,26 @@ void LocalGridViewTest::_missionItemRowNamesTheItemItHolds_test()
 /// Walks childItems() rather than using findChildren(). A ListView gives its delegates a parent
 /// *item* but no QObject parent, so the whole list of rows is invisible to a QObject-tree search --
 /// which reads as a list that built nothing rather than as the wrong kind of search.
-static int countItemsNamed(QQuickItem *root, const QString &objectName)
+static QList<QQuickItem *> collectItemsNamed(QQuickItem *root, const QString &objectName)
 {
+    QList<QQuickItem *> found;
     if (!root) {
-        return 0;
+        return found;
     }
 
-    int count = (root->objectName() == objectName) ? 1 : 0;
+    if (root->objectName() == objectName) {
+        found.append(root);
+    }
     const QList<QQuickItem *> children = root->childItems();
     for (QQuickItem *const child : children) {
-        count += countItemsNamed(child, objectName);
+        found.append(collectItemsNamed(child, objectName));
     }
-    return count;
+    return found;
+}
+
+static int countItemsNamed(QQuickItem *root, const QString &objectName)
+{
+    return static_cast<int>(collectItemsNamed(root, objectName).count());
 }
 
 /// Shows @a list in a window and waits for it to lay out.
@@ -1555,6 +1563,84 @@ void LocalGridViewTest::_missionListOpensTheRowTheGridHasSelected_test()
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
                                       Q_ARG(QVariant, 0)));
     QTRY_COMPARE_WITH_TIMEOUT(openRowCount(), 1, TestTimeout::mediumMs());
+}
+
+/// The grid shows the plan as a list now, and the floating single-item panel is gone with it. Both
+/// halves matter: leaving the panel behind would put two editors for the same waypoint on screen.
+void LocalGridViewTest::_gridShowsThePlanAsAList_test()
+{
+    QVERIFY(vehicle());
+    MAKE_GRID_VIEW(gridView);
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+
+    QCOMPARE(countItemsNamed(gridItem, QStringLiteral("localGrid_missionList")), 1);
+    QVERIFY2(countItemsNamed(gridItem, QStringLiteral("localGrid_deleteWaypointButton")) == 0,
+             "the floating waypoint panel must not still be on the grid beside the list");
+}
+
+/// Which waypoint the vehicle is flying to is not which waypoint the operator is editing, and the
+/// grid has always drawn them differently -- green fill for the vehicle's target, an outline for the
+/// selection. MissionController fills isCurrentItem from the vehicle's own mission index while the
+/// fly view is up, so a list that reused it for "open" would both open the wrong row and throw away
+/// the only sign of where the aircraft is heading.
+void LocalGridViewTest::_listMarksTheWaypointTheVehicleIsFlyingTo_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    for (int i = 0; i < 3; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(15.0 * (i + 1), 30.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+
+    const auto targetSequences = [gridItem]() {
+        QList<int> sequences;
+        const QList<QQuickItem *> rows = collectItemsNamed(gridItem, QStringLiteral("localGrid_missionItemRow"));
+        for (QQuickItem *const row : rows) {
+            if (row->property("isVehicleTarget").toBool()) {
+                sequences.append(row->property("sequenceNumber").toInt());
+            }
+        }
+        return sequences;
+    };
+
+    QTRY_COMPARE_WITH_TIMEOUT(countItemsNamed(gridItem, QStringLiteral("localGrid_missionItemRow")), 3,
+                              TestTimeout::mediumMs());
+    QVERIFY2(targetSequences().isEmpty(), "a plan nobody is flying marks no target");
+
+    // What MissionController does in the fly view when the vehicle reports its mission index
+    QObject *const visualItems = stub->property("visualItems").value<QObject *>();
+    QVERIFY(visualItems);
+    QVariant itemVar;
+    QVERIFY(QMetaObject::invokeMethod(visualItems, "get", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, itemVar), Q_ARG(QVariant, 1)));
+    QObject *const secondItem = itemVar.value<QObject *>();
+    QVERIFY(secondItem);
+    secondItem->setProperty("isCurrentItem", true);
+
+    QTRY_COMPARE_WITH_TIMEOUT(targetSequences(), QList<int>({ 2 }), TestTimeout::mediumMs());
+
+    // Selecting a different row for editing leaves the target where it is
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 0)));
+    QCOMPARE(targetSequences(), QList<int>({ 2 }));
 }
 
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)
