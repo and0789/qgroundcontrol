@@ -19,6 +19,10 @@ Item {
     property bool isCurrentItem:   false
     property bool isSelected:      false
 
+    /// False for a marker that is anchored where it is -- the takeoff, which belongs on the origin.
+    /// It can still be picked to be edited; only the dragging is refused.
+    property bool draggable:       true
+
     /// The view this marker sits on, used to turn a pointer position back into metres. Passed in
     /// rather than reached for through parent, so the marker states what it depends on.
     property var  gridView: null
@@ -74,7 +78,7 @@ Item {
         }
 
         onPositionChanged: (mouse) => {
-            if (!pressed) {
+            if (!pressed || !_root.draggable) {
                 return
             }
             if (!_isDragging

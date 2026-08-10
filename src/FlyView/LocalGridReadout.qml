@@ -32,6 +32,21 @@ Rectangle {
     readonly property real _north:     gridView ? gridView.vehicleNorth : NaN
     readonly property real _east:      gridView ? gridView.vehicleEast : NaN
 
+    readonly property bool _stale:     gridView ? gridView.positionStale : false
+    readonly property real _ageSeconds: gridView ? gridView.positionAgeSeconds : NaN
+
+    readonly property bool   _estimatorDegraded: gridView ? gridView.estimatorDegraded : false
+    readonly property bool   _estimatorSevere:   gridView ? gridView.estimatorSevere : false
+    readonly property string _estimatorWarning:  gridView ? gridView.estimatorWarning : ""
+
+    readonly property bool _nearCeiling:  gridView ? gridView.heightNearCeiling : false
+    readonly property bool _aboveCeiling: gridView ? gridView.heightAboveCeiling : false
+    readonly property real _height:       gridView ? gridView.currentHeightMetres : NaN
+
+    readonly property string _limitText: (gridView && gridView.altitudeLimitKnown)
+                                            ? _distanceText(gridView.altitudeLimitMetres)
+                                            : qsTr("--")
+
     readonly property real _range:   _valid ? Math.sqrt((_north * _north) + (_east * _east)) : NaN
     /// Compass bearing from the origin to the vehicle. atan2 takes east over north, not the usual
     /// y over x, which is what turns a maths angle into a bearing measured clockwise from north.
@@ -115,6 +130,59 @@ Rectangle {
             font.pointSize:     ScreenTools.smallFontPointSize
             color:              qgcPal.colorOrange
             text:               qsTr("No local position telemetry")
+        }
+
+        // The numbers above are the last ones that arrived, and every one of them still reads as a
+        // measurement. Said in words with an age against it, because the figures themselves cannot
+        // say how old they are -- and a frozen readout is indistinguishable from a steady hover.
+        QGCLabel {
+            Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 22
+            visible:                _root._stale
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            font.bold:              true
+            color:                  qgcPal.colorOrange
+            text:                   qsTr("Position %1 s old — not current").arg(
+                                        isNaN(_root._ageSeconds) ? "--" : Math.round(_root._ageSeconds))
+        }
+
+        // What the estimator thinks of its own solution. Kept here rather than left to the non-GPS
+        // status panel: that panel is a separate window the operator cannot watch while flying the
+        // grid, and this is the one fact that decides whether anything else on this grid means
+        // anything. Silent while the solution is healthy, so it is never background noise.
+        QGCLabel {
+            Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 22
+            visible:                _root._estimatorDegraded && (_root._estimatorWarning !== "")
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            font.bold:              _root._estimatorSevere
+            // Matched to the vehicle marker, which goes to a red outline for the same conditions.
+            // Two different colours for one state reads as two different problems.
+            color:                  _root._estimatorSevere ? qgcPal.colorRed : qgcPal.colorOrange
+            text:                   _root._estimatorWarning
+        }
+
+        // The ceiling the plan was checked against, now checked against where the vehicle actually
+        // is. A plan flown exactly as drawn still arrives here when the operator climbs by hand or
+        // the ground falls away under a level pattern -- and above the rangefinder's range the
+        // estimator has no height source at all.
+        QGCLabel {
+            Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 22
+            visible:                _root._nearCeiling
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            font.bold:              _root._aboveCeiling
+            color:                  _root._aboveCeiling ? qgcPal.colorRed : qgcPal.colorOrange
+            text:                   _root._aboveCeiling
+                                        ? qsTr("%1 — above the rangefinder's %2 range. The estimator has no height reference. Descend.")
+                                            .arg(_root._distanceText(_root._height))
+                                            .arg(_root._limitText)
+                                        : qsTr("%1 — nearing the rangefinder's %2 range.")
+                                            .arg(_root._distanceText(_root._height))
+                                            .arg(_root._limitText)
         }
 
         // Available whether or not an origin exists. An origin set to the wrong place is not a

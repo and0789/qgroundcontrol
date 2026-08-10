@@ -39,11 +39,27 @@ Rectangle {
     readonly property bool _landValid:     _missionController ? (_missionController.isInsertLandValid === true) : false
     readonly property bool _isMultiRotor:  (gridView && gridView.vehicle) ? gridView.vehicle.multiRotor : false
 
+    readonly property bool _syncing: gridView ? gridView.planSyncInProgress : false
+
     function _add(kind) {
         if (gridView) {
             gridView.addMissionItemAt(kind, _north, _east)
         }
         visible = false
+    }
+
+    /// Why nothing can be placed right now. Left unsaid, the transfer case is the one that costs a
+    /// flight: the buttons go dead for a second or two in the middle of building a plan, and an
+    /// operator who reads that as a stuck click keeps working -- into a list the vehicle's reply is
+    /// about to overwrite.
+    function _cannotPlaceReason() {
+        if (_syncing) {
+            return qsTr("The plan is being transferred. Anything placed now would be overwritten by the vehicle's copy when it finishes.")
+        }
+        if (gridView && !gridView.originKnown) {
+            return qsTr("The vehicle has no estimator origin, so this grid is not anchored to anything a mission can be stored against.")
+        }
+        return qsTr("No plan is loaded.")
     }
 
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
@@ -110,9 +126,12 @@ Rectangle {
             onClicked:          _root._add("waypoint")
         }
 
+        // Named for where it lands rather than for where it was clicked. A multirotor climbs in
+        // place whatever coordinate is uploaded with NAV_TAKEOFF, so the takeoff goes on the origin
+        // -- and the operator should read that off the button rather than discover it afterwards.
         QGCButton {
             Layout.fillWidth:   true
-            text:               qsTr("Add takeoff")
+            text:               qsTr("Add takeoff at origin")
             enabled:            _root._canPlace && _root._takeoffValid
             onClicked:          _root._add("takeoff")
         }
@@ -137,18 +156,14 @@ Rectangle {
             onClicked:          _root._add("landHere")
         }
 
-        // Shown rather than left as a dead button. Without an origin there is no mapping between
-        // this frame and the coordinates a mission is stored in, so a waypoint placed here would
-        // upload cleanly and be flown somewhere else entirely.
+        // Shown rather than left as a dead button, and saying which of the three reasons it is.
         QGCLabel {
             Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 24
-            visible:                _root.gridView ? !_root.gridView.canPlaceWaypoints : false
+            visible:                !_root._canPlace
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
             color:                  qgcPal.colorOrange
-            text:                   (_root.gridView && !_root.gridView.originKnown)
-                                        ? qsTr("The vehicle has no estimator origin, so this grid is not anchored to anything a mission can be stored against.")
-                                        : qsTr("No plan is loaded.")
+            text:                   _root._cannotPlaceReason()
         }
 
         // The way out of that message. Without it the operator has to turn the grid off, find the

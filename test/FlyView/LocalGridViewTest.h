@@ -24,7 +24,13 @@ private slots:
     void _followingVehicle_keepsItCentred_test();
     void _centreOnOrigin_stopsFollowing_test();
     void _trailAccumulatesFromTelemetry_test();
+    void _estimatorHealthUnknownUntilReported_test();
+    void _estimatorLosingAiding_isReportedAsSevere_test();
+    void _estimatorRejectingMeasurements_isReported_test();
+    void _positionGoingQuiet_isReportedAsStale_test();
+    void _repeatedIdenticalPositions_keepTheEstimateFresh_test();
     void _withoutEstimatorOrigin_refusesWaypoints_test();
+    void _whileThePlanIsTransferring_refusesWaypoints_test();
     void _waypointPlacedInMetres_reachesThePlanAsACoordinate_test();
     void _planIsDrawnInGridMetres_test();
     void _deleteRemovesTheSelectedWaypoint_test();
@@ -34,6 +40,8 @@ private slots:
     void _legIsMeasuredFromThePreviousWaypoint_test();
     void _takeoffAndLandingUseTheirOwnInsertions_test();
     void _firstItemOfAnEmptyPlanBecomesATakeoff_test();
+    void _homeItemIsNotDrawnAsAWaypoint_test();
+    void _takeoffIsHeldOnTheOrigin_test();
     void _itemTypeChangesInPlace_test();
     void _altitudeCanBeAppliedToEveryItem_test();
     void _everyItemAboveTheCeilingIsFound_test();

@@ -67,6 +67,46 @@ Rectangle {
                                                + " " + _distanceUnits)
                                             : qsTr("--")
 
+    /// True for an item anchored where it is -- the takeoff, which sits on the origin because that
+    /// is where the aircraft is standing. Its altitude is still the operator's to set.
+    readonly property bool _isPinned: (gridView && (visualItemIndex >= 0))
+                                        ? gridView.waypointIsPinned(visualItemIndex)
+                                        : false
+
+    /// Said out loud when an altitude has just been brought back under the ceiling, so a number
+    /// changing under the operator's cursor is explained rather than merely surprising. Cleared when
+    /// the selection moves, since it describes one edit to one item.
+    property string _clampedNote: ""
+
+    // Held to the ceiling rather than only warned about. Above the rangefinder's range the estimator
+    // has no height source at all, so this is not a preference to be overridden -- it is the
+    // altitude the vehicle can be flown at.
+    Connections {
+        target:  _root._altitudeFact
+        enabled: _root._altitudeFact !== null
+
+        function onRawValueChanged(value) {
+            if (!_root.gridView) {
+                return
+            }
+            const capped = _root.gridView.clampAltitude(value)
+            if (capped === value) {
+                return
+            }
+            _root._altitudeFact.rawValue = capped
+            _root._clampedNote = qsTr("Held to %1 — the rangefinder only reaches %2.")
+                                    .arg(_root._altitudeText(capped))
+                                    .arg(_root._limitText)
+        }
+    }
+
+    function _altitudeText(metres) {
+        if (!_transform || isNaN(metres)) {
+            return qsTr("--")
+        }
+        return _transform.toDisplay(metres).toFixed(1) + " " + _distanceUnits
+    }
+
     function _applyAltitudeToAll() {
         if (gridView && _altitudeFact) {
             gridView.setAllWaypointAltitudes(_altitudeFact.rawValue)
@@ -125,8 +165,13 @@ Rectangle {
     // operator's half-typed value would be overwritten under their cursor.
     onNorthChanged:             _refillFields()
     onEastChanged:              _refillFields()
-    onVisualItemIndexChanged:   _refillFields()
     Component.onCompleted:      _refillFields()
+
+    onVisualItemIndexChanged: {
+        // The note describes one edit to one item, so it goes when the selection does
+        _clampedNote = ""
+        _refillFields()
+    }
 
     /// Everything shown is derived here rather than from bound properties. A change handler runs
     /// before the bindings that depend on the same value have been recomputed, so reading a derived
@@ -272,10 +317,28 @@ Rectangle {
             }
         }
 
-        SectionHeader { text: qsTr("Position From Origin") }
+        // The takeoff's position is not the operator's to set. A multirotor climbs in place whatever
+        // coordinate is uploaded with NAV_TAKEOFF, so a takeoff drawn anywhere but where the
+        // aircraft is standing would be a picture of a departure it will not fly -- and moving one
+        // drags the plan's home position along with it.
+        QGCLabel {
+            Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 3
+            Layout.maximumWidth:    _root._labelWidth + _root._fieldWidth + ScreenTools.defaultFontPixelWidth
+            visible:                _root._isPinned
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorGrey
+            text:                   qsTr("Held on the origin, where the aircraft is standing. Set its altitude below.")
+        }
+
+        SectionHeader {
+            visible: !_root._isPinned
+            text:    qsTr("Position From Origin")
+        }
 
         EntryRow {
             id:         northRow
+            visible:    !_root._isPinned
             label:      qsTr("North")
             units:      _root._distanceUnits
             onApplied:  _root._applyOffsets()
@@ -283,6 +346,7 @@ Rectangle {
 
         EntryRow {
             id:         eastRow
+            visible:    !_root._isPinned
             label:      qsTr("East")
             units:      _root._distanceUnits
             onApplied:  _root._applyOffsets()
@@ -290,6 +354,7 @@ Rectangle {
 
         EntryRow {
             id:         bearingRow
+            visible:    !_root._isPinned
             label:      qsTr("Bearing")
             units:      "°"
             onApplied:  _root._applyPolar()
@@ -297,15 +362,20 @@ Rectangle {
 
         EntryRow {
             id:         distanceRow
+            visible:    !_root._isPinned
             label:      qsTr("Distance")
             units:      _root._distanceUnits
             onApplied:  _root._applyPolar()
         }
 
-        SectionHeader { text: qsTr("Leg From Previous") }
+        SectionHeader {
+            visible: !_root._isPinned
+            text:    qsTr("Leg From Previous")
+        }
 
         EntryRow {
             id:         legBearingRow
+            visible:    !_root._isPinned
             label:      qsTr("Bearing")
             units:      "°"
             onApplied:  _root._applyLeg()
@@ -313,6 +383,7 @@ Rectangle {
 
         EntryRow {
             id:         legDistanceRow
+            visible:    !_root._isPinned
             label:      qsTr("Distance")
             units:      _root._distanceUnits
             onApplied:  _root._applyLeg()
@@ -342,8 +413,21 @@ Rectangle {
             }
         }
 
+        // Why the number just changed. An altitude corrected without a word looks like a field that
+        // did not take what was typed into it.
+        QGCLabel {
+            Layout.maximumWidth:    _root._labelWidth + _root._fieldWidth + ScreenTools.defaultFontPixelWidth
+            visible:                _root._clampedNote !== ""
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorOrange
+            text:                   _root._clampedNote
+        }
+
         // The failure this catches is silent: the plan uploads cleanly and the aircraft climbs out
         // of the rangefinder's range in flight, taking the estimator's height reference with it.
+        // Still reachable: the ceiling is held on what is typed here, but a plan arriving from a
+        // file or from the vehicle is not quietly rewritten under the operator.
         QGCLabel {
             Layout.maximumWidth:    _root._labelWidth + _root._fieldWidth + ScreenTools.defaultFontPixelWidth
             visible:                _root._altitudeAboveLimit
@@ -367,6 +451,7 @@ Rectangle {
             Layout.maximumWidth:    _root._labelWidth + _root._fieldWidth + ScreenTools.defaultFontPixelWidth
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
+            visible:                !_root._isPinned
             color:                  qgcPal.colorGrey
             text:                   qsTr("Drag the marker, or type into any field.")
         }

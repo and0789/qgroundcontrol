@@ -53,6 +53,86 @@ Item {
     readonly property real vehicleNorth: _north
     readonly property real vehicleEast:  _east
 
+    /// How long the estimate may go without a message before it stops being treated as current.
+    /// LOCAL_POSITION_NED arrives at around 10 Hz, so this is many missed messages rather than one
+    /// late one -- a threshold that trips on ordinary link jitter teaches the operator to ignore it.
+    property int stalePositionTimeoutMs: 3000
+
+    /// True when the position on screen is the last one that arrived rather than the current one.
+    ///
+    /// This is the failure this whole view has to survive. Without GNSS the grid is the only picture
+    /// of where the aircraft is, and telemetryAvailable is a one-way latch -- FactGroup never sets
+    /// it back to false -- so a vehicle that stops reporting leaves its marker frozen exactly where
+    /// it was last seen. On a grid, a frozen marker and a hovering aircraft are the same image, and
+    /// the operator flies on believing a position that stopped being true minutes ago.
+    readonly property bool positionStale: positionValid && _positionStale
+
+    /// Seconds since the last position message, or NaN before the first one
+    readonly property real positionAgeSeconds: (_lastPositionMSecs > 0)
+                                                ? ((_ageClock - _lastPositionMSecs) / 1000)
+                                                : NaN
+
+    property bool _positionStale:    false
+    property real _lastPositionMSecs: 0
+    /// Sampled rather than read live: "now" is not a value anything can bind to, so the age would
+    /// never recompute on its own
+    property real _ageClock:         0
+
+    Connections {
+        target:  _root._localPosition
+        enabled: _root._localPosition !== null
+
+        // Every message restarts the countdown, including one that reports the same position as the
+        // last. A vehicle holding station is still reporting.
+        function onUpdated() {
+            _root._lastPositionMSecs = Date.now()
+            _root._ageClock = _root._lastPositionMSecs
+            _root._positionStale = false
+            staleTimer.restart()
+        }
+    }
+
+    Timer {
+        id:       staleTimer
+        interval: _root.stalePositionTimeoutMs
+        onTriggered: {
+            // Read the clock here as well as on the ticker. Left to the ticker alone the age is
+            // still zero at the moment the warning appears, so the first thing the operator reads is
+            // "0 s old" beside a warning that the position is not current -- which reads as a bug in
+            // the warning rather than a fault in the estimate.
+            _root._ageClock = Date.now()
+            _root._positionStale = true
+            ageTicker.start()
+        }
+    }
+
+    /// Only runs once the estimate has gone stale, so a healthy flight is not repainting a clock
+    Timer {
+        id:         ageTicker
+        interval:   500
+        repeat:     true
+        running:    false
+        onTriggered: {
+            _root._ageClock = Date.now()
+            if (!_root._positionStale) {
+                stop()
+            }
+        }
+    }
+
+    onVehicleChanged: {
+        // A new aircraft has not gone silent, it has simply not spoken yet
+        _positionStale = false
+        _lastPositionMSecs = 0
+        _ageClock = 0
+        staleTimer.stop()
+        ageTicker.stop()
+
+        // And a trail from the previous aircraft, drawn against this one's origin, is a picture of
+        // a flight that never happened
+        trail.reset()
+    }
+
     property var  _localPosition:   vehicle ? vehicle.localPosition : null
     property real _north:           _localPosition ? _localPosition.x.rawValue : NaN
     property real _east:            _localPosition ? _localPosition.y.rawValue : NaN
@@ -93,10 +173,25 @@ Item {
         vehicle: _root.vehicle
     }
 
+    LocalGridEstimatorHealth {
+        id:      estimatorHealth
+        vehicle: _root.vehicle
+    }
+
+    /// The estimator's verdict on its own solution, exposed so the readout can say it in words
+    readonly property alias estimatorDegraded: estimatorHealth.degraded
+    readonly property alias estimatorSevere:   estimatorHealth.severe
+    readonly property alias estimatorWarning:  estimatorHealth.warning
+
     /// Exposed so the waypoint panel can warn against it without reaching for parameters itself
     readonly property alias altitudeLimitMetres: altitudeLimit.limitMetres
     readonly property alias altitudeLimitKnown:  altitudeLimit.limitKnown
     readonly property alias altitudeLimitReason: altitudeLimit.limitReason
+
+    /// Where the vehicle is against that ceiling right now, rather than where the plan put it
+    readonly property alias heightNearCeiling:  altitudeLimit.nearCeiling
+    readonly property alias heightAboveCeiling: altitudeLimit.aboveCeiling
+    readonly property alias currentHeightMetres: altitudeLimit.currentHeightMetres
 
     /// Sequence numbers of every item in the plan whose altitude climbs past that ceiling.
     ///
@@ -129,6 +224,13 @@ Item {
         return altitudeLimit.exceeds(metres)
     }
 
+    /// Brings an altitude back under the ceiling: far enough under the rangefinder's range that the
+    /// estimator keeps its height reference rather than sitting on the edge of losing it.
+    ///     @return the altitude to use, which is the one given whenever it was already flyable
+    function clampAltitude(metres) {
+        return altitudeLimit.exceeds(metres) ? altitudeLimit.safeDefaultMetres : metres
+    }
+
     /// Walks the plan and places each item that has a coordinate on the grid. Reading
     /// missionController.visualItems.count and the origin here is deliberate: both are what this
     /// depends on, and touching them makes the binding re-run when a waypoint is added or the
@@ -149,6 +251,13 @@ Item {
             if (!item || !item.specifiesCoordinate || !item.coordinate.isValid) {
                 continue
             }
+            // The plan's first visual item is the mission settings, which carries the planned home
+            // position as its coordinate. Drawn as a waypoint it lands on top of the origin marker
+            // and, worse, makes a plan that has just been cleared look like it already holds a
+            // route -- which is what stopped a new plan from starting with a takeoff.
+            if (item.homePosition === true) {
+                continue
+            }
             const offsets = projection.northEastFrom(originCoordinate, item.coordinate)
             if (!offsets) {
                 continue
@@ -161,32 +270,61 @@ Item {
                 // holds anything that is not a plain waypoint.
                 index:      i,
                 sequence:   item.sequenceNumber,
-                isCurrent:  item.isCurrentItem
+                isCurrent:  item.isCurrentItem,
+                // Takeoffs are drawn but not dragged: this one is anchored to the origin
+                isPinned:   _isPinnedItem(item)
             })
         }
         return points
     }
 
+    /// True for an item that belongs where it is and may not be moved from the grid.
+    ///
+    /// The takeoff is the only one. It sits on the origin because that is where the aircraft is
+    /// standing, and a multirotor's NAV_TAKEOFF climbs in place whatever coordinate is uploaded with
+    /// it -- so a dragged takeoff marker would show a departure the vehicle will not fly. Moving one
+    /// also drags the planned home position along with it, since QGC ties the two together.
+    function _isPinnedItem(item) {
+        return (item !== null) && (item.isTakeoffItem === true)
+    }
+
+    /// @return true when the item at this index is anchored where it is
+    function waypointIsPinned(index) {
+        return _isPinnedItem(_visualItemAt(index))
+    }
+
     onMissionPointsChanged: missionCanvas.requestPaint()
+
+    /// The marker drawn for the nth point, or null where none has been built. Exposed because the
+    /// markers are the only part of the plan that can be pointed at, and whether they exist at all
+    /// depends on how the Repeater below is modelled -- which has been got wrong once already.
+    function waypointMarkerAt(pointIndex) {
+        return waypointRepeater.itemAt(pointIndex)
+    }
 
     /// Exposed so the view can be driven from tests and from the surrounding fly view
     readonly property alias gridTransform: transform
     readonly property alias trailPointCount:   trail.pointCount
     readonly property alias trailLengthMetres: trail.pathLengthMetres
 
-    /// A trail from the previous aircraft drawn against this one's origin is a picture of a flight
-    /// that never happened
-    onVehicleChanged: trail.reset()
-
     function clearTrail() {
         trail.reset()
         vehicleCanvas.requestPaint()
     }
 
+    /// True while the plan is being sent to, fetched from or cleared on the vehicle.
+    ///
+    /// Placing anything during one of those loses it. The fly view's mission controller is a mirror
+    /// of the vehicle rather than an editor: when a transaction completes it rebuilds its items from
+    /// the vehicle's copy, so a waypoint drawn while a Clear is still in flight is thrown away
+    /// without a word. The operator finds out at the flight line, when Auto refuses a mission that
+    /// was never there.
+    readonly property bool planSyncInProgress: planMasterController ? planMasterController.syncInProgress : false
+
     /// True when a waypoint placed on the grid would land where it was drawn. Without an origin
     /// there is no mapping between this frame and the coordinates a mission is stored in, and a
     /// waypoint invented from a guessed origin uploads cleanly and flies somewhere else.
-    readonly property bool canPlaceWaypoints: originKnown && (missionController !== null)
+    readonly property bool canPlaceWaypoints: originKnown && (missionController !== null) && !planSyncInProgress
 
     /// Adds a mission item at a point on the grid, in metres from the origin.
     ///     @param kind one of "waypoint", "takeoff", "land"
@@ -200,36 +338,82 @@ Item {
             return false
         }
 
+        // Wherever on the grid it was asked for, a takeoff belongs on the origin
+        if (kind === "takeoff") {
+            return insertTakeoffAtOrigin()
+        }
+
         const coordinate = projection.coordinateAt(originCoordinate, north, east)
         if (!coordinate.isValid) {
             return false
         }
 
-        // The first point of a plan is a takeoff, whatever it was asked for. A mission whose first
-        // item is a waypoint does not climb -- the aircraft sits there -- and asking the operator to
-        // remember that on every new plan is asking them to remember it on the one flight they
-        // forget. The plan being empty is the only case, so nothing already built is reinterpreted.
-        if ((kind === "waypoint") && _planIsEmpty() && _takeoffAllowed()) {
-            kind = "takeoff"
+        // A plan that starts with a waypoint does not climb -- the aircraft sits there -- and asking
+        // the operator to remember that on every new plan is asking them to remember it on the one
+        // flight they forget. The takeoff goes on the origin rather than swallowing the point that
+        // was clicked, so the operator still gets the item they asked for where they asked for it.
+        // The plan being empty is the only case, so nothing already built is reinterpreted.
+        if (_planIsEmpty()) {
+            insertTakeoffAtOrigin()
         }
 
         // -1 appends, which is what clicking past the end of a route means
         switch (kind) {
-        case "takeoff":
-            missionController.insertTakeoffItem(coordinate, -1, true /* makeCurrentItem */)
-            break
         case "land":
-            missionController.insertLandItem(coordinate, -1, true /* makeCurrentItem */)
+            _applyDefaultAltitude(missionController.insertLandItem(coordinate, -1, true /* makeCurrentItem */))
             break
         case "landHere":
             return _insertLandHere(coordinate)
         default:
-            missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
+            _applyDefaultAltitude(missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */))
             break
         }
 
         _selectNewestItem()
         return true
+    }
+
+    /// Puts the takeoff on the origin, which is the point the aircraft is standing on.
+    ///     @return true if it was added
+    function insertTakeoffAtOrigin() {
+        if (!canPlaceWaypoints || !_takeoffAllowed()) {
+            return false
+        }
+
+        const coordinate = projection.coordinateAt(originCoordinate, 0, 0)
+        if (!coordinate.isValid) {
+            return false
+        }
+
+        const item = missionController.insertTakeoffItem(coordinate, -1, true /* makeCurrentItem */)
+        if (!item) {
+            return false
+        }
+
+        // Placed again after the insertion on purpose. insertTakeoffItem ignores the coordinate it
+        // is handed and puts the item on the plan's home position -- where the vehicle reported it
+        // launched from, which is not necessarily where the estimator is counting from. On this grid
+        // the origin is the only point a distance can be measured against.
+        item.coordinate = coordinate
+
+        _applyDefaultAltitude(item)
+        _selectNewestItem()
+        return true
+    }
+
+    /// Brings a newly placed item under the ceiling the estimator can actually hold a height at.
+    ///
+    /// QGC's default mission altitude is chosen for a vehicle with GNSS and a barometer. On one
+    /// flying off a rangefinder it is above the only height reference there is, and the way that
+    /// fails is silent: the plan uploads cleanly and the aircraft climbs out of range in flight.
+    function _applyDefaultAltitude(item) {
+        if (!item || !item.altitude) {
+            return
+        }
+        const capped = clampAltitude(item.altitude.rawValue)
+        if (capped !== item.altitude.rawValue) {
+            item.altitude.rawValue = capped
+        }
     }
 
     /// Lands the vehicle where it is standing on the grid, rather than flying it home first.
@@ -245,6 +429,7 @@ Item {
         }
 
         item.command = commandLand
+        _applyDefaultAltitude(item)
         _selectNewestItem()
         return true
     }
@@ -427,7 +612,7 @@ Item {
     ///     @return true if it moved
     function moveWaypointTo(index, north, east) {
         const item = _visualItemAt(index)
-        if (!item || !originKnown || isNaN(north) || isNaN(east)) {
+        if (!item || !originKnown || isNaN(north) || isNaN(east) || _isPinnedItem(item)) {
             return false
         }
 
@@ -446,7 +631,9 @@ Item {
 
     on_NorthChanged:        _followAndRepaint()
     on_EastChanged:         _followAndRepaint()
-    on_HeadingDegreesChanged: vehicleCanvas.requestPaint()
+    on_HeadingDegreesChanged:  vehicleCanvas.requestPaint()
+    onPositionStaleChanged:    vehicleCanvas.requestPaint()
+    onEstimatorSevereChanged:  vehicleCanvas.requestPaint()
 
     property bool _hasBeenFitted: false
 
@@ -671,16 +858,22 @@ Item {
             return
         }
 
-        if (points.length > 1) {
-            ctx.beginPath()
-            ctx.strokeStyle = qgcPal.colorOrange
-            ctx.lineWidth = 2
-            ctx.moveTo(transform.pixelXForEast(points[0].east), transform.pixelYForNorth(points[0].north))
-            for (var i = 1; i < points.length; i++) {
-                ctx.lineTo(transform.pixelXForEast(points[i].east), transform.pixelYForNorth(points[i].north))
-            }
-            ctx.stroke()
+        // Started at the origin rather than at the first drawn waypoint. The first leg is flown from
+        // where the aircraft is standing, legStartFor already measures it from there, and the panel
+        // states its bearing and distance -- so leaving it out of the drawing gave a picture that
+        // denied a leg the numbers beside it described.
+        //
+        // It is also the leg most likely to have nothing at its near end to draw from: on ArduPilot
+        // a multirotor's takeoff climbs in place and carries no position of its own, so the route
+        // appeared to begin in mid-air at the second waypoint.
+        ctx.beginPath()
+        ctx.strokeStyle = qgcPal.colorOrange
+        ctx.lineWidth = 2
+        ctx.moveTo(transform.pixelXForEast(0), transform.pixelYForNorth(0))
+        for (var i = 0; i < points.length; i++) {
+            ctx.lineTo(transform.pixelXForEast(points[i].east), transform.pixelYForNorth(points[i].north))
         }
+        ctx.stroke()
 
         // The markers themselves are items rather than paint, so they can be pointed at. Only the
         // legs between them are drawn here.
@@ -705,11 +898,25 @@ Item {
         ctx.lineTo(-size * 0.6, size * 0.7)
         ctx.closePath()
 
-        ctx.fillStyle = isNaN(headingDegrees) ? qgcPal.colorOrange : qgcPal.colorBlue
-        ctx.fill()
-        ctx.strokeStyle = qgcPal.text
-        ctx.lineWidth = 1
-        ctx.stroke()
+        // Hollowed out once the position stops being trustworthy, rather than merely recoloured. A
+        // solid marker states a position; an empty outline states where one was last believed to be,
+        // which is the only thing still known. The shape is kept so the operator can see it is the
+        // same aircraft and where it was last pointing.
+        //
+        // Outlined in red rather than orange: the mission legs and every waypoint marker on this
+        // grid are already orange, and an orange outline among them is a shape the eye has to hunt
+        // for. This is the one thing on the grid that must not be missed.
+        if (_root.positionStale || _root.estimatorSevere) {
+            ctx.strokeStyle = qgcPal.colorRed
+            ctx.lineWidth = 2
+            ctx.stroke()
+        } else {
+            ctx.fillStyle = isNaN(headingDegrees) ? qgcPal.colorOrange : qgcPal.colorBlue
+            ctx.fill()
+            ctx.strokeStyle = qgcPal.text
+            ctx.lineWidth = 1
+            ctx.stroke()
+        }
 
         ctx.restore()
     }
@@ -790,26 +997,42 @@ Item {
     /// canvas so a marker can always be picked up. Positions are bindings on the transform, so they
     /// follow a pan or a zoom without the model being rebuilt.
     Repeater {
-        id:     waypointRepeater
-        model:  _root.missionPoints
+        id: waypointRepeater
+
+        // The count rather than the array itself. missionPoints is rebuilt from scratch on every
+        // coordinate change, and handing that array over as the model tore down and recreated every
+        // delegate with it -- including, mid-drag, the MouseArea holding the grab. The marker was
+        // dropped after the first pixel of movement and had to be picked up again for the next one,
+        // which is what made dragging on the grid feel nothing like dragging on the map. A plain
+        // count only changes when an item is added or removed, so a marker being dragged survives.
+        model: _root.missionPoints.length
 
         LocalGridWaypoint {
-            required property var modelData
+            id: waypointMarker
 
+            required property int index
+
+            // Re-read out of the rebuilt array rather than captured, so the delegate follows its
+            // waypoint without being replaced. Guarded: the count is applied a beat before the array
+            // it came from on the pass where an item is removed.
+            readonly property var point: _root.missionPoints[index] ?? null
+
+            visible:         point !== null
             gridView:        _root
-            visualItemIndex: modelData.index
-            sequenceNumber:  modelData.sequence
-            isCurrentItem:   modelData.isCurrent
-            isSelected:      _root.selectedWaypointIndex === modelData.index
+            visualItemIndex: point ? point.index : -1
+            sequenceNumber:  point ? point.sequence : 0
+            isCurrentItem:   point ? point.isCurrent : false
+            draggable:       point ? !point.isPinned : false
+            isSelected:      point ? (_root.selectedWaypointIndex === point.index) : false
             // _root.gridTransform, not the bare id: every Item carries its own `transform` property
             // and it shadows the id inside this delegate, which resolved to a list of graphical
             // transforms and left the markers unplaced.
-            x:               _root.gridTransform.pixelXForEast(modelData.east) - (width / 2)
-            y:               _root.gridTransform.pixelYForNorth(modelData.north) - (height / 2)
+            x:               point ? (_root.gridTransform.pixelXForEast(point.east) - (width / 2)) : 0
+            y:               point ? (_root.gridTransform.pixelYForNorth(point.north) - (height / 2)) : 0
             z:               isSelected ? 2 : 1
 
-            onSelected:             _root.selectWaypoint(modelData.index)
-            onMovedTo:              (north, east) => _root.moveWaypointTo(modelData.index, north, east)
+            onSelected: _root.selectWaypoint(waypointMarker.visualItemIndex)
+            onMovedTo:  (north, east) => _root.moveWaypointTo(waypointMarker.visualItemIndex, north, east)
         }
     }
 

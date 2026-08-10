@@ -19,4 +19,9 @@ private slots:
     void _rangefinderSource_reportsTheRangeAsTheCeiling_test();
     void _flowVelocitySource_keepsTheCeiling_test();
     void _neitherSource_warnsAboutNothing_test();
+    void _safeDefault_staysUnderTheCeiling_test();
+    void _liveHeightIsCheckedAgainstTheCeiling_test();
+    void _liveHeightIsSilentWhereNoCeilingApplies_test();
+    void _flowHeightStandsInForASilentRangefinder_test();
+    void _rangefinderIsPreferredOverTheFlowHeight_test();
 };

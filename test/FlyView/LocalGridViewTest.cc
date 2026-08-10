@@ -2,8 +2,10 @@
 
 #include <cmath>
 
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QtNumeric>
 #include <QtPositioning/QGeoCoordinate>
+#include <QtTest/QSignalSpy>
 #include <QtQml/QJSValue>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlEngine>
@@ -56,6 +58,10 @@ constexpr const char *kMissionControllerStub = R"(
                 property bool isCurrentItem: false
                 property int  command: 16
                 property int  altitudeFrame: 1
+                // What the grid uses to tell the plan's own items from the settings item carrying
+                // the planned home position, and a takeoff from anything that can be dragged
+                property bool homePosition: false
+                property bool isTakeoffItem: false
                 // A real Fact, not a look-alike: the panel binds it into a FactTextField, which
                 // refuses anything else and says so on every rebuild.
                 property Fact altitude: Fact { }
@@ -69,6 +75,18 @@ constexpr const char *kMissionControllerStub = R"(
             list.push(itemComponent.createObject(null, {
                 coordinate: coordinate,
                 sequenceNumber: sequenceNumber
+            }))
+            items = list
+        }
+
+        // MissionController always keeps the settings item, which carries the planned home position
+        // as its coordinate, at the front of the list
+        function addHomeItem(coordinate) {
+            var list = items.slice()
+            list.unshift(itemComponent.createObject(null, {
+                coordinate: coordinate,
+                sequenceNumber: 0,
+                homePosition: true
             }))
             items = list
         }
@@ -98,14 +116,26 @@ constexpr const char *kMissionControllerStub = R"(
         property int takeoffCount: 0
         property int landCount: 0
 
+        /// Where MissionController would put a takeoff regardless of what it was asked for, when
+        /// the plan has a home position. Left null for a plan that has none.
+        property var takeoffLandsOn: null
+
         function insertTakeoffItem(coordinate, index, makeCurrentItem) {
             lastCoordinate = coordinate
             lastIndex = index
             takeoffCount++
+            // The real insertTakeoffItem ignores the coordinate it is handed and puts the item on
+            // the plan's home position. Modelled here because it is the reason the grid places the
+            // takeoff a second time afterwards: home is where the vehicle reported it launched
+            // from, which is not necessarily where the estimator is counting from.
+            //
             // Appended like any other insertion. Without this the plan looks empty to the grid,
             // which keeps treating the next item as the first one.
-            addItem(coordinate, items.length + 1)
-            return items[items.length - 1]
+            addItem(takeoffLandsOn ? takeoffLandsOn : coordinate, items.length + 1)
+            const item = items[items.length - 1]
+            item.isTakeoffItem = true
+            lastInsertedItem = item
+            return item
         }
 
         function insertLandItem(coordinate, index, makeCurrentItem) {
@@ -129,9 +159,25 @@ constexpr const char *kMissionControllerStub = R"(
     }
 )";
 
-QObject *createMissionControllerStub(QQmlComponent &component, QString &error)
+/// A stand-in for PlanMasterController. The real one needs a vehicle, three plan managers and a link
+/// before it will say anything at all.
+///
+/// It carries every property the grid's mission actions bind to, not just the transaction flag this
+/// exercises: a missing one reads as undefined, which QML refuses to assign to a bool and reports on
+/// every rebuild -- and the test runner treats an unexpected warning as a failure.
+constexpr const char *kPlanMasterControllerStub = R"(
+    import QtQuick
+
+    QtObject {
+        property bool syncInProgress: false
+        property bool offline: false
+        property bool dirtyForUpload: false
+    }
+)";
+
+QObject *createStub(QQmlComponent &component, const char *source, QString &error)
 {
-    component.setData(kMissionControllerStub, QUrl());
+    component.setData(source, QUrl());
     if (!component.isReady()) {
         error = component.errorString();
         return nullptr;
@@ -143,6 +189,33 @@ QObject *createMissionControllerStub(QQmlComponent &component, QString &error)
     }
     return stub;
 }
+
+QObject *createMissionControllerStub(QQmlComponent &component, QString &error)
+{
+    return createStub(component, kMissionControllerStub, error);
+}
+
+QObject *createPlanMasterControllerStub(QQmlComponent &component, QString &error)
+{
+    return createStub(component, kPlanMasterControllerStub, error);
+}
+
+/// Feeds the vehicle an EKF_STATUS_REPORT, the message ArduPilot reports estimator health in
+void sendEkfStatus(Vehicle *vehicle, uint16_t flags, float posHorizVariance, float velVariance)
+{
+    mavlink_ekf_status_report_t ekfStatus{};
+    ekfStatus.flags = flags;
+    ekfStatus.pos_horiz_variance = posHorizVariance;
+    ekfStatus.velocity_variance = velVariance;
+
+    mavlink_message_t message{};
+    (void) mavlink_msg_ekf_status_report_encode(vehicle->id(), MAV_COMP_ID_AUTOPILOT1, &message, &ekfStatus);
+    vehicle->getFactGroup(QStringLiteral("estimatorStatus"))->handleMessage(vehicle, message);
+}
+
+/// Every flag a healthy solution sets, so a test that means to degrade one thing degrades one thing
+constexpr uint16_t kHealthyEkfFlags = EKF_ATTITUDE | EKF_VELOCITY_HORIZ | EKF_VELOCITY_VERT
+                                      | EKF_POS_HORIZ_REL | EKF_POS_HORIZ_ABS | EKF_POS_VERT_ABS;
 
 /// Gives the vehicle an estimator origin, the way the operator does from the fly view map
 bool setEstimatorOrigin(Vehicle *vehicle, MockLink *mockLink, const QGeoCoordinate &origin)
@@ -351,6 +424,195 @@ void LocalGridViewTest::_withoutEstimatorOrigin_refusesWaypoints_test()
     QCOMPARE(stub->property("insertCount").toInt(), 0);
 }
 
+/// A vehicle that has said nothing about its estimator must not read as one with a perfect
+/// estimator. Both are all-clear on screen, and only one of them has earned it.
+void LocalGridViewTest::_estimatorHealthUnknownUntilReported_test()
+{
+    QVERIFY(vehicle());
+    MAKE_GRID_VIEW(gridView);
+
+    QVERIFY2(!gridView->property("estimatorDegraded").toBool(),
+             "an unreported estimator raises no warning");
+    QCOMPARE(gridView->property("estimatorWarning").toString(), QString());
+
+    sendEkfStatus(vehicle(), kHealthyEkfFlags, 0.2F, 0.2F);
+    QVERIFY2(!gridView->property("estimatorDegraded").toBool(), "a healthy solution stays silent");
+}
+
+/// EKF_CONST_POS_MODE is not a degraded position, it is the absence of one: with no aiding left the
+/// filter holds the last position and the vehicle drifts away from it unobserved. The grid keeps
+/// drawing a confident marker the whole time, which is why this has to be said out loud.
+void LocalGridViewTest::_estimatorLosingAiding_isReportedAsSevere_test()
+{
+    QVERIFY(vehicle());
+    MAKE_GRID_VIEW(gridView);
+
+    sendEkfStatus(vehicle(), kHealthyEkfFlags, 0.2F, 0.2F);
+    QVERIFY(!gridView->property("estimatorDegraded").toBool());
+
+    sendEkfStatus(vehicle(), kHealthyEkfFlags | EKF_CONST_POS_MODE, 0.2F, 0.2F);
+
+    QVERIFY(gridView->property("estimatorDegraded").toBool());
+    QVERIFY2(gridView->property("estimatorSevere").toBool(),
+             "an estimator that has stopped aiding is not a mild warning");
+    QVERIFY(!gridView->property("estimatorWarning").toString().isEmpty());
+
+    // And it clears when the estimator recovers, rather than latching the way telemetryAvailable does
+    sendEkfStatus(vehicle(), kHealthyEkfFlags, 0.2F, 0.2F);
+    QVERIFY(!gridView->property("estimatorDegraded").toBool());
+    QVERIFY(!gridView->property("estimatorSevere").toBool());
+}
+
+/// A filter rejecting its own position measurements is the state just before it stops using them.
+/// Worth saying while it is still recoverable rather than only once aiding is gone.
+void LocalGridViewTest::_estimatorRejectingMeasurements_isReported_test()
+{
+    QVERIFY(vehicle());
+    MAKE_GRID_VIEW(gridView);
+
+    // Under the warn threshold: working, and nothing to say about it
+    sendEkfStatus(vehicle(), kHealthyEkfFlags, 0.5F, 0.5F);
+    QVERIFY(!gridView->property("estimatorDegraded").toBool());
+
+    // Between warn and bad: struggling
+    sendEkfStatus(vehicle(), kHealthyEkfFlags, 0.9F, 0.5F);
+    QVERIFY(gridView->property("estimatorDegraded").toBool());
+    QVERIFY2(!gridView->property("estimatorSevere").toBool(),
+             "struggling is not the same as having given up, and must not read the same");
+
+    // Past the bad threshold: rejecting
+    sendEkfStatus(vehicle(), kHealthyEkfFlags, 1.4F, 0.5F);
+    QVERIFY(gridView->property("estimatorSevere").toBool());
+
+    // The velocity ratio counts too -- optical flow aiding is what this way of flying rides on
+    sendEkfStatus(vehicle(), kHealthyEkfFlags, 0.2F, 1.4F);
+    QVERIFY(gridView->property("estimatorSevere").toBool());
+}
+
+/// The estimate going quiet is the failure this whole view has to survive.
+///
+/// Without GNSS the grid is the only picture of where the aircraft is, and FactGroup's
+/// telemetryAvailable is a one-way latch -- nothing in the codebase ever sets it back to false. A
+/// vehicle that stops reporting therefore leaves its marker frozen exactly where it was last seen,
+/// which on a grid is the same image as an aircraft holding station.
+void LocalGridViewTest::_positionGoingQuiet_isReportedAsStale_test()
+{
+    QVERIFY(vehicle());
+    MAKE_GRID_VIEW(gridView);
+
+    // Short enough to keep the test quick, long enough that it is silence being measured
+    gridView->setProperty("stalePositionTimeoutMs", 250);
+
+    sendLocalPosition(vehicle(), 12.0F, 8.0F, -2.0F);
+    QVERIFY(gridView->property("positionValid").toBool());
+    QVERIFY2(!gridView->property("positionStale").toBool(),
+             "a position that has just arrived is not stale");
+
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("positionStale").toBool(), TestTimeout::mediumMs());
+
+    // The numbers stay readable -- what is withdrawn is the claim that they are current. Blanking
+    // them would throw away the last place the aircraft was seen, which is where a search starts.
+    QCOMPARE(gridView->property("vehicleNorth").toDouble(), 12.0);
+    QCOMPARE(gridView->property("vehicleEast").toDouble(), 8.0);
+    QVERIFY(gridView->property("positionValid").toBool());
+    QVERIFY(gridView->property("positionAgeSeconds").toDouble() > 0.0);
+
+    // And one message brings it back
+    sendLocalPosition(vehicle(), 12.5F, 8.0F, -2.0F);
+    QVERIFY2(!gridView->property("positionStale").toBool(),
+             "a message arriving must clear the warning immediately");
+}
+
+/// A vehicle holding station reports the same position over and over.
+///
+/// Fact::setRawValue only signals when the value differs, so anything timing the estimate off the
+/// facts sees nothing arriving and calls a healthy hover stale. That false alarm is its own failure:
+/// a warning that cries wolf on the one instrument left is a warning the operator learns to ignore.
+void LocalGridViewTest::_repeatedIdenticalPositions_keepTheEstimateFresh_test()
+{
+    QVERIFY(vehicle());
+    MAKE_GRID_VIEW(gridView);
+
+    gridView->setProperty("stalePositionTimeoutMs", 300);
+
+    sendLocalPosition(vehicle(), 5.0F, -3.0F, -1.0F);
+    QVERIFY(!gridView->property("positionStale").toBool());
+
+    // Held still well past the timeout, resent the way a vehicle would. Not one of these changes a
+    // fact, so only the message itself can keep the estimate alive. Each wait doubles as the
+    // assertion: it returns true only if staleness changed, which is exactly what must not happen.
+    QSignalSpy staleSpy(gridView.get(), SIGNAL(positionStaleChanged()));
+    QVERIFY(staleSpy.isValid());
+
+    QElapsedTimer heldStill;
+    heldStill.start();
+    while (heldStill.elapsed() < 900) {
+        sendLocalPosition(vehicle(), 5.0F, -3.0F, -1.0F);
+        QVERIFY2(!staleSpy.wait(60), "a vehicle reporting the same position is still reporting");
+    }
+
+    QVERIFY(!gridView->property("positionStale").toBool());
+}
+
+/// A plan transfer in flight is the one moment nothing may be placed.
+///
+/// The fly view's mission controller mirrors the vehicle rather than editing it: when a Clear, an
+/// upload or a download completes, MissionController rebuilds its visual items from the vehicle's
+/// copy. A waypoint drawn while that round trip is open is discarded without a word, and the
+/// operator meets it at the flight line -- Clear, build the next pattern, arm, and Auto refuses a
+/// mission that was silently emptied under them.
+void LocalGridViewTest::_whileThePlanIsTransferring_refusesWaypoints_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+
+    QVERIFY(gridView->property("canPlaceWaypoints").toBool());
+
+    // Clear has just been pressed: the removal is on its way to the vehicle, and the reply to it
+    // will rebuild the list this would be placed into
+    plan->setProperty("syncInProgress", true);
+    QVERIFY(gridView->property("planSyncInProgress").toBool());
+    QVERIFY(!gridView->property("canPlaceWaypoints").toBool());
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
+    QVERIFY2(!placed.toBool(), "nothing may be placed into a list the vehicle's reply is about to overwrite");
+    QCOMPARE(stub->property("insertCount").toInt(), 0);
+    QCOMPARE(stub->property("takeoffCount").toInt(), 0);
+
+    // The takeoff goes through the same gate, so the other way into the plan is shut too
+    QVariant tookOff;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "insertTakeoffAtOrigin", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, tookOff)));
+    QVERIFY(!tookOff.toBool());
+    QCOMPARE(stub->property("takeoffCount").toInt(), 0);
+
+    // And it all comes back the moment the transfer lands, rather than staying shut until something
+    // else nudges the binding
+    plan->setProperty("syncInProgress", false);
+    QVERIFY(gridView->property("canPlaceWaypoints").toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
+    QVERIFY2(placed.toBool(), "placing must work again once the plan is no longer in transit");
+}
+
 /// The point of the whole view: a waypoint placed as metres on the grid must reach the plan as the
 /// coordinate those metres describe.
 void LocalGridViewTest::_waypointPlacedInMetres_reachesThePlanAsACoordinate_test()
@@ -374,9 +636,10 @@ void LocalGridViewTest::_waypointPlacedInMetres_reachesThePlanAsACoordinate_test
                                       Q_RETURN_ARG(QVariant, placed),
                                       Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
     QVERIFY(placed.toBool());
-    // The first item of an empty plan is a takeoff whatever was asked for, so what is asserted here
-    // is the coordinate it was given rather than which insertion carried it
+    // An empty plan gains a takeoff on the origin first, so the waypoint that was asked for is the
+    // second insertion and the coordinate asserted below is the one it carried
     QCOMPARE(stub->property("takeoffCount").toInt(), 1);
+    QCOMPARE(stub->property("insertCount").toInt(), 1);
     // -1 appends, which is what clicking past the end of a route means
     QCOMPARE(stub->property("lastIndex").toInt(), -1);
 
@@ -702,8 +965,12 @@ void LocalGridViewTest::_takeoffAndLandingUseTheirOwnInsertions_test()
     QCOMPARE(stub->property("takeoffCount").toInt(), 1);
 }
 
-/// A mission whose first item is a plain waypoint does not climb -- the aircraft sits there. Making
-/// the first point a takeoff removes a step nobody remembers until the one flight they forget it.
+/// A mission whose first item is a plain waypoint does not climb -- the aircraft sits there. Starting
+/// every plan with a takeoff removes a step nobody remembers until the one flight they forget it.
+///
+/// The takeoff goes on the origin and the point that was clicked still becomes the item that was
+/// asked for. Consuming the click instead cost the operator the waypoint they had just placed, and
+/// left the takeoff sitting wherever they happened to have aimed.
 void LocalGridViewTest::_firstItemOfAnEmptyPlanBecomesATakeoff_test()
 {
     QVERIFY(vehicle());
@@ -720,21 +987,30 @@ void LocalGridViewTest::_firstItemOfAnEmptyPlanBecomesATakeoff_test()
     QVariant added;
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
                                       Q_RETURN_ARG(QVariant, added),
-                                      Q_ARG(QVariant, 0.0), Q_ARG(QVariant, 0.0)));
+                                      Q_ARG(QVariant, 25.0), Q_ARG(QVariant, 0.0)));
     QVERIFY(added.toBool());
     QCOMPARE(stub->property("takeoffCount").toInt(), 1);
-    QCOMPARE(stub->property("insertCount").toInt(), 0);
+    QCOMPARE(stub->property("insertCount").toInt(), 1);
 
-    // Whatever it was placed as, it is selected, so its altitude can be set without hunting for it
-    QCOMPARE(gridView->property("selectedWaypointIndex").toInt(), 0);
+    // The takeoff on the origin, the waypoint where it was asked for
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("north")).toNumber()) < 0.05);
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("east")).toNumber()) < 0.05);
+    QVERIFY(points.property(0).property(QStringLiteral("isPinned")).toBool());
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 25.0) < 0.05);
 
-    // The second is a waypoint, and every one after it. Only an empty plan is reinterpreted.
+    // The waypoint is what is selected, so its altitude can be set without hunting for it -- not the
+    // takeoff that was inserted underneath it
+    QCOMPARE(gridView->property("selectedWaypointIndex").toInt(), 1);
+
+    // Every point after it is a plain waypoint. Only an empty plan gains a takeoff.
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
                                       Q_RETURN_ARG(QVariant, added),
                                       Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
     QVERIFY(added.toBool());
     QCOMPARE(stub->property("takeoffCount").toInt(), 1);
-    QCOMPARE(stub->property("insertCount").toInt(), 1);
+    QCOMPARE(stub->property("insertCount").toInt(), 2);
 
     // A plan that already carries a takeoff must not gain a second one from an empty-looking list
     stub->setProperty("isInsertTakeoffValid", false);
@@ -742,6 +1018,114 @@ void LocalGridViewTest::_firstItemOfAnEmptyPlanBecomesATakeoff_test()
                                       Q_RETURN_ARG(QVariant, added),
                                       Q_ARG(QVariant, 40.0), Q_ARG(QVariant, 0.0)));
     QCOMPARE(stub->property("takeoffCount").toInt(), 1);
+}
+
+/// The plan's first visual item is the mission settings, which carries the planned home position as
+/// its coordinate. Drawn as a waypoint it lands on top of the origin marker, and -- the failure this
+/// exists for -- makes a plan that has just been cleared look like it already holds a route, so the
+/// next plan never gains its takeoff and the vehicle refuses the mission it is given.
+void LocalGridViewTest::_homeItemIsNotDrawnAsAWaypoint_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    // What a cleared plan holds: the settings item and nothing else
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "addHomeItem", Qt::DirectConnection,
+                                      Q_ARG(QVariant, QVariant::fromValue(origin))));
+    stub->setProperty("takeoffLandsOn", QVariant::fromValue(origin));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QObject *const visualItems = stub->property("visualItems").value<QObject *>();
+    QVERIFY(visualItems);
+    QCOMPARE(visualItems->property("count").toInt(), 1);
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY2(points.property(QStringLiteral("length")).toInt() == 0,
+             "the home position is not a waypoint of the plan");
+
+    // And so the next point placed still starts the plan with a takeoff
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QCOMPARE(stub->property("takeoffCount").toInt(), 1);
+
+    // The home item stays at the front of the list, so the indices the grid hands back have to be
+    // the ones into visualItems rather than into the points it drew
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QCOMPARE(points.property(0).property(QStringLiteral("index")).toInt(), 1);
+    QCOMPARE(points.property(1).property(QStringLiteral("index")).toInt(), 2);
+}
+
+/// A multirotor climbs in place whatever coordinate is uploaded with NAV_TAKEOFF, so a takeoff drawn
+/// anywhere but where the aircraft is standing is a picture of a departure it will not fly. It goes
+/// on the origin wherever the operator clicked, and it stays there.
+void LocalGridViewTest::_takeoffIsHeldOnTheOrigin_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    // A home position 40 m away from the estimator origin, which is where MissionController would
+    // put the takeoff if the grid left it there
+    stub->setProperty("takeoffLandsOn",
+                      QVariant::fromValue(origin.atDistanceAndAzimuth(40.0, 90.0)));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, QStringLiteral("takeoff")),
+                                      Q_ARG(QVariant, 60.0), Q_ARG(QVariant, -30.0)));
+    QVERIFY(added.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 1);
+    QVERIFY2(qAbs(points.property(0).property(QStringLiteral("north")).toNumber()) < 0.05,
+             "the takeoff belongs on the origin, not on the point that was clicked");
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("east")).toNumber()) < 0.05);
+
+    // Dragged or typed at, it stays where it is
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointTo", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 0), Q_ARG(QVariant, 12.0), Q_ARG(QVariant, 8.0)));
+    QVERIFY2(!moved.toBool(), "a takeoff may not be moved off the origin");
+
+    QVariant pinned;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointIsPinned", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, pinned), Q_ARG(QVariant, 0)));
+    QVERIFY(pinned.toBool());
+
+    // And the marker itself refuses the drag, so it is never reported in the first place. This also
+    // pins down that markers are built at all: they are the only part of the plan that can be
+    // pointed at, and how the Repeater is modelled decides whether they exist.
+    QVariant marker;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointMarkerAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, marker), Q_ARG(QVariant, 0)));
+    QObject *const takeoffMarker = marker.value<QObject *>();
+    QVERIFY2(takeoffMarker, "a placed waypoint must have a marker that can be picked up");
+    QCOMPARE(takeoffMarker->property("sequenceNumber").toInt(), 1);
+    QVERIFY2(!takeoffMarker->property("draggable").toBool(), "the takeoff marker must not be draggable");
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("north")).toNumber()) < 0.05);
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("east")).toNumber()) < 0.05);
 }
 
 /// Turning the last waypoint of a pattern into a landing is the common edit. Doing it in place keeps

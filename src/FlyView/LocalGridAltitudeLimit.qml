@@ -45,6 +45,18 @@ QtObject {
     readonly property bool limitKnown:   limitApplies && (_maxFact !== null)
     readonly property real limitMetres:  limitKnown ? _maxFact.rawValue : NaN
 
+    /// How far under the rangefinder's range a plan should be flown. A waypoint sitting exactly on
+    /// the limit is one gust and one patch of soft ground away from being over it, and the
+    /// rangefinder's last metre is where its readings get least trustworthy.
+    property real marginMetres: 1
+
+    /// The altitude to fall back to: the ceiling less that margin. On a rangefinder short enough
+    /// that the margin would take the answer to nothing -- a two metre indoor sensor -- half the
+    /// range is used instead, since an altitude of zero is not a flight.
+    readonly property real safeDefaultMetres: !limitKnown
+                                                ? NaN
+                                                : Math.max(limitMetres - marginMetres, limitMetres / 2)
+
     /// Why the ceiling exists, so the warning can name the consequence rather than the parameter.
     /// Both reasons can hold at once; the altitude one is stated first because it is the one that
     /// runs away rather than merely degrading.
@@ -53,6 +65,56 @@ QtObject {
                                             : (rangefinderIsAltitudeSource
                                                 ? qsTr("the estimator takes its height from it, and loses the reference above that")
                                                 : qsTr("optical flow is scaled into a velocity using it, and has nothing to scale with above that"))
+
+    /// How high the vehicle is right now, as the downward rangefinder itself reports it.
+    ///
+    /// The rangefinder's own reading rather than a barometric or relative altitude, because the
+    /// ceiling being approached is the rangefinder's range -- so the honest quantity to compare
+    /// against it is the one that sensor is actually returning, not a height derived from something
+    /// else that happens to agree on level ground.
+    readonly property var _downwardFact: (vehicle && vehicle.distanceSensors)
+                                            ? vehicle.distanceSensors.rotationPitch270
+                                            : null
+
+    /// The same height as it arrives inside OPTICAL_FLOW, for a vehicle that does not stream
+    /// DISTANCE_SENSOR.
+    ///
+    /// ArduPilot fills that message's ground_distance from the same downward rangefinder, and
+    /// whether DISTANCE_SENSOR is streamed alongside it depends on how the link's message rates are
+    /// set up. On a vehicle that sends only the flow message this is the one place the height
+    /// appears at all -- and that is precisely the aircraft this ceiling was written for, so
+    /// reading the rangefinder fact alone left the warning silent for it.
+    readonly property var _flowHeightFact: (vehicle && vehicle.opticalFlow)
+                                            ? vehicle.opticalFlow.groundDistance
+                                            : null
+
+    readonly property real currentHeightMetres: {
+        // The dedicated message first: it states the orientation it was measured in, where the flow
+        // message only promises a distance to the ground.
+        const rangefinder = _downwardFact ? _downwardFact.rawValue : NaN
+        if (!isNaN(rangefinder) && (rangefinder > 0)) {
+            return rangefinder
+        }
+        // Silence on that fact is not a reading of zero, though it looks like one: the distance
+        // sensor facts start at zero rather than NaN and stay there until a DISTANCE_SENSOR arrives,
+        // so zero has to be read as "nothing said" and the fallback tried.
+        const flowHeight = _flowHeightFact ? _flowHeightFact.rawValue : NaN
+        return (!isNaN(flowHeight) && (flowHeight > 0)) ? flowHeight : NaN
+    }
+
+    readonly property bool currentHeightKnown: limitApplies && !isNaN(currentHeightMetres)
+
+    /// The vehicle is flying high enough that the height reference is about to go, or has gone.
+    ///
+    /// Warned about in flight and not only when the plan was drawn. A plan can be flown correctly
+    /// and still end up here: the operator climbs by hand, the ground falls away beneath a pattern
+    /// flown level, or the vehicle overshoots its target altitude. The plan check cannot see any of
+    /// those, and the failure is the same one -- above the rangefinder's range there is no height
+    /// source, and nothing on screen says so.
+    readonly property bool nearCeiling: currentHeightKnown && limitKnown
+                                            && (currentHeightMetres > safeDefaultMetres)
+    readonly property bool aboveCeiling: currentHeightKnown && limitKnown
+                                            && (currentHeightMetres > limitMetres)
 
     /// @return true when this altitude would take the vehicle past the rangefinder's range. False
     /// whenever the answer is not known, so an unrecognised setup warns about nothing rather than

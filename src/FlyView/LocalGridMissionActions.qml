@@ -31,6 +31,32 @@ Rectangle {
     readonly property bool _dirtyForUpload:   _hasController ? planMasterController.dirtyForUpload : false
     readonly property bool _hasItems:         _missionController ? (_missionController.visualItems.count > 1) : false
 
+    /// Clearing covers the trail as well as the plan, so it stays available while either is there.
+    /// Gated on the plan alone it went dead the moment the plan emptied -- which is exactly when an
+    /// operator who has just flown a pattern reaches for it to wipe the line they flew.
+    readonly property bool _hasTrail: gridView ? (gridView.trailPointCount > 0) : false
+    readonly property bool _canClear: _hasItems || _hasTrail
+
+    /// True while the plan is being sent to or fetched from the vehicle. A mission upload is a
+    /// request-and-acknowledge exchange per item over a link that drops them, so it takes long
+    /// enough that an operator with no indication of it cannot tell a transfer in progress from one
+    /// that never started -- and pressing Upload again mid-transfer restarts it.
+    readonly property bool _syncing:    _hasController ? planMasterController.syncInProgress : false
+    readonly property real _progress:   _missionController ? _missionController.progressPct : 0
+
+    /// Shown for a moment once a transfer lands, so a fast upload is not just a bar that flickers
+    /// and leaves the operator no wiser about whether it went
+    property bool _showSyncComplete: false
+
+    on_SyncingChanged: {
+        if (_syncing) {
+            _showSyncComplete = false
+        } else if (_hasController) {
+            _showSyncComplete = true
+            syncCompleteTimer.restart()
+        }
+    }
+
     implicitWidth:  layout.implicitWidth + (_margins * 2)
     implicitHeight: layout.implicitHeight + (_margins * 2)
     color:          qgcPal.window
@@ -51,18 +77,39 @@ Rectangle {
         QGroundControl.showMessageDialog(_root, title, message, Dialog.Yes | Dialog.Cancel, action)
     }
 
-    function _clear() {
-        // Removing from the vehicle as well when one is connected, matching what the Plan view does:
-        // clearing only the editor would leave the aircraft holding the plan that was just discarded
-        if (_offline) {
-            _confirm(qsTr("Clear"),
-                     qsTr("Remove every item from the plan?"),
-                     function() { planMasterController.removeAll() })
-        } else {
-            _confirm(qsTr("Clear"),
-                     qsTr("Remove the plan from the vehicle and from here?"),
-                     function() { planMasterController.removeAllFromVehicle() })
+    /// Wipes the plan and the trail together. Clearing is how a new pattern is started, and a grid
+    /// still carrying the line the last one was flown along shows two flights at once -- with no way
+    /// to tell which of them the vehicle is about to repeat.
+    function _clearPlanAndTrail() {
+        if (_hasItems) {
+            // Removing from the vehicle as well when one is connected, matching what the Plan view
+            // does: clearing only the editor would leave the aircraft holding the plan that was
+            // just discarded
+            if (_offline) {
+                planMasterController.removeAll()
+            } else {
+                planMasterController.removeAllFromVehicle()
+            }
         }
+        if (gridView) {
+            gridView.clearTrail()
+        }
+    }
+
+    /// Says which of the two is about to go, since the button covers both and the operator should
+    /// not have to guess which one they are about to lose
+    function _clearMessage() {
+        if (!_hasItems) {
+            return qsTr("Remove the trail flown so far?")
+        }
+        if (_offline) {
+            return qsTr("Remove every item from the plan, and the trail flown so far?")
+        }
+        return qsTr("Remove the plan from the vehicle and from here, along with the trail flown so far?")
+    }
+
+    function _clear() {
+        _confirm(qsTr("Clear"), _clearMessage(), _clearPlanAndTrail)
     }
 
     function _download() {
@@ -81,6 +128,12 @@ Rectangle {
         fileDialog.title =       qsTr("Save Plan")
         fileDialog.nameFilters = planMasterController.saveNameFilters
         fileDialog.openForSave()
+    }
+
+    Timer {
+        id:             syncCompleteTimer
+        interval:       4000
+        onTriggered:    _root._showSyncComplete = false
     }
 
     QGCFileDialog {
@@ -127,6 +180,30 @@ Rectangle {
                                         .arg(_root.gridView ? _root.gridView.altitudeLimitReason : "")
         }
 
+        // What the link is doing, and how far through it is. Above the buttons rather than beside
+        // them: this is the answer to "did it go?", and the operator is already looking at the
+        // button they pressed to ask.
+        ColumnLayout {
+            Layout.fillWidth:       true
+            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 28
+            spacing:                0
+            visible:                _root._syncing || _root._showSyncComplete
+
+            QGCLabel {
+                font.pointSize: ScreenTools.smallFontPointSize
+                color:          _root._syncing ? qgcPal.text : qgcPal.colorGreen
+                text:           _root._syncing
+                                    ? qsTr("Transferring… %1%").arg(Math.round(_root._progress * 100))
+                                    : qsTr("Transfer complete")
+            }
+
+            ProgressBar {
+                Layout.fillWidth:   true
+                visible:            _root._syncing
+                value:              _root._progress
+            }
+        }
+
         RowLayout {
             spacing: ScreenTools.defaultFontPixelWidth / 2
 
@@ -135,17 +212,18 @@ Rectangle {
                 // Highlighted while the vehicle is holding something older than what is on screen,
                 // since that difference is invisible otherwise
                 primary:    _root._dirtyForUpload
-                text:       qsTr("Upload")
+                text:       _root._syncing ? qsTr("Sending…") : qsTr("Upload")
                 // Held shut rather than warned about twice. This is the failure that runs a vehicle
-                // away rather than merely degrading it, and the remedy is one field.
-                enabled:    !_root._offline && _root._hasItems && !_root._anyItemTooHigh
+                // away rather than merely degrading it, and the remedy is one field. Also shut while
+                // a transfer is running: pressing it again restarts the one already in flight.
+                enabled:    !_root._offline && _root._hasItems && !_root._anyItemTooHigh && !_root._syncing
                 onClicked:  _root.planMasterController.sendToVehicle()
             }
 
             QGCButton {
                 objectName: "localGrid_downloadMissionButton"
                 text:       qsTr("Download")
-                enabled:    !_root._offline
+                enabled:    !_root._offline && !_root._syncing
                 onClicked:  _root._download()
             }
         }
@@ -159,15 +237,20 @@ Rectangle {
                 onClicked:  _root._save()
             }
 
+            // Both shut while a transfer is running, for the same reason Upload is: what they change
+            // is the item list, and the vehicle's reply to the transfer in flight rebuilds it. A
+            // plan loaded into that window is thrown away, and a second Clear is refused outright by
+            // MissionController -- after the operator has already answered its confirmation.
             QGCButton {
                 text:       qsTr("Load")
+                enabled:    !_root._syncing
                 onClicked:  _root._load()
             }
 
             QGCButton {
                 objectName: "localGrid_clearMissionButton"
                 text:       qsTr("Clear")
-                enabled:    _root._hasItems
+                enabled:    _root._canClear && !_root._syncing
                 onClicked:  _root._clear()
             }
         }
