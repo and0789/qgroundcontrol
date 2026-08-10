@@ -29,6 +29,10 @@ QGCPopupDialog {
 
     property var  vehicle:    null
 
+    /// The grid this was opened from, which holds the reported position the claim below is measured
+    /// against and the plan the fallback moves
+    property var  gridView:   null
+
     /// Where the vehicle is being told it is, on the grid the operator pointed at
     property real north:      0
     property real east:       0
@@ -77,13 +81,95 @@ QGCPopupDialog {
     readonly property bool _accuracyValid: !isNaN(_accuracyMetres) && (_accuracyMetres > 0)
 
     readonly property bool _canSend: (_root.vehicle ? true : false) && _coordinateValid && !_armed
-                                        && _accuracyValid && !_awaitingReply
+                                        && _accuracyValid && !_awaitingReply && !_shifted
+
+    // ---------------- The fallback: move the plan instead of the aircraft ----------------
+
+    /// Where the estimator says the vehicle is, against which the claim above is a measurement of how
+    /// far the frame has slid
+    readonly property real _reportedNorth: _root.gridView ? _root.gridView.vehicleNorth : NaN
+    readonly property real _reportedEast:  _root.gridView ? _root.gridView.vehicleEast : NaN
+
+    /// A frozen readout is indistinguishable from a steady hover, and an offset worked out from one
+    /// would move the whole plan by a number that stopped being true minutes ago
+    readonly property bool _reportedUsable: _root.gridView
+                                                ? (_root.gridView.positionValid && !_root.gridView.positionStale)
+                                                : false
+
+    /// How far the frame has slid: what the estimator reports, less where the vehicle actually is.
+    ///
+    /// The plan moves by this and not by its negative. The aircraft flies until its *reported*
+    /// position reaches a waypoint, so it arrives short by exactly this offset -- adding it to every
+    /// waypoint is what puts the ground track back where it was drawn.
+    readonly property real _shiftNorth: _reportedNorth - _root.north
+    readonly property real _shiftEast:  _reportedEast - _root.east
+
+    readonly property bool _canShift: _reportedUsable && !isNaN(_shiftNorth) && !isNaN(_shiftEast)
+                                        && (_root.gridView ? _root.gridView.canPlaceWaypoints : false)
+                                        && !_accepted && !_shifted
+
+    /// True once the plan has been moved. The two remedies are for the same drift, so doing both
+    /// counts it twice and flies the pattern out by double -- each one shuts the other off.
+    property bool _shifted:      false
+    property int  _shiftedCount: 0
+
+    /// Set by the button whether or not anything moved. A plan holding nothing but a takeoff is a
+    /// perfectly ordinary thing to have open, and without this the button would swallow the press and
+    /// say nothing at all.
+    property bool _shiftAttempted: false
+
+    function _shiftPlan() {
+        if (!_canShift) {
+            return
+        }
+
+        _shiftedCount = _root.gridView.offsetMission(_shiftNorth, _shiftEast)
+        _shifted = _shiftedCount > 0
+        _shiftAttempted = true
+    }
 
     function _distanceText(metres) {
         if (isNaN(metres)) {
             return qsTr("--")
         }
         return (metres * _displayPerMetre).toFixed(2) + " " + _displayUnits
+    }
+
+    /// A pair of offsets as one line, each named for the direction it actually points. "2.0 m south"
+    /// is a thing an operator can check against the field in front of them; "-2.0 m north" is a thing
+    /// they have to decode, and a sign decoded wrong here flies the pattern out by twice the drift.
+    function _offsetText(northMetres, eastMetres) {
+        if (isNaN(northMetres) || isNaN(eastMetres)) {
+            return qsTr("--")
+        }
+
+        const northText = qsTr("%1 %2 %3").arg(Math.abs(northMetres * _displayPerMetre).toFixed(2))
+                                          .arg(_displayUnits)
+                                          .arg(northMetres < 0 ? qsTr("south") : qsTr("north"))
+        const eastText = qsTr("%1 %2 %3").arg(Math.abs(eastMetres * _displayPerMetre).toFixed(2))
+                                         .arg(_displayUnits)
+                                         .arg(eastMetres < 0 ? qsTr("west") : qsTr("east"))
+        return northText + ", " + eastText
+    }
+
+    /// Why the plan cannot be moved right now, in the operator's terms rather than as a dead button
+    function _cannotShiftReason() {
+        if (_accepted) {
+            return qsTr("The vehicle took the correction, so the plan is already in the right frame. Moving it as well would put the pattern out by twice the drift.")
+        }
+        if (!_root.gridView) {
+            return qsTr("No grid to read a plan from.")
+        }
+        if (!_root.gridView.positionValid) {
+            return qsTr("No local position telemetry, so there is nothing to measure the drift against.")
+        }
+        if (_root.gridView.positionStale) {
+            return qsTr("The reported position is not current. An offset worked out from a frozen readout would move the plan by a number that stopped being true.")
+        }
+        if (!_root.gridView.canPlaceWaypoints) {
+            return qsTr("No plan is loaded, or it is being transferred to the vehicle. A plan moved mid-transfer is overwritten by the vehicle's copy when it lands.")
+        }
+        return qsTr("The plan cannot be moved right now.")
     }
 
     function _send() {
@@ -227,6 +313,87 @@ QGCPopupDialog {
             text:                   _root._accepted
                                         ? qsTr("Applied. The reported position should now read close to the point above.")
                                         : _root._reason
+        }
+
+        // ---------------- The fallback ----------------
+
+        // Offered whether or not the command has been tried, because on a board that cannot do this
+        // at all there is nothing to try: the feature is compiled out below 1 MB of flash, and the
+        // operator finds that out from the refusal above. Moving the plan needs no firmware support --
+        // it is arithmetic on coordinates QGC already holds.
+        QGCLabel {
+            Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 2
+            font.bold:          true
+            text:               qsTr("Or move the plan instead")
+        }
+
+        QGCLabel {
+            Layout.preferredWidth:  _fieldWidth
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            text:                   qsTr("Leaves the aircraft's estimate alone and shifts every waypoint by the same amount the frame has slid, so the pattern is flown over the ground it was drawn on. Works on firmware that cannot reset a position at all.")
+        }
+
+        GridLayout {
+            Layout.fillWidth:   true
+            visible:            _root._canShift || _root._shifted
+            columns:            2
+            columnSpacing:      ScreenTools.defaultFontPixelWidth
+            rowSpacing:         0
+
+            // The measurement the shift is worked out from, shown next to it. Reported minus claimed
+            // is the whole of the arithmetic, and an operator who can see both numbers can catch a
+            // sign that went the wrong way before the aircraft flies it.
+            QGCLabel { text: qsTr("Estimator reports") }
+            QGCLabel {
+                objectName:             "correctPosition_reportedLabel"
+                Layout.fillWidth:       true
+                horizontalAlignment:    Text.AlignRight
+                text:                   _root._offsetText(_root._reportedNorth, _root._reportedEast)
+            }
+
+            QGCLabel { text: qsTr("Shift the plan by") }
+            QGCLabel {
+                objectName:             "correctPosition_shiftLabel"
+                Layout.fillWidth:       true
+                horizontalAlignment:    Text.AlignRight
+                text:                   _root._offsetText(_root._shiftNorth, _root._shiftEast)
+            }
+        }
+
+        QGCButton {
+            objectName:         "correctPosition_shiftPlanButton"
+            Layout.fillWidth:   true
+            text:               qsTr("Move the plan by this instead")
+            enabled:            _root._canShift
+            onClicked:          _root._shiftPlan()
+        }
+
+        // Why the button above is dead, in the operator's terms. A plan cannot be moved by an offset
+        // nobody can measure, and the frozen-readout case is the one worth naming: the numbers still
+        // look like a measurement.
+        QGCLabel {
+            objectName:             "correctPosition_cannotShiftReason"
+            Layout.preferredWidth:  _fieldWidth
+            visible:                !_root._canShift && !_root._shiftAttempted
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorOrange
+            text:                   _root._cannotShiftReason()
+        }
+
+        // Said plainly, because a shifted plan that was never sent is a plan the vehicle is still
+        // flying in its old place -- and everything on the grid will already be drawn in the new one.
+        QGCLabel {
+            objectName:             "correctPosition_shiftResult"
+            Layout.preferredWidth:  _fieldWidth
+            visible:                _root._shiftAttempted
+            wrapMode:               Text.WordWrap
+            color:                  _root._shifted ? qgcPal.colorGreen : qgcPal.colorOrange
+            text:                   _root._shifted
+                                        ? qsTr("Moved %1 waypoint(s). Send the plan to the vehicle for this to take effect — nothing has changed on board yet.")
+                                            .arg(_root._shiftedCount)
+                                        : qsTr("Nothing moved. The plan holds no waypoint that can be moved — a takeoff is pinned to the origin and stays there.")
         }
 
         QGCLabel {

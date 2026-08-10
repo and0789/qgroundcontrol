@@ -1897,6 +1897,82 @@ void LocalGridViewTest::_gridOffsetsBecomeTheCoordinateACorrectionSends_test()
     QVERIFY2(qAbs(bearing - 333.435) < 0.5, qPrintable(QStringLiteral("bearing came out %1").arg(bearing)));
 }
 
+/// The remedy for a drifted frame on firmware that will not take a correction: move the whole plan by
+/// the offset the frame has slid, keeping its shape, so the pattern is flown over the ground it was
+/// drawn on. It changes the plan rather than the aircraft, which is why it works where no position
+/// reset exists.
+///
+/// The takeoff stays where it is. It is pinned to the origin because a multirotor climbs in place
+/// whatever coordinate is uploaded with it, and moving one drags the planned home position with it.
+void LocalGridViewTest::_planIsMovedByOneOffsetKeepingItsShape_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+
+    // Two legs of the project's own box. The first placement also gives the plan its takeoff, pinned
+    // to the origin, so the list under test carries one of each kind.
+    const auto place = [&gridView](double north, double east) {
+        QVariant added;
+        const bool called = QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                                      Q_RETURN_ARG(QVariant, added),
+                                                      Q_ARG(QVariant, north), Q_ARG(QVariant, east));
+        return called && added.toBool();
+    };
+    QVERIFY(place(20.0, 0.0));
+    QVERIFY(place(20.0, 20.0));
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    QVERIFY2(points.property(0).property(QStringLiteral("isPinned")).toBool(),
+             "the first item must be the takeoff, or this is testing something else");
+
+    const auto pointIsAbout = [&points](int index, double north, double east) {
+        const QJSValue point = points.property(index);
+        return (qAbs(point.property(QStringLiteral("north")).toNumber() - north) < 0.05)
+               && (qAbs(point.property(QStringLiteral("east")).toNumber() - east) < 0.05);
+    };
+
+    // Deliberately not a round number and negative on one axis: a sign dropped here flies the pattern
+    // out by twice the drift rather than putting it back
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "offsetMission", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 3.25), Q_ARG(QVariant, -1.5)));
+    QCOMPARE(moved.toInt(), 2);
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    QVERIFY2(pointIsAbout(0, 0.0, 0.0), "the takeoff is anchored to the origin and may not be moved");
+    QVERIFY2(pointIsAbout(1, 23.25, -1.5), "every waypoint moves by the offset it was given");
+    QVERIFY2(pointIsAbout(2, 23.25, 18.5), "and by the same offset, or the pattern changes shape");
+
+    // Mid-transfer the fly view's list is about to be overwritten by the vehicle's copy, so a plan
+    // moved now is a plan moved into the bin -- and the operator would have no way of knowing
+    plan->setProperty("syncInProgress", true);
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "offsetMission", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 5.0), Q_ARG(QVariant, 5.0)));
+    QCOMPARE(moved.toInt(), 0);
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY2(pointIsAbout(1, 23.25, -1.5), "nothing may move while the plan is in transit");
+    QVERIFY(pointIsAbout(2, 23.25, 18.5));
+}
+
 /// Without an origin there is no frame to correct a position inside of, so the offer is withdrawn
 /// rather than left to produce a coordinate invented from nothing.
 void LocalGridViewTest::_positionCorrectionIsOfferedOnlyAgainstAnOrigin_test()

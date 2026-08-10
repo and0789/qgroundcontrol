@@ -658,6 +658,42 @@ Item {
         return true
     }
 
+    /// Moves the whole plan by one offset in metres, keeping its shape.
+    ///
+    /// The remedy for a drifted frame when the vehicle will not take a correction. The aircraft flies
+    /// until its *reported* position reaches each waypoint, so a frame that has slid puts every one of
+    /// them out by the same amount and in the same direction -- which means the pattern is still the
+    /// right pattern, just in the wrong place, and moving the plan by that offset puts the ground
+    /// track back where it was drawn. It changes the plan rather than the aircraft, so it works on
+    /// firmware that has no position reset at all.
+    ///
+    /// The takeoff is left where it is. It is pinned to the origin because a multirotor climbs in
+    /// place whatever coordinate is uploaded with it, and moving one drags the planned home position
+    /// along with it.
+    ///     @return how many items moved
+    function offsetMission(northMetres, eastMetres) {
+        if (!canPlaceWaypoints || isNaN(northMetres) || isNaN(eastMetres)) {
+            return 0
+        }
+
+        // Walked over a snapshot taken before the first write. missionPoints is a binding on the
+        // items' coordinates, so it is rebuilt the moment one of them moves -- and an offset applied
+        // to a list that recomputes underneath it would move the second item by the first item's
+        // shift as well.
+        const points = missionPoints
+        var moved = 0
+        for (var i = 0; i < points.length; i++) {
+            const point = points[i]
+            if (point.isPinned) {
+                continue
+            }
+            if (moveWaypointTo(point.index, point.north + northMetres, point.east + eastMetres)) {
+                moved++
+            }
+        }
+        return moved
+    }
+
     onWidthChanged:  _fitIfUnstarted()
     onHeightChanged: _fitIfUnstarted()
     Component.onCompleted: _fitIfUnstarted()
@@ -1134,6 +1170,7 @@ Item {
 
         positionCorrectionDialogFactory.open({
             vehicle:    _root.vehicle,
+            gridView:   _root,
             north:      north,
             east:       east,
             coordinate: coordinateAtOffsets(north, east),
