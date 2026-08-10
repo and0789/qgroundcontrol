@@ -39,4 +39,6 @@ void VehicleLocalPositionFactGroup::handleMessage(Vehicle *vehicle, const mavlin
     vz()->setRawValue(localPosition.vz);
 
     _setTelemetryAvailable(true);
+
+    emit updated();
 }
