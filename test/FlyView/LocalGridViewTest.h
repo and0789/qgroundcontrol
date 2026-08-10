@@ -2,6 +2,8 @@
 
 #include "BaseClasses/VehicleTest.h"
 
+class QQuickWindow;
+
 /// Tests how the local grid view follows a vehicle.
 ///
 /// The drawing is not asserted on -- what is, is the state the drawing reads: whether there is a
@@ -48,4 +50,9 @@ private slots:
     void _waypointPanelCarriesTheEditorFields_test();
     void _missionItemRowOpensOnlyWhenCurrent_test();
     void _missionItemRowNamesTheItemItHolds_test();
+    void _missionListShowsOneRowPerDrawnItem_test();
+    void _missionListOpensTheRowTheGridHasSelected_test();
+
+private:
+    static bool _showInWindow(QQuickWindow &window, QObject *list);
 };

@@ -9,6 +9,8 @@
 #include <QtQml/QJSValue>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlEngine>
+#include <QtQuick/QQuickItem>
+#include <QtQuick/QQuickWindow>
 #include <QtTest/QTest>
 
 #include "FactGroup.h"
@@ -1388,6 +1390,171 @@ void LocalGridViewTest::_missionItemRowNamesTheItemItHolds_test()
 
     // Out of range answers with nothing rather than inventing a name for an item that is not there
     QCOMPARE(nameAt(99), QString());
+}
+
+/// Counts the items named @a objectName anywhere under @a root.
+///
+/// Walks childItems() rather than using findChildren(). A ListView gives its delegates a parent
+/// *item* but no QObject parent, so the whole list of rows is invisible to a QObject-tree search --
+/// which reads as a list that built nothing rather than as the wrong kind of search.
+static int countItemsNamed(QQuickItem *root, const QString &objectName)
+{
+    if (!root) {
+        return 0;
+    }
+
+    int count = (root->objectName() == objectName) ? 1 : 0;
+    const QList<QQuickItem *> children = root->childItems();
+    for (QQuickItem *const child : children) {
+        count += countItemsNamed(child, objectName);
+    }
+    return count;
+}
+
+/// Shows @a list in a window and waits for it to lay out.
+///
+/// QtQuick.Layouts size their children during the polish pass, which only a window drives. Without
+/// one the list holds a model count and builds no rows at all, and a test reading only that count
+/// would pass against a list that renders nothing.
+///     @return false, having already failed the test, if the window never came up
+bool LocalGridViewTest::_showInWindow(QQuickWindow &window, QObject *list)
+{
+    auto *const item = qobject_cast<QQuickItem *>(list);
+    if (!item) {
+        return false;
+    }
+
+    item->setParentItem(window.contentItem());
+    window.resize(400, 700);
+    window.show();
+    return QTest::qWaitForWindowExposed(&window);
+}
+
+/// Builds the list against a real grid, which is the only way to check the two agree. The rows come
+/// from the same missionPoints the markers do, so what this really pins is that the list inherits
+/// the grid's rules rather than filtering the plan a second way of its own -- in particular that the
+/// home position, which is a visual item but not a waypoint, is not listed as one.
+void LocalGridViewTest::_missionListShowsOneRowPerDrawnItem_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "addHomeItem", Qt::DirectConnection,
+                                      Q_ARG(QVariant, QVariant::fromValue(origin))));
+    for (int i = 0; i < 3; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(15.0 * (i + 1), 30.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent listComponent(&gridViewEngine);
+    listComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridMissionList { width: 300; height: 600 }
+    )", QUrl());
+    QVERIFY2(listComponent.isReady(), qPrintable(listComponent.errorString()));
+
+    const QScopedPointer<QObject> list(listComponent.create());
+    QVERIFY2(list, qPrintable(listComponent.errorString()));
+    list->setProperty("gridView", QVariant::fromValue(gridView.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, list.get()));
+
+    // Rows actually built, not just a model count: the count would read 3 against a list that
+    // rendered nothing at all
+    const auto builtRowCount = [&list]() {
+        return countItemsNamed(qobject_cast<QQuickItem *>(list.get()),
+                               QStringLiteral("localGrid_rowDeleteButton"));
+    };
+
+    QObject *const visualItems = stub->property("visualItems").value<QObject *>();
+    QVERIFY(visualItems);
+    QCOMPARE(visualItems->property("count").toInt(), 4);
+    QTRY_COMPARE_WITH_TIMEOUT(builtRowCount(), 3, TestTimeout::mediumMs());
+    QCOMPARE(list->property("rowCount").toInt(), 3);
+
+    // And it follows the plan rather than being read once at build time
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(80.0, 30.0))),
+        Q_ARG(QVariant, 4)));
+    QTRY_COMPARE_WITH_TIMEOUT(builtRowCount(), 4, TestTimeout::mediumMs());
+    QCOMPARE(list->property("rowCount").toInt(), 4);
+}
+
+/// One row open at a time, and it is the grid's selected waypoint. A list keeping a selection of its
+/// own would let the open row and the highlighted marker name different items, which on a grid flown
+/// without a map is the operator editing one waypoint while looking at another.
+void LocalGridViewTest::_missionListOpensTheRowTheGridHasSelected_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    for (int i = 0; i < 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(15.0 * (i + 1), 30.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent listComponent(&gridViewEngine);
+    listComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridMissionList { width: 300; height: 600 }
+    )", QUrl());
+    QVERIFY2(listComponent.isReady(), qPrintable(listComponent.errorString()));
+
+    const QScopedPointer<QObject> list(listComponent.create());
+    QVERIFY2(list, qPrintable(listComponent.errorString()));
+    list->setProperty("gridView", QVariant::fromValue(gridView.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, list.get()));
+
+    // Only the open row carries an editor, so counting them counts the open rows
+    const auto openRowCount = [&list]() {
+        return countItemsNamed(qobject_cast<QQuickItem *>(list.get()),
+                               QStringLiteral("localGrid_applyAltitudeToAllButton"));
+    };
+    const auto builtRowCount = [&list]() {
+        return countItemsNamed(qobject_cast<QQuickItem *>(list.get()),
+                               QStringLiteral("localGrid_rowDeleteButton"));
+    };
+
+    QTRY_COMPARE_WITH_TIMEOUT(builtRowCount(), 2, TestTimeout::mediumMs());
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearWaypointSelection", Qt::DirectConnection));
+    QTRY_COMPARE_WITH_TIMEOUT(openRowCount(), 0, TestTimeout::mediumMs());
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 1)));
+    QTRY_COMPARE_WITH_TIMEOUT(openRowCount(), 1, TestTimeout::mediumMs());
+
+    // Moving the selection moves the open row rather than opening a second one
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 0)));
+    QTRY_COMPARE_WITH_TIMEOUT(openRowCount(), 1, TestTimeout::mediumMs());
 }
 
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)
