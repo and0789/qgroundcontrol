@@ -1071,13 +1071,13 @@ Item {
         anchors.rightMargin:    _root._margins
         anchors.topMargin:      _root._margins
         width:                  ScreenTools.defaultFontPixelWidth * 28
-        // Anchored top only, and given a height, so folding it away shrinks the panel to its header
-        // instead of leaving an empty box down to the bottom edge
-        height:                 collapsed
-                                    ? collapsedHeight
-                                    : Math.max(collapsedHeight,
-                                               _root.height - y - _root._margins
-                                                   - _root._inset("bottomEdgeRightInset"))
+        // Anchored at the top and sized to its contents, so a plan of two waypoints gets a panel two
+        // rows tall. The limit is what is left down to the bottom edge: past that the rows scroll
+        // inside the panel rather than the panel running off the view.
+        height:                 implicitHeight
+        maximumHeight:          Math.max(collapsedHeight,
+                                         _root.height - y - _root._margins
+                                             - _root._inset("bottomEdgeRightInset"))
         z:                      2
         gridView:               _root
     }

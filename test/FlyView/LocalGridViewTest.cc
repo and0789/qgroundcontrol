@@ -1655,4 +1655,111 @@ void LocalGridViewTest::_listMarksTheWaypointTheVehicleIsFlyingTo_test()
     QCOMPARE(targetSequences(), QList<int>({ 2 }));
 }
 
+/// An empty plan has nothing to list, and a panel standing open to say so is covering the one
+/// picture the operator has. It opens itself when the plan gets its first item and folds away again
+/// when the last one goes.
+void LocalGridViewTest::_listStaysFoldedUntilThePlanHasSomething_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    const QList<QQuickItem *> panels = collectItemsNamed(gridItem, QStringLiteral("localGrid_missionList"));
+    QCOMPARE(panels.count(), 1);
+    QQuickItem *const panel = panels.first();
+
+    QVERIFY2(panel->property("collapsed").toBool(), "an empty plan leaves the panel folded");
+    const qreal foldedHeight = panel->property("height").toReal();
+    QVERIFY(foldedHeight > 0);
+
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 30.0))),
+        Q_ARG(QVariant, 1)));
+
+    QTRY_VERIFY_WITH_TIMEOUT(!panel->property("collapsed").toBool(), TestTimeout::mediumMs());
+    // Waited on: unfolding and the layout settling to the new height are separate passes
+    QTRY_VERIFY2_WITH_TIMEOUT(panel->property("height").toReal() > foldedHeight,
+                              "an opened panel is taller than its own header", TestTimeout::mediumMs());
+
+    // Clearing the plan puts it back, rather than leaving an open panel listing nothing
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "removeVisualItem", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 0)));
+    QTRY_VERIFY_WITH_TIMEOUT(panel->property("collapsed").toBool(), TestTimeout::mediumMs());
+    QTRY_COMPARE_WITH_TIMEOUT(panel->property("height").toReal(), foldedHeight, TestTimeout::mediumMs());
+}
+
+/// The panel is as tall as the rows it holds, and only clamps once the plan outgrows the room left
+/// below it. Stretched to fill instead, the layout had nothing that wanted the extra height and
+/// spread it between the header and the empty-plan line, stranding both in the middle of a tall box.
+void LocalGridViewTest::_listIsAsTallAsItsRowsUntilItRunsOutOfRoom_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    QQuickItem *const panel = collectItemsNamed(gridItem, QStringLiteral("localGrid_missionList")).value(0);
+    QVERIFY(panel);
+
+    const auto addItems = [&stub, &origin](int count, int firstSequence) {
+        for (int i = 0; i < count; i++) {
+            const bool added = QMetaObject::invokeMethod(
+                stub.get(), "addItem", Qt::DirectConnection,
+                Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(10.0 * (i + 1), 30.0))),
+                Q_ARG(QVariant, firstSequence + i));
+            if (!added) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    QVERIFY(addItems(2, 1));
+    QTRY_COMPARE_WITH_TIMEOUT(panel->property("rowCount").toInt(), 2, TestTimeout::mediumMs());
+
+    const qreal twoRowHeight = panel->property("height").toReal();
+    const qreal maximumHeight = panel->property("maximumHeight").toReal();
+    QVERIFY(maximumHeight > 0);
+    QVERIFY2(twoRowHeight < maximumHeight,
+             "two rows must not fill the whole view: the panel follows its contents");
+
+    // Enough rows to outgrow the room below the readout
+    QVERIFY(addItems(40, 3));
+    QTRY_COMPARE_WITH_TIMEOUT(panel->property("rowCount").toInt(), 42, TestTimeout::mediumMs());
+
+    QTRY_VERIFY_WITH_TIMEOUT(panel->property("height").toReal() > twoRowHeight, TestTimeout::mediumMs());
+    QVERIFY2(panel->property("height").toReal() <= maximumHeight,
+             "the panel stops at the bottom of the view rather than running off it");
+
+    // Clamped means the rows have to scroll, which is the whole point of stopping there
+    QQuickItem *const listView = collectItemsNamed(panel, QStringLiteral("localGrid_missionListView")).value(0);
+    QVERIFY(listView);
+    QVERIFY2(listView->property("contentHeight").toReal() > listView->property("height").toReal(),
+             "a clamped list must be scrollable, or the rows past the fold cannot be reached");
+}
+
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)

@@ -30,24 +30,58 @@ Rectangle {
 
     /// Folded away to leave the grid clear, keeping the header so it can be found again. A panel
     /// that closed completely would be a panel the operator has to remember a way back to.
-    property bool collapsed: false
+    ///
+    /// Starts folded: an empty plan has nothing to show, and a panel standing open over the grid to
+    /// say so is covering the one picture the operator has.
+    property bool collapsed: true
+
+    /// The most room this panel may take. Past it the rows scroll rather than the panel running off
+    /// the bottom of the view. Zero for no limit.
+    property real maximumHeight: 0
+
+    /// Sized to what it is holding rather than to the space it is given. Stretched to fill, the
+    /// layout had nothing that wanted the extra height and spread it between the header and the
+    /// empty-plan line instead, leaving both stranded in the middle of a tall empty box.
+    implicitHeight: contentColumn.implicitHeight + (_margins * 2)
 
     /// What to give this panel for a height while it is folded
-    readonly property real collapsedHeight: headerRow.implicitHeight + (_margins * 2)
+    readonly property real collapsedHeight: headerBlock.implicitHeight + (_margins * 2)
 
     /// How many items the list is showing, which is not the plan's item count: the home position is
     /// not one of these, and neither is anything without a coordinate
-    readonly property alias rowCount: itemList.count
+    readonly property int rowCount: _points.length
 
     readonly property var _points:   gridView ? gridView.missionPoints : []
     readonly property int _selected: gridView ? gridView.selectedWaypointIndex : -1
 
     readonly property real _margins: ScreenTools.defaultFontPixelHeight / 3
 
+    /// What is left for the rows once the header and the margins have had theirs
+    readonly property real _listMaximumHeight: (maximumHeight > 0)
+                                                ? Math.max(0, maximumHeight - collapsedHeight - _margins)
+                                                : Number.POSITIVE_INFINITY
+
+    /// Opens itself when the plan gets its first item and folds away again when the last one goes,
+    /// so the panel is only in front of the grid while it has something to say. A toggle in between
+    /// is the operator's and is left alone.
+    property int _lastRowCount: 0
+
+    onRowCountChanged: {
+        if ((_lastRowCount === 0) && (rowCount > 0)) {
+            collapsed = false
+        } else if ((_lastRowCount > 0) && (rowCount === 0)) {
+            collapsed = true
+        }
+        _lastRowCount = rowCount
+    }
+
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     ColumnLayout {
-        anchors.fill:       parent
+        id:                 contentColumn
+        anchors.left:       parent.left
+        anchors.right:      parent.right
+        anchors.top:        parent.top
         anchors.margins:    _root._margins
         spacing:            _root._margins
 
@@ -55,6 +89,7 @@ Rectangle {
         // straight onto the RowLayout it would be an anchored child of a layout, which Qt calls
         // undefined behaviour and warns about on every build of the grid.
         Item {
+            id:                 headerBlock
             Layout.fillWidth:   true
             implicitHeight:     headerRow.implicitHeight
 
@@ -109,62 +144,86 @@ Rectangle {
             text:               qsTr("No items yet. Click the grid to place one.")
         }
 
-        QGCListView {
+        // A Column of every row inside a Flickable, rather than a ListView.
+        //
+        // The panel is sized to its rows, and asking a ListView how tall its rows are cannot answer
+        // that: a ListView only builds the delegates that fit inside it, so its contentHeight
+        // depends on its height, and binding the height back to contentHeight leaves both stuck at
+        // zero. A Column's height is simply the sum of its children, which nothing else depends on.
+        //
+        // The cost is that every row is built rather than only the visible ones. A plan is tens of
+        // items, the markers on the grid are already built the same way, and the expensive part --
+        // the editor -- is still loaded only for the open row.
+        QGCFlickable {
             id:                 itemList
             objectName:         "localGrid_missionListView"
             Layout.fillWidth:   true
-            Layout.fillHeight:  true
+            // As tall as the rows need, up to whatever room the view has left. Only once the plan
+            // outgrows that does this clamp and the list start scrolling, so a short plan gets a
+            // short panel rather than a full-height one with a gap under it.
+            Layout.preferredHeight: Math.min(rowColumn.height, _root._listMaximumHeight)
             visible:            !_root.collapsed && (_root.rowCount > 0)
-            spacing:            _root._margins
+            contentWidth:       width
+            contentHeight:      rowColumn.height
 
-            // The count rather than the array. missionPoints is rebuilt from scratch whenever any
-            // item's coordinate changes, and handing that array over as the model would tear down
-            // and rebuild every row -- including the open one, mid-edit, with the focus and the
-            // half-typed field in it. A plain count only changes when an item is added or removed.
-            model: _root._points.length
+            Column {
+                id:         rowColumn
+                width:      itemList.width
+                spacing:    _root._margins
 
-            delegate: LocalGridMissionItemRow {
-                id: itemRow
+                Repeater {
+                    // The count rather than the array. missionPoints is rebuilt from scratch
+                    // whenever any item's coordinate changes, and handing that array over as the
+                    // model would tear down and rebuild every row -- including the open one,
+                    // mid-edit, with the focus and the half-typed field in it. A plain count only
+                    // changes when an item is added or removed.
+                    model: _root._points.length
 
-                required property int index
+                    LocalGridMissionItemRow {
+                        id: itemRow
 
-                // Re-read out of the rebuilt array rather than captured, so a row follows its item
-                // without being replaced. Guarded: the count is applied a beat before the array it
-                // came from on the pass where an item is removed.
-                readonly property var point: _root._points[index] ?? null
+                        required property int index
 
-                width:           ListView.view.width
-                visible:         point !== null
-                gridView:        _root.gridView
-                visualItemIndex: point ? point.index : -1
-                sequenceNumber:  point ? point.sequence : 0
-                north:           point ? point.north : NaN
-                east:            point ? point.east : NaN
-                isCurrentItem:   point ? (_root._selected === point.index) : false
-                isVehicleTarget: point ? point.isVehicleTarget : false
+                        // Re-read out of the rebuilt array rather than captured, so a row follows
+                        // its item without being replaced. Guarded: the count is applied a beat
+                        // before the array it came from on the pass where an item is removed.
+                        readonly property var point: _root._points[index] ?? null
 
-                // Clicking the open row closes it. The floating panel had a Close button and the
-                // list has no room for one per row, so the row that opened is the way back out --
-                // otherwise something is always open and the grid is always partly covered.
-                onClicked: {
-                    if (!_root.gridView || !point) {
-                        return
-                    }
-                    if (_root._selected === point.index) {
-                        _root.gridView.clearWaypointSelection()
-                    } else {
-                        _root.gridView.selectWaypoint(point.index)
-                    }
-                }
+                        width:           rowColumn.width
+                        visible:         point !== null
+                        gridView:        _root.gridView
+                        visualItemIndex: point ? point.index : -1
+                        sequenceNumber:  point ? point.sequence : 0
+                        north:           point ? point.north : NaN
+                        east:            point ? point.east : NaN
+                        isCurrentItem:   point ? (_root._selected === point.index) : false
+                        isVehicleTarget: point ? point.isVehicleTarget : false
 
-                // Selected first rather than trusting that a row showing a delete control is already
-                // the selected one. removeSelectedWaypoint acts on the grid's selection, and the two
-                // agreeing is an invariant of the row's own visibility rule -- not something this
-                // call should depend on.
-                onRemoveRequested: {
-                    if (_root.gridView && point) {
-                        _root.gridView.selectWaypoint(point.index)
-                        _root.gridView.removeSelectedWaypoint()
+                        // Clicking the open row closes it. The floating panel had a Close button and
+                        // the list has no room for one per row, so the row that opened is the way
+                        // back out -- otherwise something is always open and the grid always partly
+                        // covered.
+                        onClicked: {
+                            if (!_root.gridView || !point) {
+                                return
+                            }
+                            if (_root._selected === point.index) {
+                                _root.gridView.clearWaypointSelection()
+                            } else {
+                                _root.gridView.selectWaypoint(point.index)
+                            }
+                        }
+
+                        // Selected first rather than trusting that a row showing a delete control is
+                        // already the selected one. removeSelectedWaypoint acts on the grid's
+                        // selection, and the two agreeing is an invariant of the row's own
+                        // visibility rule -- not something this call should depend on.
+                        onRemoveRequested: {
+                            if (_root.gridView && point) {
+                                _root.gridView.selectWaypoint(point.index)
+                                _root.gridView.removeSelectedWaypoint()
+                            }
+                        }
                     }
                 }
             }

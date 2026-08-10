@@ -54,6 +54,8 @@ private slots:
     void _missionListOpensTheRowTheGridHasSelected_test();
     void _gridShowsThePlanAsAList_test();
     void _listMarksTheWaypointTheVehicleIsFlyingTo_test();
+    void _listStaysFoldedUntilThePlanHasSomething_test();
+    void _listIsAsTallAsItsRowsUntilItRunsOutOfRoom_test();
 
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);
