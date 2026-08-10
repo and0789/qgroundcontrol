@@ -49,7 +49,6 @@ qt_add_qml_module(FlyViewModule
         GuidedValueSlider.qml
         LocalGridAltitudeLimit.qml
         LocalGridClickPanel.qml
-        LocalGridCompassRose.qml
         LocalGridEstimatorHealth.qml
         LocalGridMissionActions.qml
         LocalGridMissionItemRow.qml

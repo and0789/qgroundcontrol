@@ -53,6 +53,14 @@ Item {
     readonly property real vehicleNorth: _north
     readonly property real vehicleEast:  _east
 
+    /// Where the nose points, in degrees clockwise from north, or NaN when the vehicle has not said.
+    ///
+    /// Read as a number rather than drawn as a second dial. The fly view's own instrument panel
+    /// already carries a compass, and two pictures of one heading cost the top of the screen and
+    /// leave the operator checking whether they disagree. NaN survives to the readout on purpose: an
+    /// unknown heading shown as zero is a heading pointing confidently at north.
+    readonly property real vehicleHeadingDegrees: _headingDegrees
+
     /// How long the estimate may go without a message before it stops being treated as current.
     /// LOCAL_POSITION_NED arrives at around 10 Hz, so this is many missed messages rather than one
     /// late one -- a threshold that trips on ordinary link jitter teaches the operator to ignore it.
@@ -1193,19 +1201,6 @@ Item {
     /// @return the given inset, or 0 when the fly view has not supplied any
     function _inset(name) {
         return toolInsets ? toolInsets[name] : 0
-    }
-
-    // Top centre rather than a corner. The corners of the fly view are all spoken for -- tool strip,
-    // instrument panel, telemetry bar -- and their insets are wide enough that honouring them would
-    // push a rose this size into the middle of the grid, on top of the aircraft it is describing.
-    LocalGridCompassRose {
-        id:                         compassRose
-        anchors.horizontalCenter:   parent.horizontalCenter
-        anchors.top:                parent.top
-        // Doubled so the ring of cardinal labels clears the toolbar rather than starting against it
-        anchors.topMargin:          _root.topEdgeOffset + _root._margins + _root._inset("topEdgeCenterInset")
-        headingDegrees:             _root._headingDegrees
-        diameter:                   ScreenTools.defaultFontPixelHeight * 8
     }
 
     // Bottom left, the corner the waypoint panel gave up when it moved under the readout. It sits

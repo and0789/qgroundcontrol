@@ -13,6 +13,7 @@
 #include <QtQuick/QQuickWindow>
 #include <QtTest/QTest>
 
+#include "Fact.h"
 #include "FactGroup.h"
 #include "FirmwarePlugin.h"
 #include "Vehicle.h"
@@ -1856,6 +1857,41 @@ static QObject *createOriginDrift(QQmlComponent &component, Vehicle *vehicle, QS
 
     drift->setProperty("vehicle", QVariant::fromValue(vehicle));
     return drift;
+}
+
+/// The heading left the grid as a rose of its own and came back as a number, because the fly view's
+/// instrument panel already draws a compass and two pictures of one heading cost the top of the
+/// screen without adding a fact.
+///
+/// What matters in the move is that an unknown heading stays unknown. The instrument panel's compass
+/// reads its heading as zero when the vehicle has not sent one, which draws a needle pointing
+/// confidently at north -- and on a view whose entire subject is an estimate that can be quietly
+/// wrong, a confident wrong answer is the one failure worth engineering against.
+void LocalGridViewTest::_headingIsExposedAsANumberAndUnknownStaysUnknown_test()
+{
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/qml"));
+    QQmlComponent component(&engine);
+    QString error;
+    const QScopedPointer<QObject> headless(createGridView(component, nullptr, error));
+    QVERIFY2(headless, qPrintable(error));
+
+    QVERIFY2(qIsNaN(headless->property("vehicleHeadingDegrees").toDouble()),
+             "with no vehicle there is no heading, and zero is a heading");
+
+    QVERIFY(vehicle());
+    MAKE_GRID_VIEW(gridView);
+
+    // Whatever the vehicle is reporting, the grid has to be reporting the same thing. Compared
+    // against the fact rather than against a number written here: the point is the wiring, and a
+    // literal would only be testing what MockLink happens to sweep through.
+    Fact *const headingFact = vehicle()->heading();
+    QVERIFY(headingFact);
+    QTRY_VERIFY_WITH_TIMEOUT(!qIsNaN(gridView->property("vehicleHeadingDegrees").toDouble()),
+                             TestTimeout::mediumMs());
+    QVERIFY2(qAbs(gridView->property("vehicleHeadingDegrees").toDouble()
+                  - headingFact->rawValue().toDouble()) < 0.001,
+             "the grid must report the vehicle's own heading, not one of its own");
 }
 
 /// A correction is sent as a coordinate, and the grid is the only thing that knows which coordinate

@@ -32,6 +32,9 @@ Rectangle {
     readonly property real _north:     gridView ? gridView.vehicleNorth : NaN
     readonly property real _east:      gridView ? gridView.vehicleEast : NaN
 
+    /// NaN when the vehicle has not reported one, which is a different thing from north
+    readonly property real _heading:   gridView ? gridView.vehicleHeadingDegrees : NaN
+
     readonly property bool _stale:     gridView ? gridView.positionStale : false
     readonly property real _ageSeconds: gridView ? gridView.positionAgeSeconds : NaN
 
@@ -110,6 +113,22 @@ Rectangle {
                 horizontalAlignment:    Text.AlignRight
                 Layout.fillWidth:       true
                 text:                   isNaN(_root._bearing) ? qsTr("--") : Math.round(_root._bearing) + "°"
+            }
+
+            // Next to the bearing, because the pair is what a turn is worked out from: where the
+            // nose points against where the operator wants to go. Kept as a number rather than a
+            // rose of its own -- the fly view's instrument panel already draws one, and reading a
+            // heading off a dial by eye is the estimate this whole grid exists to replace.
+            QGCLabel { objectName: "localGrid_headingLabel"; font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Heading") }
+            QGCLabel {
+                objectName:             "localGrid_headingValue"
+                font.pointSize:         ScreenTools.smallFontPointSize
+                horizontalAlignment:    Text.AlignRight
+                Layout.fillWidth:       true
+                // Dashes rather than a zero. The instrument panel's compass reads its heading as
+                // zero when the vehicle has not sent one, which points confidently at north; this
+                // one says it does not know.
+                text:                   isNaN(_root._heading) ? qsTr("--") : Math.round(_root._heading) + "°"
             }
 
             // Distance along the trail rather than from the origin. Drift on this kind of navigation
