@@ -56,6 +56,8 @@ private slots:
     void _listMarksTheWaypointTheVehicleIsFlyingTo_test();
     void _listStaysFoldedUntilThePlanHasSomething_test();
     void _listIsAsTallAsItsRowsUntilItRunsOutOfRoom_test();
+    void _typeIsChangedFromTheRowHeader_test();
+    void _selectedRowIsBroughtIntoView_test();
 
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);

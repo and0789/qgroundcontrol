@@ -66,6 +66,49 @@ Rectangle {
                                             ? gridView.waypointCommandName(visualItemIndex)
                                             : ""
 
+    /// The item's current command, or -1 for one whose type cannot be changed
+    readonly property int  _command:      (gridView && (visualItemIndex >= 0))
+                                            ? gridView.waypointCommand(visualItemIndex)
+                                            : -1
+    readonly property bool _commandKnown: _command >= 0
+
+    /// Position in the type list, so the box shows what the item already is rather than always
+    /// reading "Waypoint" and inviting a change nobody asked for
+    function _typeIndexFor(command) {
+        if (!gridView) {
+            return 0
+        }
+        switch (command) {
+        case gridView.commandTakeoff:   return 1
+        case gridView.commandLand:      return 2
+        default:                        return 0
+        }
+    }
+
+    function _commandForTypeIndex(index) {
+        if (!gridView) {
+            return -1
+        }
+        switch (index) {
+        case 1:     return gridView.commandTakeoff
+        case 2:     return gridView.commandLand
+        default:    return gridView.commandWaypoint
+        }
+    }
+
+    // Changing the type in place rather than deleting and re-adding, so the position already
+    // dragged or typed into place survives the change. Turning the last waypoint of a pattern into
+    // a landing is the common edit, and rebuilding it from scratch to do that loses the offsets
+    // that were the point of placing it.
+    function _applyType(index) {
+        const command = _commandForTypeIndex(index)
+        if ((command >= 0) && gridView) {
+            gridView.setWaypointCommand(visualItemIndex, command)
+        }
+    }
+
+    on_CommandChanged: typeCombo.currentIndex = _typeIndexFor(_command)
+
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     MouseArea {
@@ -121,12 +164,30 @@ Rectangle {
                 // reading this column -- takeoff, waypoint, waypoint, land -- and a name that
                 // appeared only on the open row would leave the list saying nothing at a glance.
                 QGCLabel {
+                    objectName:         "localGrid_rowTypeLabel"
                     Layout.alignment:   Qt.AlignVCenter
                     Layout.fillWidth:   true
+                    visible:            !_root.isCurrentItem
                     font.pointSize:     ScreenTools.smallFontPointSize
                     color:              _root._textColor
                     elide:              Text.ElideRight
                     text:               _root._commandName
+                }
+
+                // The open row turns that name into the control that changes it, the way the Plan
+                // view's rows do. In the header rather than down among the position fields: it is
+                // what the item *is*, not one of its measurements.
+                QGCComboBox {
+                    id:                 typeCombo
+                    objectName:         "localGrid_rowTypeCombo"
+                    Layout.alignment:   Qt.AlignVCenter
+                    Layout.fillWidth:   true
+                    visible:            _root.isCurrentItem
+                    enabled:            _root._commandKnown
+                    font.pointSize:     ScreenTools.smallFontPointSize
+                    model:              [ qsTr("Waypoint"), qsTr("Takeoff"), qsTr("Land") ]
+
+                    onActivated: (index) => _root._applyType(index)
                 }
 
                 // On the trailing edge, away from the leading edge the row is tapped on to open and

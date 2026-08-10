@@ -1762,4 +1762,107 @@ void LocalGridViewTest::_listIsAsTallAsItsRowsUntilItRunsOutOfRoom_test()
              "a clamped list must be scrollable, or the rows past the fold cannot be reached");
 }
 
+/// What an item *is* belongs on the row's header, beside its number, not down among its position
+/// fields -- and it is the Plan view's arrangement, which is the whole point of listing items this
+/// way. A closed row names its type; the open one turns that name into the control that changes it.
+void LocalGridViewTest::_typeIsChangedFromTheRowHeader_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    for (int i = 0; i < 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(15.0 * (i + 1), 30.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+
+    const auto visibleCount = [gridItem](const QString &objectName) {
+        int count = 0;
+        const QList<QQuickItem *> items = collectItemsNamed(gridItem, objectName);
+        for (QQuickItem *const item : items) {
+            if (item->property("visible").toBool()) {
+                count++;
+            }
+        }
+        return count;
+    };
+
+    QTRY_COMPARE_WITH_TIMEOUT(countItemsNamed(gridItem, QStringLiteral("localGrid_missionItemRow")), 2,
+                              TestTimeout::mediumMs());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearWaypointSelection", Qt::DirectConnection));
+
+    QTRY_COMPARE_WITH_TIMEOUT(visibleCount(QStringLiteral("localGrid_rowTypeLabel")), 2, TestTimeout::mediumMs());
+    QCOMPARE(visibleCount(QStringLiteral("localGrid_rowTypeCombo")), 0);
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 1)));
+    QTRY_COMPARE_WITH_TIMEOUT(visibleCount(QStringLiteral("localGrid_rowTypeCombo")), 1, TestTimeout::mediumMs());
+    QVERIFY2(visibleCount(QStringLiteral("localGrid_rowTypeLabel")) == 1,
+             "the closed row still names its type while the open one is being changed");
+
+    // The editor below no longer carries a second copy of the same control
+    QCOMPARE(countItemsNamed(gridItem, QStringLiteral("localGrid_rowTypeCombo")), 2);
+}
+
+/// A waypoint added to a plan longer than the panel lands below the fold, and the operator has to go
+/// looking for the fields they just asked for. The open row is brought into view instead.
+void LocalGridViewTest::_selectedRowIsBroughtIntoView_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    for (int i = 0; i < 40; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(5.0 * (i + 1), 30.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    QQuickItem *const flickable = collectItemsNamed(gridItem, QStringLiteral("localGrid_missionListView")).value(0);
+    QVERIFY(flickable);
+
+    QTRY_VERIFY_WITH_TIMEOUT(flickable->property("contentHeight").toReal()
+                                 > flickable->property("height").toReal(),
+                             TestTimeout::mediumMs());
+    QCOMPARE(flickable->property("contentY").toReal(), 0.0);
+
+    // The last item is well past the bottom of the panel
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 39)));
+    QTRY_VERIFY2_WITH_TIMEOUT(flickable->property("contentY").toReal() > 0.0,
+                              "the open row must be scrolled into view, not left below the fold",
+                              TestTimeout::mediumMs());
+
+    // And back up again for one above the top of the view
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 0)));
+    QTRY_COMPARE_WITH_TIMEOUT(flickable->property("contentY").toReal(), 0.0, TestTimeout::mediumMs());
+}
+
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)

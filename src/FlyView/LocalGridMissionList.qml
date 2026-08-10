@@ -75,6 +75,49 @@ Rectangle {
         _lastRowCount = rowCount
     }
 
+    /// Brings the open row into view, so a waypoint added to a long plan is somewhere the operator
+    /// can see rather than below the fold of a panel they then have to scroll by hand.
+    ///
+    /// Only ever moves a row that is not fully visible. Anything more would take the panel away from
+    /// under an operator who has scrolled it somewhere on purpose.
+    function _scrollToSelected() {
+        if (collapsed || (_selected < 0)) {
+            return
+        }
+
+        for (var i = 0; i < _points.length; i++) {
+            if (_points[i].index !== _selected) {
+                continue
+            }
+            const row = rowRepeater.itemAt(i)
+            if (!row) {
+                return
+            }
+            if (row.y < itemList.contentY) {
+                itemList.contentY = row.y
+            } else if ((row.y + row.height) > (itemList.contentY + itemList.height)) {
+                itemList.contentY = Math.max(0, (row.y + row.height) - itemList.height)
+            }
+            return
+        }
+    }
+
+    // Deferred by a turn of the event loop rather than run on the spot. Selecting a row loads its
+    // editor, which is most of the row's height, and scrolling to where it was before that has
+    // finished aims at the wrong place.
+    property Timer _scrollTimer: Timer {
+        interval:       0
+        onTriggered:    _root._scrollToSelected()
+    }
+
+    on_SelectedChanged: _scrollTimer.restart()
+
+    // The open row growing its editor can push itself out of view on its own
+    Connections {
+        target: rowColumn
+        function onHeightChanged() { _root._scrollTimer.restart() }
+    }
+
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     ColumnLayout {
@@ -172,6 +215,8 @@ Rectangle {
                 spacing:    _root._margins
 
                 Repeater {
+                    id: rowRepeater
+
                     // The count rather than the array. missionPoints is rebuilt from scratch
                     // whenever any item's coordinate changes, and handing that array over as the
                     // model would tear down and rebuild every row -- including the open one,
