@@ -68,6 +68,17 @@ Item {
         return (ratio > _ekfRatioWarnThreshold) ? qgcPal.colorOrange : qgcPal.colorGreen
     }
 
+    /// Nothing received already reads as "--" and stays in the ordinary colour. A reading of zero or
+    /// less is a rangefinder that is streaming without getting a return, which the pre-flight check
+    /// and the waypoint altitude ceiling both already refuse to treat as a height -- this row was the
+    /// one place left rendering it as though it were a measurement.
+    function _rangefinderColor(distance) {
+        if (isNaN(distance)) {
+            return qgcPal.text
+        }
+        return (distance > 0) ? qgcPal.colorGreen : qgcPal.colorRed
+    }
+
     function _vibeColor(vibe) {
         if (isNaN(vibe)) {
             return qgcPal.text
@@ -276,7 +287,11 @@ Item {
 
         SectionHeader { text: qsTr("Rangefinder") }
 
-        ValueRow { label: qsTr("Down");          fact: _distanceSensors ? _distanceSensors.rotationPitch270 : null }
+        ValueRow {
+            label:      qsTr("Down")
+            fact:       _distanceSensors ? _distanceSensors.rotationPitch270 : null
+            valueColor: _rangefinderColor(_distanceSensors ? _distanceSensors.rotationPitch270.rawValue : NaN)
+        }
 
         // Optical flow gives velocity but no direction, so with EK3_SRC1_YAW=1 the compass is the
         // only thing telling the estimator which way that velocity points. A heading error does not

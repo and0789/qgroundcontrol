@@ -14,4 +14,5 @@ private slots:
     void _panelVehicleValuesExist_test();
     void _panelBuildsWithoutBindingErrors_test();
     void _magRatioStartsUnknownRatherThanZero_test();
+    void _rangefinderZeroIsNotColouredAsAReading_test();
 };

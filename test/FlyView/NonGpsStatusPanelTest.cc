@@ -121,4 +121,45 @@ void NonGpsStatusPanelTest::_magRatioStartsUnknownRatherThanZero_test()
     QCOMPARE(estimatorStatus->getFact(QStringLiteral("magRatio"))->rawValue().toFloat(), 0.25F);
 }
 
+/// A rangefinder reporting zero is one that got no return, which the pre-flight check and the
+/// waypoint ceiling both already refuse to read as a height. The panel row was rendering it in the
+/// ordinary colour, where "0.00 m" is indistinguishable from an aircraft on the ground.
+void NonGpsStatusPanelTest::_rangefinderZeroIsNotColouredAsAReading_test()
+{
+    QVERIFY(vehicle());
+
+    ignoreLogMessage("qt.qpa.fonts", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Populating font family aliases")));
+
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/qml"));
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        NonGpsStatusPanel { }
+    )", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+
+    const QScopedPointer<QObject> panel(component.create());
+    QVERIFY2(panel, qPrintable(component.errorString()));
+
+    const auto colourFor = [&panel](double distance) {
+        QVariant colour;
+        const bool invoked = QMetaObject::invokeMethod(panel.get(), "_rangefinderColor", Qt::DirectConnection,
+                                                       Q_RETURN_ARG(QVariant, colour), Q_ARG(QVariant, distance));
+        return invoked ? colour : QVariant();
+    };
+
+    const QVariant unusable = colourFor(0.0);
+    const QVariant reading = colourFor(3.5);
+    const QVariant unreported = colourFor(qQNaN());
+
+    QVERIFY(unusable.isValid() && reading.isValid() && unreported.isValid());
+    QVERIFY2(unusable != reading, "a zero reading must not be coloured like a real height");
+    QVERIFY2(unreported != unusable, "nothing received must not be coloured like a sensor reporting a fault");
+    QCOMPARE(colourFor(-1.0), unusable);
+}
+
 UT_REGISTER_TEST(NonGpsStatusPanelTest, TestLabel::Integration, TestLabel::Vehicle)

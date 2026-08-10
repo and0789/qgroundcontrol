@@ -95,9 +95,10 @@ QtObject {
         if (!isNaN(rangefinder) && (rangefinder > 0)) {
             return rangefinder
         }
-        // Silence on that fact is not a reading of zero, though it looks like one: the distance
-        // sensor facts start at zero rather than NaN and stay there until a DISTANCE_SENSOR arrives,
-        // so zero has to be read as "nothing said" and the fallback tried.
+        // Zero is not a height. A rangefinder that is streaming while returning nothing -- out of
+        // range, or a surface it cannot see -- reports zero, and taking that literally would put the
+        // vehicle at ground level whatever it is really doing. Fall through to the flow message,
+        // which may still carry a usable one.
         const flowHeight = _flowHeightFact ? _flowHeightFact.rawValue : NaN
         return (!isNaN(flowHeight) && (flowHeight > 0)) ? flowHeight : NaN
     }
