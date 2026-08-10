@@ -569,6 +569,17 @@ Item {
         return (item && (item.command !== undefined)) ? item.command : -1
     }
 
+    /// What to call a mission item in a list of them.
+    ///
+    /// QGC's own name for the command rather than one built here from the three the type selector
+    /// offers. A plan can hold commands the grid cannot create -- one loaded from a file, or written
+    /// in the Plan view -- and a row that fell back to "Waypoint" for those would be naming the item
+    /// something it is not.
+    function waypointCommandName(index) {
+        const item = _visualItemAt(index)
+        return (item && item.commandName) ? item.commandName : ""
+    }
+
     /// The altitude frame of a waypoint, so the panel can say which datum its number is measured
     /// from rather than showing a bare figure that could mean either
     function waypointAltitudeFrame(index) {

@@ -52,6 +52,7 @@ qt_add_qml_module(FlyViewModule
         LocalGridCompassRose.qml
         LocalGridEstimatorHealth.qml
         LocalGridMissionActions.qml
+        LocalGridMissionItemRow.qml
         LocalGridProjection.qml
         LocalGridReadout.qml
         LocalGridScaleBar.qml

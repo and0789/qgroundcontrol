@@ -57,6 +57,8 @@ constexpr const char *kMissionControllerStub = R"(
                 property int  sequenceNumber: 0
                 property bool isCurrentItem: false
                 property int  command: 16
+                // QGC's display name for the command, which is what a row in a list of items shows
+                property string commandName: "Waypoint"
                 property int  altitudeFrame: 1
                 // What the grid uses to tell the plan's own items from the settings item carrying
                 // the planned home position, and a takeoff from anything that can be dragged
@@ -134,6 +136,7 @@ constexpr const char *kMissionControllerStub = R"(
             addItem(takeoffLandsOn ? takeoffLandsOn : coordinate, items.length + 1)
             const item = items[items.length - 1]
             item.isTakeoffItem = true
+            item.commandName = "Takeoff"
             lastInsertedItem = item
             return item
         }
@@ -1299,6 +1302,92 @@ void LocalGridViewTest::_waypointPanelCarriesTheEditorFields_test()
              "the panel keeps the controls that are its own");
 
     QVERIFY(panel->property("implicitHeight").toReal() > 0);
+}
+
+/// Builds one list row on its own. Nothing shows these rows yet, so without this the file is only
+/// proved to parse.
+///
+/// The editor is loaded on demand rather than built for every item and hidden. A row that built it
+/// anyway would look identical on screen and cost a set of live bindings -- on the transform, the
+/// altitude limit and the item's altitude fact -- for every leg of the pattern, all recomputing on
+/// each pan of the grid.
+void LocalGridViewTest::_missionItemRowOpensOnlyWhenCurrent_test()
+{
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/qml"));
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridMissionItemRow { }
+    )", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+
+    const QScopedPointer<QObject> row(component.create());
+    QVERIFY2(row, qPrintable(component.errorString()));
+
+    // A control that exists only inside the editor, so finding it is the editor being present
+    const auto editorLoaded = [&row]() {
+        return row->findChild<QObject *>(QStringLiteral("localGrid_applyAltitudeToAllButton")) != nullptr;
+    };
+
+    QVERIFY2(!editorLoaded(), "a row that is not the current item carries no editor");
+    QVERIFY2(!row->findChild<QObject *>(QStringLiteral("localGrid_rowDeleteButton"))->property("visible").toBool(),
+             "delete belongs to the row being edited, not to every line of the list");
+
+    row->setProperty("isCurrentItem", true);
+    QVERIFY2(editorLoaded(), "the current item opens into its fields");
+    QVERIFY(row->findChild<QObject *>(QStringLiteral("localGrid_rowDeleteButton"))->property("visible").toBool());
+
+    // And it is given up again, rather than every row that has ever been opened staying loaded.
+    // Waited on rather than read straight away: the Loader hands the old editor to the event loop to
+    // delete, so it is still findable for the rest of this turn.
+    row->setProperty("isCurrentItem", false);
+    QTRY_VERIFY_WITH_TIMEOUT(!editorLoaded(), TestTimeout::shortMs());
+}
+
+/// The collapsed row is the whole list at a glance -- takeoff, waypoint, waypoint, land. It takes
+/// QGC's own name for the command rather than mapping the three types the grid can create, so an
+/// item planned elsewhere is not renamed into one of them.
+void LocalGridViewTest::_missionItemRowNamesTheItemItHolds_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // A takeoff and a waypoint, so the name has to follow the item rather than being the same word
+    // for every row
+    QVariant inserted;
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "insertTakeoffItem", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, inserted),
+                                      Q_ARG(QVariant, QVariant::fromValue(origin)),
+                                      Q_ARG(QVariant, 1), Q_ARG(QVariant, true)));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 0.0))),
+        Q_ARG(QVariant, 2)));
+
+    const auto nameAt = [&gridView](int index) {
+        QVariant name;
+        return QMetaObject::invokeMethod(gridView.get(), "waypointCommandName", Qt::DirectConnection,
+                                         Q_RETURN_ARG(QVariant, name), Q_ARG(QVariant, index))
+                   ? name.toString()
+                   : QStringLiteral("<not invoked>");
+    };
+
+    QCOMPARE(nameAt(0), QStringLiteral("Takeoff"));
+    QCOMPARE(nameAt(1), QStringLiteral("Waypoint"));
+
+    // Out of range answers with nothing rather than inventing a name for an item that is not there
+    QCOMPARE(nameAt(99), QString());
 }
 
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)
