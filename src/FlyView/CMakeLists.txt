@@ -63,6 +63,7 @@ qt_add_qml_module(FlyViewModule
         LocalGridWaypointPanel.qml
         MultiRotorChecklist.qml
         MultiVehicleList.qml
+        NonGpsAidingReason.qml
         NonGpsFlowHealth.qml
         NonGpsStatusPanel.qml
         NonGpsStatusShowAction.qml

@@ -51,6 +51,13 @@ Item {
         vehicle: _root._activeVehicle
     }
 
+    NonGpsAidingReason {
+        id:             aidingReason
+        vehicle:        _root._activeVehicle
+        minFlowQuality: _root._minFlowQuality
+        badRatio:       _root._ekfRatioBadThreshold
+    }
+
     function _qualityColor(quality) {
         if (isNaN(quality)) {
             return qgcPal.text
@@ -322,6 +329,19 @@ Item {
             // Set means the estimator fell back to assuming the vehicle is stationary
             healthyWhenSet: false
         }
+
+        // "NO" names the state but not the cause, and only the cause can be acted on. The evidence
+        // is already on this panel -- flow quality, the rangefinder, the EKF's own ratios -- but
+        // reading it off six rows takes longer than the failure gives you.
+        QGCLabel {
+            Layout.preferredWidth:  _root._labelWidth + _root._valueWidth + ScreenTools.defaultFontPixelWidth
+            visible:                aidingReason.aidingLost
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorRed
+            text:                   aidingReason.reason
+        }
+
         ValueRow { label: qsTr("Vel Ratio");     fact: _estimatorStatus ? _estimatorStatus.velRatio : null }
         ValueRow { label: qsTr("Pos Ratio");     fact: _estimatorStatus ? _estimatorStatus.horizPosRatio : null }
         ValueRow { label: qsTr("HAGL Ratio");    fact: _estimatorStatus ? _estimatorStatus.haglRatio : null }
