@@ -54,6 +54,17 @@ bool centreTheGridOnTheOrigin(QQuickItem *gridView)
 
 } // namespace
 
+/// MAV_CMD_EXTERNAL_POSITION_ESTIMATE is an ArduPilot command, and the vehicle this boots is an
+/// ArduCopter. A build with no ArduPilot plugin registered has no vehicle to connect, which is a
+/// missing build option rather than a broken correction.
+void LocalGridPositionCorrectionUITest::init()
+{
+    if (!apmFirmwareSupported()) {
+        QSKIP("ArduPilot support not registered in this build");
+    }
+    QmlUITestBase::init();
+}
+
 void LocalGridPositionCorrectionUITest::cleanup()
 {
     // Persisted, so leaving it on would put every later test's fly view on the grid

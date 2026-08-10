@@ -20,6 +20,17 @@ constexpr double kOriginLongitude = 8.5455938;
 
 } // namespace
 
+/// The dialog exists for ArduPilot's estimator origin, and the vehicle this boots is an ArduCopter. A
+/// build with no ArduPilot plugin registered has no vehicle to connect, which is a missing build
+/// option rather than a broken dialog.
+void SetEstimatorOriginUITest::init()
+{
+    if (!apmFirmwareSupported()) {
+        QSKIP("ArduPilot support not registered in this build");
+    }
+    QmlUITestBase::init();
+}
+
 void SetEstimatorOriginUITest::cleanup()
 {
     FlyViewSettings *const flyViewSettings = SettingsManager::instance()->flyViewSettings();

@@ -29,6 +29,17 @@ int countDistinctColours(const QImage &image, int limit)
 
 } // namespace
 
+/// The grid is flown on ArduPilot, and the vehicle this boots is an ArduCopter. A build with no
+/// ArduPilot plugin registered has no vehicle to connect, which is a missing build option rather than
+/// a broken grid.
+void FlyViewLocalGridUITest::init()
+{
+    if (!apmFirmwareSupported()) {
+        QSKIP("ArduPilot support not registered in this build");
+    }
+    QmlUITestBase::init();
+}
+
 void FlyViewLocalGridUITest::cleanup()
 {
     // The setting is persisted, so leaving it on would put every later test's fly view on the grid

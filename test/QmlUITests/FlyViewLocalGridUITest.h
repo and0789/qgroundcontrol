@@ -13,6 +13,7 @@ class FlyViewLocalGridUITest : public QmlUITestBase
     Q_OBJECT
 
 protected slots:
+    void init() override;
     void cleanup() override;
 
 private slots:
