@@ -38,6 +38,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridPositionCorrectionUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewProximityRadarUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewProximityRadarUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/GeoViewUITest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/GeoViewUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/NTRIPSettingsUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/NTRIPSettingsUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/OnboardLogUITest.cc
@@ -57,11 +59,12 @@ add_qgc_test(PX4VehicleConfigUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(APMVehicleConfigUITest LABELS Integration NoSanitizer TIMEOUT 360)
 add_qgc_test(ToolbarIndicatorUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(PlanViewUITest LABELS Integration NoSanitizer TIMEOUT 120)
-add_qgc_test(PlanViewLayerUITest LABELS Integration NoSanitizer TIMEOUT 120)
+# StockUI: asserts stock UI elements that custom builds intentionally replace/omit
+add_qgc_test(PlanViewLayerUITest LABELS Integration NoSanitizer StockUI TIMEOUT 120)
 add_qgc_test(PX4SensorsCalibrationUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(APMSensorsCalibrationUITest LABELS Integration NoSanitizer TIMEOUT 240)
 add_qgc_test(APMFreshFlashUITest LABELS Integration NoSanitizer TIMEOUT 180)
-add_qgc_test(PX4AirframeSetupUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(PX4AirframeSetupUITest LABELS Integration NoSanitizer StockUI TIMEOUT 120)
 add_qgc_test(AppCloseWarningUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(FlyViewLocalGridUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(SetEstimatorOriginUITest LABELS Integration NoSanitizer TIMEOUT 120)
@@ -76,7 +79,7 @@ add_qgc_test(RemoteIDSettingsUITest LABELS Integration NoSanitizer TIMEOUT 120)
 # cannot provide. On Linux the offscreen platform exposes GLX (CI runs ctest
 # under xvfb-run with Mesa llvmpipe), so drop the forced software backend and
 # request RHI OpenGL — View3D then genuinely renders. On other hosts (e.g.
-# macOS offscreen) the software backend stays and the test asserts the
+# macOS offscreen) the software backend stays and the tests assert the
 # documented View3D fallback warnings instead.
 set(_viewer3d_env_mod "")
 if(LINUX)
@@ -85,4 +88,5 @@ if(LINUX)
         "QSG_RHI_BACKEND=set:opengl"
     )
 endif()
-add_qgc_test(Viewer3DUITest LABELS Integration NoSanitizer TIMEOUT 120 ${_viewer3d_env_mod})
+add_qgc_test(Viewer3DUITest LABELS Integration NoSanitizer StockUI TIMEOUT 120 ${_viewer3d_env_mod})
+add_qgc_test(GeoViewUITest LABELS Integration NoSanitizer TIMEOUT 120 ${_viewer3d_env_mod})
