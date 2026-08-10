@@ -43,8 +43,8 @@ Rectangle {
     signal clicked()
     signal removeRequested()
 
-    implicitHeight: contentColumn.implicitHeight + (_margins * 2)
-    color:          isCurrentItem ? qgcPal.buttonHighlight : qgcPal.windowShade
+    implicitHeight: contentColumn.implicitHeight
+    color:          qgcPal.windowShade
     radius:         ScreenTools.defaultFontPixelHeight / 4
     // Dimmed rather than greyed, the way the Plan view does it, so the open row reads as the one in
     // hand without the others looking disabled
@@ -53,9 +53,14 @@ Rectangle {
     readonly property real _margins:    ScreenTools.defaultFontPixelHeight / 4
     readonly property real _iconSize:   ScreenTools.defaultFontPixelHeight
 
-    /// The open row is drawn on the highlight colour, so its text has to be the colour that goes on
-    /// top of it rather than the ordinary one
-    readonly property color _textColor: isCurrentItem ? qgcPal.buttonHighlightText : qgcPal.text
+    /// Which row is open is said by the header strip alone, not by colouring the whole row.
+    ///
+    /// The editor is seven fields tall, so highlighting the row flooded a third of the panel with
+    /// saturated colour -- and left every label in it standing on a background none of them were
+    /// coloured for. On a light theme that is dark text on blue; here it survived only because the
+    /// ordinary text colour happens to be light too.
+    readonly property color _headerColor: isCurrentItem ? qgcPal.buttonHighlight : "transparent"
+    readonly property color _textColor:   isCurrentItem ? qgcPal.buttonHighlightText : qgcPal.text
 
     readonly property string _commandName: (gridView && (visualItemIndex >= 0))
                                             ? gridView.waypointCommandName(visualItemIndex)
@@ -70,67 +75,83 @@ Rectangle {
 
     ColumnLayout {
         id:                 contentColumn
-        anchors.margins:    _root._margins
         anchors.left:       parent.left
         anchors.right:      parent.right
         anchors.top:        parent.top
-        spacing:            _root._margins
+        spacing:            0
 
-        RowLayout {
-            id:                 headerRow
+        // Runs the full width of the row and carries the highlight, with only its top corners
+        // rounded so it sits flush against the editor below rather than showing a notch of row
+        // background at each shoulder
+        Rectangle {
             Layout.fillWidth:   true
-            spacing:            ScreenTools.defaultFontPixelWidth / 2
+            implicitHeight:     headerRow.implicitHeight + (_root._margins * 2)
+            color:              _root._headerColor
+            topLeftRadius:      _root.radius
+            topRightRadius:     _root.radius
 
-            // Only on the open row. A trash icon on every line of a list is an accident waiting for
-            // a gloved finger, and the Plan view holds to the same rule.
-            QGCColoredImage {
-                objectName:             "localGrid_rowDeleteButton"
-                Layout.preferredWidth:  _root._iconSize
-                Layout.preferredHeight: _root._iconSize
-                Layout.alignment:       Qt.AlignVCenter
-                sourceSize.height:      _root._iconSize
-                fillMode:               Image.PreserveAspectFit
-                mipmap:                 true
-                smooth:                 true
-                source:                 "/res/TrashDelete.svg"
-                color:                  _root._textColor
-                visible:                _root.isCurrentItem
+            RowLayout {
+                id:                     headerRow
+                anchors.left:           parent.left
+                anchors.right:          parent.right
+                anchors.margins:        _root._margins
+                anchors.verticalCenter: parent.verticalCenter
+                spacing:                ScreenTools.defaultFontPixelWidth / 2
 
-                QGCMouseArea {
-                    fillItem:   parent
-                    onClicked:  _root.removeRequested()
+                // Carries the same green disc the marker on the grid wears, so the row and the
+                // marker for the waypoint the vehicle is flying to are recognisably the same thing.
+                // Being edited is shown by the row opening; this says nothing about that.
+                Rectangle {
+                    Layout.preferredWidth:  _root._iconSize
+                    Layout.preferredHeight: _root._iconSize
+                    Layout.alignment:       Qt.AlignVCenter
+                    radius:                 width / 2
+                    color:                  _root.isVehicleTarget ? qgcPal.colorGreen : "transparent"
+
+                    QGCLabel {
+                        anchors.centerIn:   parent
+                        font.pointSize:     ScreenTools.smallFontPointSize
+                        font.bold:          true
+                        color:              _root.isVehicleTarget ? qgcPal.window : _root._textColor
+                        text:               _root.sequenceNumber
+                    }
                 }
-            }
 
-            // Carries the same green disc the marker on the grid wears, so the row and the marker
-            // for the waypoint the vehicle is flying to are recognisably the same thing. Being
-            // edited is shown by the row opening; this says nothing about that.
-            Rectangle {
-                Layout.preferredWidth:  _root._iconSize
-                Layout.preferredHeight: _root._iconSize
-                Layout.alignment:       Qt.AlignVCenter
-                radius:                 width / 2
-                color:                  _root.isVehicleTarget ? qgcPal.colorGreen : "transparent"
-
+                // What the item is, kept on the row whether or not it is open. Scanning a pattern is
+                // reading this column -- takeoff, waypoint, waypoint, land -- and a name that
+                // appeared only on the open row would leave the list saying nothing at a glance.
                 QGCLabel {
-                    anchors.centerIn:   parent
+                    Layout.alignment:   Qt.AlignVCenter
+                    Layout.fillWidth:   true
                     font.pointSize:     ScreenTools.smallFontPointSize
-                    font.bold:          true
-                    color:              _root.isVehicleTarget ? qgcPal.window : _root._textColor
-                    text:               _root.sequenceNumber
+                    color:              _root._textColor
+                    elide:              Text.ElideRight
+                    text:               _root._commandName
                 }
-            }
 
-            // What the item is, kept on the row whether or not it is open. Scanning a pattern is
-            // reading this column -- takeoff, waypoint, waypoint, land -- and a name that appeared
-            // only on the open row would leave the list saying nothing at a glance.
-            QGCLabel {
-                Layout.alignment:   Qt.AlignVCenter
-                Layout.fillWidth:   true
-                font.pointSize:     ScreenTools.smallFontPointSize
-                color:              _root._textColor
-                elide:              Text.ElideRight
-                text:               _root._commandName
+                // On the trailing edge, away from the leading edge the row is tapped on to open and
+                // close it. A delete control under the thumb that is already opening rows is one
+                // gloved mis-tap away from taking a waypoint out of the plan.
+                QGCColoredImage {
+                    objectName:             "localGrid_rowDeleteButton"
+                    Layout.preferredWidth:  _root._iconSize
+                    Layout.preferredHeight: _root._iconSize
+                    Layout.alignment:       Qt.AlignVCenter
+                    sourceSize.height:      _root._iconSize
+                    fillMode:               Image.PreserveAspectFit
+                    mipmap:                 true
+                    smooth:                 true
+                    source:                 "/res/TrashDelete.svg"
+                    color:                  _root._textColor
+                    // Only on the open row. A trash icon on every line of a list is an accident
+                    // waiting for a gloved finger, and the Plan view holds to the same rule.
+                    visible:                _root.isCurrentItem
+
+                    QGCMouseArea {
+                        fillItem:   parent
+                        onClicked:  _root.removeRequested()
+                    }
+                }
             }
         }
 
@@ -138,9 +159,10 @@ Rectangle {
         // first run, which is how the Plan view avoids a pass of warnings about reading properties
         // off nothing
         Loader {
-            id:                 editorLoader
-            Layout.fillWidth:   true
-            visible:            _root.isCurrentItem
+            id:                     editorLoader
+            Layout.fillWidth:       true
+            Layout.margins:         _root._margins
+            visible:                _root.isCurrentItem
         }
     }
 

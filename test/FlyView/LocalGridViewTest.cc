@@ -95,6 +95,10 @@ constexpr const char *kMissionControllerStub = R"(
             items = list
         }
 
+        // The sequence number the vehicle is flying to. MissionController reads this off the
+        // vehicle's mission manager and answers -1 outside the fly view.
+        property int currentMissionIndex: -1
+
         readonly property var visualItems: QtObject {
             readonly property int count: items.length
             function get(index) { return items[index] }
@@ -1581,10 +1585,12 @@ void LocalGridViewTest::_gridShowsThePlanAsAList_test()
 }
 
 /// Which waypoint the vehicle is flying to is not which waypoint the operator is editing, and the
-/// grid has always drawn them differently -- green fill for the vehicle's target, an outline for the
-/// selection. MissionController fills isCurrentItem from the vehicle's own mission index while the
-/// fly view is up, so a list that reused it for "open" would both open the wrong row and throw away
-/// the only sign of where the aircraft is heading.
+/// grid draws them differently -- green fill for the vehicle's target, an outline for the selection.
+///
+/// Read off the controller's currentMissionIndex, which comes from the vehicle's own mission
+/// manager, rather than off the items' isCurrentItem. That flag is written twice over in the fly
+/// view: the vehicle advancing sets it, but so does inserting an item, so a freshly placed waypoint
+/// marked itself as the one being flown to while the aircraft was still standing on the origin.
 void LocalGridViewTest::_listMarksTheWaypointTheVehicleIsFlyingTo_test()
 {
     QVERIFY(vehicle());
@@ -1625,21 +1631,27 @@ void LocalGridViewTest::_listMarksTheWaypointTheVehicleIsFlyingTo_test()
                               TestTimeout::mediumMs());
     QVERIFY2(targetSequences().isEmpty(), "a plan nobody is flying marks no target");
 
-    // What MissionController does in the fly view when the vehicle reports its mission index
-    QObject *const visualItems = stub->property("visualItems").value<QObject *>();
-    QVERIFY(visualItems);
-    QVariant itemVar;
-    QVERIFY(QMetaObject::invokeMethod(visualItems, "get", Qt::DirectConnection,
-                                      Q_RETURN_ARG(QVariant, itemVar), Q_ARG(QVariant, 1)));
-    QObject *const secondItem = itemVar.value<QObject *>();
-    QVERIFY(secondItem);
-    secondItem->setProperty("isCurrentItem", true);
-
+    // The vehicle reports it is flying to the second item
+    stub->setProperty("currentMissionIndex", 2);
     QTRY_COMPARE_WITH_TIMEOUT(targetSequences(), QList<int>({ 2 }), TestTimeout::mediumMs());
 
     // Selecting a different row for editing leaves the target where it is
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
                                       Q_ARG(QVariant, 0)));
+    QCOMPARE(targetSequences(), QList<int>({ 2 }));
+
+    // And an item being inserted does not steal the mark. MissionController makes a new item the
+    // current one, which is what made a waypoint placed on the ground look like the one being
+    // flown to.
+    QObject *const visualItems = stub->property("visualItems").value<QObject *>();
+    QVERIFY(visualItems);
+    QVariant itemVar;
+    QVERIFY(QMetaObject::invokeMethod(visualItems, "get", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, itemVar), Q_ARG(QVariant, 2)));
+    QObject *const thirdItem = itemVar.value<QObject *>();
+    QVERIFY(thirdItem);
+    thirdItem->setProperty("isCurrentItem", true);
+
     QCOMPARE(targetSequences(), QList<int>({ 2 }));
 }
 

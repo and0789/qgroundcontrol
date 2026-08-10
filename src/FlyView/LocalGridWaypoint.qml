@@ -16,7 +16,11 @@ Item {
     /// is not a plain waypoint.
     property int  visualItemIndex: -1
     property int  sequenceNumber:  0
-    property bool isCurrentItem:   false
+
+    /// The waypoint the vehicle is flying to, which is not the one the operator has selected to
+    /// edit. Named for what it is: the plan's own isCurrentItem flag also gets set when an item is
+    /// inserted, so it cannot be trusted to mean this.
+    property bool isVehicleTarget: false
     property bool isSelected:      false
 
     /// False for a marker that is anchored where it is -- the takeoff, which belongs on the origin.
@@ -45,7 +49,7 @@ Item {
     Rectangle {
         anchors.fill:   parent
         radius:         width / 2
-        color:          _root.isCurrentItem ? qgcPal.colorGreen : qgcPal.colorOrange
+        color:          _root.isVehicleTarget ? qgcPal.colorGreen : qgcPal.colorOrange
         // The selected one is outlined rather than recoloured, so it can be seen which waypoint is
         // being worked on without losing which one the vehicle is flying to
         border.color:   qgcPal.text

@@ -20,8 +20,13 @@ Rectangle {
 
     property var gridView: null
 
-    color:  qgcPal.window
-    radius: ScreenTools.defaultFontPixelHeight / 4
+    // Outlined, because the grid behind it is painted in this same window colour. Without the border
+    // the panel had no edge at all: folded away it left a header floating over the grid with nothing
+    // to say it was a panel, or that it could be clicked to bring the plan back.
+    color:          qgcPal.window
+    radius:         ScreenTools.defaultFontPixelHeight / 4
+    border.color:   qgcPal.groupBorder
+    border.width:   1
 
     /// Folded away to leave the grid clear, keeping the header so it can be found again. A panel
     /// that closed completely would be a panel the operator has to remember a way back to.
@@ -136,7 +141,7 @@ Rectangle {
                 north:           point ? point.north : NaN
                 east:            point ? point.east : NaN
                 isCurrentItem:   point ? (_root._selected === point.index) : false
-                isVehicleTarget: point ? point.isCurrent : false
+                isVehicleTarget: point ? point.isVehicleTarget : false
 
                 // Clicking the open row closes it. The floating panel had a Close button and the
                 // list has no room for one per row, so the row that opened is the way back out --

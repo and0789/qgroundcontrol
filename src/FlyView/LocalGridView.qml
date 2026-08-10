@@ -270,13 +270,26 @@ Item {
                 // holds anything that is not a plain waypoint.
                 index:      i,
                 sequence:   item.sequenceNumber,
-                isCurrent:  item.isCurrentItem,
+                // Compared against the vehicle's own mission index rather than reading the item's
+                // isCurrentItem. Both are written in the fly view: the vehicle advancing sets it,
+                // but so does inserting an item, so a freshly placed waypoint marked itself as the
+                // one being flown to while the aircraft was still standing on the origin.
+                isVehicleTarget: (_root.vehicleTargetSequence >= 0)
+                                    && (item.sequenceNumber === _root.vehicleTargetSequence),
                 // Takeoffs are drawn but not dragged: this one is anchored to the origin
                 isPinned:   _isPinnedItem(item)
             })
         }
         return points
     }
+
+    /// The sequence number the vehicle is flying to, or -1 when nothing is.
+    ///
+    /// MissionController reads this off the vehicle's own mission manager, and answers -1 outside
+    /// the fly view. It is the only honest source for this: the items' isCurrentItem flag is also
+    /// set when one is inserted, so it says "the item just added" as often as it says "the item
+    /// being flown to".
+    readonly property int vehicleTargetSequence: missionController ? missionController.currentMissionIndex : -1
 
     /// True for an item that belongs where it is and may not be moved from the grid.
     ///
@@ -1032,7 +1045,7 @@ Item {
             gridView:        _root
             visualItemIndex: point ? point.index : -1
             sequenceNumber:  point ? point.sequence : 0
-            isCurrentItem:   point ? point.isCurrent : false
+            isVehicleTarget: point ? point.isVehicleTarget : false
             draggable:       point ? !point.isPinned : false
             isSelected:      point ? (_root.selectedWaypointIndex === point.index) : false
             // _root.gridTransform, not the bare id: every Item carries its own `transform` property
