@@ -367,6 +367,23 @@ public:
     /// Fallback for setEstimatorOrigin which sends the deprecated SET_GPS_GLOBAL_ORIGIN message.
     void setEstimatorOrigin_SET_GPS_GLOBAL_ORIGIN(const QGeoCoordinate& centerCoord);
 
+    /// Tells the vehicle where it actually is, for an estimator whose frame has slid away from the
+    /// ground beneath it.
+    ///
+    /// This is not a second origin -- the origin cannot be changed once set, and this does not try
+    /// to. It resets the filter's own position within the frame the origin already anchors, which
+    /// is what an aircraft navigating on optical flow needs after its estimate has crept: without
+    /// it the only remedy is a power cycle.
+    ///
+    /// Answered on externalPositionEstimateResult rather than by a generic error dialog. The
+    /// refusals carry the diagnosis -- firmware built without the feature, an estimator that has
+    /// stopped aiding and cannot take a correction -- and a message saying only that a command
+    /// failed throws all of that away.
+    ///
+    ///     @param coordinate       Where the vehicle really is
+    ///     @param accuracyMetres   One standard deviation of how well that is known, NaN if unknown
+    Q_INVOKABLE void sendExternalPositionEstimate(const QGeoCoordinate& coordinate, float accuracyMetres = std::numeric_limits<float>::quiet_NaN());
+
     /// Records the estimator origin reported by the vehicle.
     void _handleGpsGlobalOrigin(const mavlink_message_t& message);
 
@@ -784,6 +801,11 @@ signals:
     void mavlinkMessageReceived         (const mavlink_message_t& message);
     void homePositionChanged            (const QGeoCoordinate& homePosition);
     void estimatorOriginChanged         (const QGeoCoordinate& estimatorOrigin);
+
+    /// The vehicle's answer to sendExternalPositionEstimate.
+    ///     @param accepted True when the correction was applied
+    ///     @param reason   Why it was not, in words the operator can act on; empty when accepted
+    void externalPositionEstimateResult  (bool accepted, const QString& reason);
     void armedPositionChanged();
     void armedChanged                   (bool armed);
     void flightModeChanged              (const QString& flightMode);
@@ -945,6 +967,15 @@ private:
     QString _formatMavCommand           (MAV_CMD command, float param1);
 
     static void _rebootCommandResultHandler(void* resultHandlerData, int compId, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode);
+    static void _externalPositionEstimateResultHandler(void* resultHandlerData, int compId, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode);
+
+    /// Why the vehicle would not take a position correction, in words the operator can act on
+    static QString _externalPositionEstimateFailureText(const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode);
+
+    /// A monotonic time in QGC's own domain for MAV_CMD_EXTERNAL_POSITION_ESTIMATE
+    float _externalPositionTimestampSecs();
+
+    QElapsedTimer _externalPositionTimer;
 
     // The following methods should only be called by unit tests
     void _deleteGimbalController();

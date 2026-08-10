@@ -3294,6 +3294,103 @@ void Vehicle::setEstimatorOrigin_SET_GPS_GLOBAL_ORIGIN(const QGeoCoordinate& cen
     sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
 }
 
+float Vehicle::_externalPositionTimestampSecs()
+{
+    // A time in QGC's own domain, which is what the command asks for: the autopilot learns the
+    // offset between that domain and its own rather than expecting the two to agree. Wrapped an
+    // order of magnitude inside what a 32 bit float still resolves to a millisecond, and the wrap
+    // itself is harmless here -- ArduPilot clamps the timestamp into the last five seconds before
+    // using it, and this command is sent by hand rather than streamed.
+    if (!_externalPositionTimer.isValid()) {
+        _externalPositionTimer.start();
+    }
+
+    constexpr qint64 wrapMSecs = 3600 * 1000;
+    return static_cast<float>((_externalPositionTimer.elapsed() % wrapMSecs) / 1000.0);
+}
+
+QString Vehicle::_externalPositionEstimateFailureText(const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode)
+{
+    switch (failureCode) {
+    case MavCmdResultFailureNoResponseToCommand:
+        return tr("The vehicle did not answer. Older firmware does not know this command at all.");
+    case MavCmdResultFailureDuplicateCommand:
+        return tr("A correction is already on its way to the vehicle.");
+    case MavCmdResultCommandResultOnly:
+        break;
+    }
+
+    switch (ack.result) {
+    case MAV_RESULT_UNSUPPORTED:
+        // AP_AHRS_POSITION_RESET_ENABLED is compiled out below 1MB of flash, which is where this
+        // lands on the smaller boards
+        return tr("This firmware cannot correct its position. The feature is left out of boards with 1 MB of flash.");
+    case MAV_RESULT_DENIED:
+        // ArduPilot's handler refuses anything but the global frame with no altitude. QGC sends
+        // exactly that, so reaching this means the firmware wants the command in another shape.
+        return tr("The vehicle refused the correction outright. It expects a global position with no altitude.");
+    case MAV_RESULT_FAILED:
+        // NavEKF3_core::setLatLng returning false. Of its three conditions, the aiding one is the
+        // one that bites: a filter that has fallen back to holding position has nothing to correct
+        // against and refuses.
+        return tr("The estimator would not take the correction. It needs an origin already set and must still be aiding — check whether it has fallen back to holding position.");
+    case MAV_RESULT_TEMPORARILY_REJECTED:
+        return tr("The vehicle is busy and refused the correction for now. Try again.");
+    default:
+        return tr("The vehicle refused the correction (result %1).").arg(ack.result);
+    }
+}
+
+void Vehicle::_externalPositionEstimateResultHandler(void* resultHandlerData, int compId, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode)
+{
+    Q_UNUSED(compId);
+
+    auto* const vehicle = static_cast<Vehicle*>(resultHandlerData);
+    if (!vehicle) {
+        return;
+    }
+
+    if ((failureCode == MavCmdResultCommandResultOnly) && (ack.result == MAV_RESULT_ACCEPTED)) {
+        emit vehicle->externalPositionEstimateResult(true, QString());
+        return;
+    }
+
+    const QString reason = _externalPositionEstimateFailureText(ack, failureCode);
+    qCDebug(VehicleLog) << "MAV_CMD_EXTERNAL_POSITION_ESTIMATE refused:" << reason
+                        << "result:" << ack.result << "failureCode:" << failureCode;
+    emit vehicle->externalPositionEstimateResult(false, reason);
+}
+
+void Vehicle::sendExternalPositionEstimate(const QGeoCoordinate& coordinate, float accuracyMetres)
+{
+    if (!coordinate.isValid()) {
+        qCDebug(VehicleLog) << "sendExternalPositionEstimate: coordinate not valid, ignoring";
+        emit externalPositionEstimateResult(false, tr("There is no position to send."));
+        return;
+    }
+
+    MavCmdAckHandlerInfo_t handlerInfo = {};
+    handlerInfo.resultHandler       = _externalPositionEstimateResultHandler;
+    handlerInfo.resultHandlerData   = this;
+
+    // The altitude has to be NaN and the frame global: ArduPilot's handler answers DENIED to
+    // anything else, and this command carries no height on purpose -- what has drifted is the
+    // horizontal frame, and the rangefinder or barometer is still holding the vertical.
+    sendMavCommandIntWithHandler(
+        &handlerInfo,
+        defaultComponentId(),
+        MAV_CMD_EXTERNAL_POSITION_ESTIMATE,
+        MAV_FRAME_GLOBAL,
+        _externalPositionTimestampSecs(),           // param1: when this position was true, our clock
+        0.0f,                                       // param2: no processing delay to declare
+        accuracyMetres,                             // param3: one standard deviation, NaN if unknown
+        0.0f,                                       // param4: empty
+        coordinate.latitude(),                      // param5: latitude
+        coordinate.longitude(),                     // param6: longitude
+        std::numeric_limits<float>::quiet_NaN()     // param7: altitude, which must be NaN
+    );
+}
+
 void Vehicle::pairRX(int rxType, int rxSubType)
 {
     sendMavCommand(_defaultComponentId,

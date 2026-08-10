@@ -39,6 +39,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         OpticalFlowCalibratorTest.h
         VehicleDistanceSensorFactGroupTest.cc
         VehicleDistanceSensorFactGroupTest.h
+        VehicleExternalPositionEstimateTest.cc
+        VehicleExternalPositionEstimateTest.h
         VehicleOpticalFlowFactGroupTest.cc
         VehicleOpticalFlowFactGroupTest.h
         VehicleLinkManagerTest.cc
@@ -79,6 +81,7 @@ add_qgc_test(SetEstimatorOriginTest LABELS Integration Vehicle)
 add_qgc_test(VehicleEstimatorStatusFactGroupTest LABELS Unit Vehicle)
 add_qgc_test(OpticalFlowCalibratorTest LABELS Integration Vehicle)
 add_qgc_test(VehicleDistanceSensorFactGroupTest LABELS Integration Vehicle)
+add_qgc_test(VehicleExternalPositionEstimateTest LABELS Integration Vehicle)
 add_qgc_test(VehicleOpticalFlowFactGroupTest LABELS Unit Vehicle)
 add_qgc_test(VehicleOpticalFlowFactGroupRegistrationTest LABELS Integration Vehicle)
 add_qgc_test(VehicleLinkManagerTest LABELS Integration Vehicle SERIAL)
