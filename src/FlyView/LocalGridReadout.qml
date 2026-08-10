@@ -39,6 +39,9 @@ Rectangle {
     readonly property bool   _estimatorSevere:   gridView ? gridView.estimatorSevere : false
     readonly property string _estimatorWarning:  gridView ? gridView.estimatorWarning : ""
 
+    readonly property bool   _drifting:      gridView ? gridView.positionDrifting : false
+    readonly property string _driftWarning:  gridView ? gridView.positionDriftWarning : ""
+
     readonly property bool _nearCeiling:  gridView ? gridView.heightNearCeiling : false
     readonly property bool _aboveCeiling: gridView ? gridView.heightAboveCeiling : false
     readonly property real _height:       gridView ? gridView.currentHeightMetres : NaN
@@ -162,6 +165,21 @@ Rectangle {
             // Two different colours for one state reads as two different problems.
             color:                  _root._estimatorSevere ? qgcPal.colorRed : qgcPal.colorOrange
             text:                   _root._estimatorWarning
+        }
+
+        // Said here rather than left to the operator to spot in the Range figure above. That figure
+        // is as large for an aircraft parked away from the origin as for one whose frame has slid,
+        // and only one of those is a fault -- so the number alone cannot raise this, and a warning
+        // built on it would fire every flight and be learned away.
+        QGCLabel {
+            objectName:             "localGrid_driftWarning"
+            Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 22
+            visible:                _root._drifting
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorOrange
+            text:                   _root._driftWarning
         }
 
         // The ceiling the plan was checked against, now checked against where the vehicle actually

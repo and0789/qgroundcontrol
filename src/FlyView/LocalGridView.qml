@@ -283,6 +283,15 @@ Item {
         return points
     }
 
+    /// Whether the estimator's frame has slid away from the ground while the aircraft sat on it
+    property LocalGridOriginDrift originDrift: LocalGridOriginDrift {
+        vehicle: _root.vehicle
+    }
+
+    readonly property bool   positionDrifting:    originDrift.drifting
+    readonly property string positionDriftWarning: originDrift.warning
+    readonly property real   positionDriftMetres:  originDrift.driftMetres
+
     /// The sequence number the vehicle is flying to, or -1 when nothing is.
     ///
     /// MissionController reads this off the vehicle's own mission manager, and answers -1 outside

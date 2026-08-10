@@ -1833,4 +1833,138 @@ void LocalGridViewTest::_selectedRowIsBroughtIntoView_test()
     QTRY_COMPARE_WITH_TIMEOUT(flickable->property("contentY").toReal(), 0.0, TestTimeout::mediumMs());
 }
 
+/// Builds the drift watcher on its own, bound to @a vehicle.
+/// @return the created object, or nullptr with @a error describing why not
+static QObject *createOriginDrift(QQmlComponent &component, Vehicle *vehicle, QString &error)
+{
+    component.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridOriginDrift { }
+    )", QUrl());
+    if (!component.isReady()) {
+        error = component.errorString();
+        return nullptr;
+    }
+
+    QObject *const drift = component.create();
+    if (!drift) {
+        error = component.errorString();
+        return nullptr;
+    }
+
+    drift->setProperty("vehicle", QVariant::fromValue(vehicle));
+    return drift;
+}
+
+#define MAKE_ORIGIN_DRIFT(name)                                                     \
+    QQmlEngine name##Engine;                                                        \
+    name##Engine.addImportPath(QStringLiteral("qrc:/qml"));                         \
+    QQmlComponent name##Component(&name##Engine);                                   \
+    QString name##Error;                                                            \
+    const QScopedPointer<QObject> name(                                             \
+        createOriginDrift(name##Component, vehicle(), name##Error));                \
+    QVERIFY2(name, qPrintable(name##Error))
+
+/// Drift is the reported position moving while nothing is flying the aircraft. Measured that way
+/// rather than as distance from the origin, which is as large for a vehicle parked somewhere else as
+/// for one whose frame has slid.
+void LocalGridViewTest::_driftIsTheReportedPositionMovingWhileParked_test()
+{
+    QVERIFY(vehicle());
+    MAKE_ORIGIN_DRIFT(drift);
+
+    // MockLink streams its own sweeping LOCAL_POSITION_NED at 10 Hz, which is movement this would
+    // dutifully report as drift. The positions under test are the injected ones.
+    QVERIFY(mockLink());
+    mockLink()->setCommLost(true);
+
+    // Positions travel as 32 bit floats, so the distances they work out to are near rather than
+    // exact
+    const auto driftIsAbout = [&drift](double metres) {
+        return qAbs(drift->property("driftMetres").toReal() - metres) < 0.001;
+    };
+
+    sendLocalPosition(vehicle(), 0.0F, 0.0F, -1.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(drift->property("observing").toBool(), TestTimeout::mediumMs());
+    QVERIFY(driftIsAbout(0.0));
+    QVERIFY2(!drift->property("drifting").toBool(), "a position that has not moved is not drift");
+    QCOMPARE(drift->property("warning").toString(), QString());
+
+    // Under the threshold: the ordinary noise of a flow sensor watching a static scene
+    sendLocalPosition(vehicle(), 0.3F, 0.4F, -1.0F);
+    QVERIFY(driftIsAbout(0.5));
+    QVERIFY2(!drift->property("drifting").toBool(), "sub-metre noise must not raise a warning");
+
+    // Past it: the frame really has slid
+    sendLocalPosition(vehicle(), 3.0F, 4.0F, -1.0F);
+    QVERIFY(driftIsAbout(5.0));
+    QVERIFY(drift->property("drifting").toBool());
+
+    const QString warning = drift->property("warning").toString();
+    QVERIFY2(warning.contains(QStringLiteral("5.0")),
+             qPrintable(QStringLiteral("the measurement itself must be quoted, got: %1").arg(warning)));
+    QVERIFY2(warning.contains(QStringLiteral("has not been moved")),
+             qPrintable(QStringLiteral("being carried has to be offered as the other reading, got: %1").arg(warning)));
+
+    // And starting again from where it stands clears it, which is what to do after carrying it
+    QVERIFY(QMetaObject::invokeMethod(drift.get(), "reset", Qt::DirectConnection));
+    sendLocalPosition(vehicle(), 3.0F, 4.0F, -1.0F);
+    QVERIFY(driftIsAbout(0.0));
+    QVERIFY(!drift->property("drifting").toBool());
+
+    mockLink()->setCommLost(false);
+}
+
+/// A vehicle parked twenty metres from the origin is not drifting, it is parked. A warning built on
+/// the range figure would fire on every flight that does not start on the origin, and a warning that
+/// fires every flight is one the operator learns to ignore -- which is the failure this is for.
+void LocalGridViewTest::_parkedAwayFromTheOriginIsNotDrift_test()
+{
+    QVERIFY(vehicle());
+    MAKE_ORIGIN_DRIFT(drift);
+
+    QVERIFY(mockLink());
+    mockLink()->setCommLost(true);
+
+    for (int i = 0; i < 5; i++) {
+        sendLocalPosition(vehicle(), 20.0F, -15.0F, -1.0F);
+    }
+
+    QTRY_VERIFY_WITH_TIMEOUT(drift->property("observing").toBool(), TestTimeout::mediumMs());
+    QVERIFY(qAbs(drift->property("driftMetres").toReal()) < 0.001);
+    QVERIFY2(!drift->property("drifting").toBool(),
+             "standing 25 m from the origin without moving is not drift");
+    QCOMPARE(drift->property("warning").toString(), QString());
+
+    mockLink()->setCommLost(false);
+}
+
+/// Armed, the aircraft is moving on purpose and every metre of it would be counted as drift.
+void LocalGridViewTest::_armedVehicleIsNotWatchedForDrift_test()
+{
+    QVERIFY(vehicle());
+    MAKE_ORIGIN_DRIFT(drift);
+
+    sendLocalPosition(vehicle(), 0.0F, 0.0F, -1.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(drift->property("observing").toBool(), TestTimeout::mediumMs());
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+
+    QVERIFY2(!drift->property("observing").toBool(), "nothing is measured while the aircraft is flying");
+    QVERIFY(!drift->property("drifting").toBool());
+    QCOMPARE(drift->property("warning").toString(), QString());
+
+    vehicle()->setArmedShowError(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
+
+    // And the next stretch on the ground is measured from where that stretch began, not from before
+    // the flight
+    QTRY_VERIFY_WITH_TIMEOUT(drift->property("observing").toBool(), TestTimeout::mediumMs());
+    QVERIFY2(!drift->property("drifting").toBool(),
+             "a landing somewhere else must not be reported as drift accumulated on the ground");
+}
+
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)
