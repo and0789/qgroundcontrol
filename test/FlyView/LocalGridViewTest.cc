@@ -503,6 +503,12 @@ void LocalGridViewTest::_positionGoingQuiet_isReportedAsStale_test()
     // Short enough to keep the test quick, long enough that it is silence being measured
     gridView->setProperty("stalePositionTimeoutMs", 250);
 
+    // MockLink streams LOCAL_POSITION_NED at 10 Hz, and every one of those restarts the countdown
+    // this test exists to watch fire. Silence the link: going quiet is the condition under test, and
+    // leaving it to a gap opening up in the mock's own stream is what made this race.
+    QVERIFY(mockLink());
+    mockLink()->setCommLost(true);
+
     sendLocalPosition(vehicle(), 12.0F, 8.0F, -2.0F);
     QVERIFY(gridView->property("positionValid").toBool());
     QVERIFY2(!gridView->property("positionStale").toBool(),
@@ -521,6 +527,8 @@ void LocalGridViewTest::_positionGoingQuiet_isReportedAsStale_test()
     sendLocalPosition(vehicle(), 12.5F, 8.0F, -2.0F);
     QVERIFY2(!gridView->property("positionStale").toBool(),
              "a message arriving must clear the warning immediately");
+
+    mockLink()->setCommLost(false);
 }
 
 /// A vehicle holding station reports the same position over and over.
@@ -534,6 +542,18 @@ void LocalGridViewTest::_repeatedIdenticalPositions_keepTheEstimateFresh_test()
     MAKE_GRID_VIEW(gridView);
 
     gridView->setProperty("stalePositionTimeoutMs", 300);
+
+    // Silenced for the same reason as the staleness test above, and here it is what gives the test
+    // its meaning: with the mock's own stream running, the estimate would stay fresh whether or not
+    // the resends below did anything.
+    //
+    // Silence stops the replies to whatever the vehicle already has in flight, and holding it for
+    // the second below outlasts the origin request's retries. That is a consequence of the silence
+    // this test creates, not of the behaviour under test.
+    ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Giving up sending command.*GPS_GLOBAL_ORIGIN")));
+    QVERIFY(mockLink());
+    mockLink()->setCommLost(true);
 
     sendLocalPosition(vehicle(), 5.0F, -3.0F, -1.0F);
     QVERIFY(!gridView->property("positionStale").toBool());
@@ -552,6 +572,8 @@ void LocalGridViewTest::_repeatedIdenticalPositions_keepTheEstimateFresh_test()
     }
 
     QVERIFY(!gridView->property("positionStale").toBool());
+
+    mockLink()->setCommLost(false);
 }
 
 /// A plan transfer in flight is the one moment nothing may be placed.
