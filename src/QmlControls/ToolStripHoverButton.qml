@@ -7,7 +7,11 @@ import QGroundControl.Controls
 Button {
     id:             control
     objectName:     toolStripAction ? toolStripAction.objectName : ""
-    width:          contentLayoutItem.contentWidth + (contentMargins * 2)
+    // The label's unwrapped width, not its laid-out one. The laid-out width is bound to this button
+    // so the text can wrap inside it, and reading it back here would close that loop.
+    // contentLayoutItem was read for this before, which is an Item and carries no contentWidth at
+    // all -- so this was NaN, and every caller has been setting an explicit width over it.
+    width:          innerText.implicitWidth + (contentMargins * 2)
     height:         width
     hoverEnabled:   !ScreenTools.isMobile
     enabled:        toolStripAction ? toolStripAction.enabled : true
@@ -25,8 +29,22 @@ Button {
     property alias  contentWidth:       innerText.contentWidth
 
     property bool forceImageScale11: false
-    property real imageScale:        forceImageScale11 && (text == "") ? 0.8 : 0.6
-    property real contentMargins:    innerText.height * 0.1
+    // The icon gives up room when the label needs a second line, so both still fit inside the
+    // square. A one-line button keeps the scale it has always had, so the strip does not change
+    // shape everywhere to accommodate the few names that are long.
+    property real imageScale:        forceImageScale11 && (text == "") ? 0.8
+                                                                       : (innerText.lineCount > 1 ? 0.42 : 0.6)
+    // Measured off the font rather than off the laid-out label. Taken from the label itself this
+    // closes a loop the moment the label is allowed to wrap: the margins set how wide the label may
+    // be, the width decides whether it wraps, and wrapping changes its height -- which was the
+    // margins. One line's worth of the same font answers the same question and depends on nothing.
+    property real contentMargins:    singleLineMetrics.height * 0.1
+
+    TextMetrics {
+        id:     singleLineMetrics
+        font:   innerText.font
+        text:   "X"
+    }
 
     property color _currentContentColor:  (checked || pressed) ? qgcPal.buttonHighlightText : qgcPal.text
     property color _currentContentColorSecondary:  (checked || pressed) ? qgcPal.text : qgcPal.buttonHighlight
@@ -115,6 +133,16 @@ Button {
                 anchors.horizontalCenter:   parent.horizontalCenter
                 font.bold:                  !innerImage.visible && !innerImageColorful.visible
                 opacity:                    !innerImage.visible ? 0.8 : 1.0
+                // The strip is a fixed seven characters wide and clips what overflows it, so a
+                // longer name used to run off both edges at once: "Hide Non-GPS" reached the strip
+                // reading "ide Non-GP", which names neither the state it is in nor the one it
+                // switches to. Wrapped onto a second line instead, and elided only if even that
+                // cannot hold it -- a button whose label is a guess is a button nobody presses.
+                width:                      contentLayoutItem.width
+                horizontalAlignment:        Text.AlignHCenter
+                wrapMode:                   Text.WordWrap
+                maximumLineCount:           2
+                elide:                      Text.ElideRight
             }
         }
     }
