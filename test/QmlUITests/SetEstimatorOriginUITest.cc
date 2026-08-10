@@ -112,13 +112,22 @@ void SetEstimatorOriginUITest::_originCanBeSetFromTheGridWithoutAMap_test()
             QTRY_VERIFY_WITH_TIMEOUT(vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
             QVERIFY(qAbs(vehicle->estimatorOrigin().latitude() - kOriginLatitude) < 0.0000001);
 
-            // Still reachable with an origin already set. An origin in the wrong region is not a
-            // cosmetic mistake -- it fails the pre-arm compass check -- so correcting one must not
-            // require reconnecting the vehicle.
-            QQuickItem *const originButton =
-                findVisibleItem(_rootItem, QStringLiteral("localGrid_setOriginButton"), 2000);
-            QVERIFY2(originButton, "the origin can no longer be changed once one is set");
-            QVERIFY2(originButton->property("text").toString().contains(QStringLiteral("Change")),
-                     "the button must say it changes the existing origin rather than setting a first one");
+            // The readout's button has done its job and gone. It is highlighted and full width
+            // because an origin is the one thing that blocks everything else, and once there is one
+            // it would be a rarely-pressed button standing in the middle of the live numbers.
+            QVERIFY(verifyVisibility(QStringLiteral("localGrid_setOriginButton"), false,
+                                     QStringLiteral("once the vehicle has an origin")));
+
+            // Still reachable, one click in, from the marker for the thing it moves. An origin in the
+            // wrong region is not a cosmetic mistake -- it fails the pre-arm compass check -- so
+            // correcting one must not require reconnecting the vehicle.
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 5000);
+            QVERIFY(gridView);
+            QVERIFY(QMetaObject::invokeMethod(gridView, "centreOnOrigin"));
+
+            QVERIFY(clickButton(QStringLiteral("localGrid_originMarkerLabel")));
+            QVERIFY2(waitForDialog(QStringLiteral("Correct Position")), "the correction dialog never opened");
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("correctPosition_changeOriginButton"), 2000),
+                     "the origin can no longer be changed once one is set");
         });
 }

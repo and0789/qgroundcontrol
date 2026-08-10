@@ -402,5 +402,35 @@ QGCPopupDialog {
             font.pointSize:         ScreenTools.smallFontPointSize
             text:                   qsTr("This does not move the origin, and it does not touch height. Only the horizontal position the estimator is holding is reset — the rangefinder or barometer keeps the vertical.")
         }
+
+        // ---------------- The third remedy, when the frame itself is wrong ----------------
+
+        // Kept here rather than in the readout beside the live numbers. An origin in the wrong region
+        // is not a cosmetic mistake -- the autopilot checks the compass against the magnetic model at
+        // that position and refuses to arm with "Check mag field" -- so changing one has to stay
+        // reachable without reconnecting the vehicle. But it is done once a flight at most, and it
+        // moves the frame every position and waypoint on this grid is measured in, so it belongs one
+        // click in rather than under the operator's thumb.
+        QGCButton {
+            objectName:         "correctPosition_changeOriginButton"
+            Layout.fillWidth:   true
+            Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 2
+            visible:            _root.gridView ? true : false
+            text:               qsTr("Change Estimator Origin…")
+            onClicked: {
+                // Closed first: both are modal, and a dialog opened over this one leaves the operator
+                // to dismiss two things to get back to the grid
+                _root.close()
+                _root.gridView.showSetOriginDialog()
+            }
+        }
+
+        QGCLabel {
+            Layout.preferredWidth:  _fieldWidth
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorOrange
+            text:                   qsTr("A last resort. Moving the origin moves the frame this whole grid is drawn in, so every waypoint already placed means a different point on the ground afterwards.")
+        }
     }
 }

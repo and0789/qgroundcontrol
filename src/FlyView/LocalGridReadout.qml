@@ -222,20 +222,18 @@ Rectangle {
                                             .arg(_root._limitText)
         }
 
-        // Available whether or not an origin exists. An origin set to the wrong place is not a
-        // cosmetic mistake -- the autopilot checks the compass against the magnetic model at that
-        // position and refuses to arm when they disagree -- so correcting one has to be possible
-        // without reconnecting. Highlighted only while there is none, since that is the state that
-        // blocks everything else.
+        // Only while there is no origin, which is the one state where nothing else on this view means
+        // anything -- so it earns the width and the highlight. Once an origin exists, changing it is
+        // a rare and consequential thing that moves the frame every position and waypoint is measured
+        // in, and it moves to the correction dialog on the origin marker rather than standing in the
+        // middle of a panel of live numbers.
         QGCButton {
             objectName:         "localGrid_setOriginButton"
             Layout.fillWidth:   true
             Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
-            visible:            _root.gridView !== null
-            primary:            _root.gridView ? !_root.gridView.originKnown : false
-            text:               (_root.gridView && _root.gridView.originKnown)
-                                    ? qsTr("Change Estimator Origin…")
-                                    : qsTr("Set Estimator Origin…")
+            visible:            _root.gridView ? !_root.gridView.originKnown : false
+            primary:            true
+            text:               qsTr("Set Estimator Origin…")
             onClicked:          _root.setOriginRequested()
         }
 
