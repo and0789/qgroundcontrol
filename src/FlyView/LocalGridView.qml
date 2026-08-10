@@ -725,8 +725,8 @@ Item {
         color:        qgcPal.window
     }
 
-    /// The grid, its labels and the origin. Repainted only when the view moves, so telemetry
-    /// arriving at 10 Hz does not redraw a screenful of lines and text with it.
+    /// The grid and its labels. Repainted only when the view moves, so telemetry arriving at 10 Hz
+    /// does not redraw a screenful of lines and text with it.
     Canvas {
         id:             gridCanvas
         anchors.fill:   parent
@@ -784,8 +784,6 @@ Item {
                     ctx.fillText(_root._label(north), _root._margins, y - (_root._margins / 2))
                 }
             }
-
-            _root._drawOrigin(ctx)
         }
     }
 
@@ -837,27 +835,6 @@ Item {
         ctx.moveTo(x1, y1)
         ctx.lineTo(x2, y2)
         ctx.stroke()
-    }
-
-    function _drawOrigin(ctx) {
-        const x = transform.pixelXForEast(0)
-        const y = transform.pixelYForNorth(0)
-        const radius = ScreenTools.defaultFontPixelHeight / 2
-
-        ctx.beginPath()
-        ctx.strokeStyle = qgcPal.colorGreen
-        ctx.lineWidth = 2
-        ctx.arc(x, y, radius, 0, 2 * Math.PI)
-        ctx.stroke()
-
-        ctx.beginPath()
-        ctx.fillStyle = qgcPal.colorGreen
-        ctx.arc(x, y, radius / 3, 0, 2 * Math.PI)
-        ctx.fill()
-
-        ctx.fillStyle = qgcPal.colorGreen
-        ctx.textAlign = "left"
-        ctx.fillText(qsTr("ORIGIN"), x + (radius * 1.5), y - radius)
     }
 
     function _drawTrail(ctx) {
@@ -1026,6 +1003,22 @@ Item {
         }
     }
 
+    /// The origin, drawn as an item rather than into the grid canvas so it can be clicked. Kept below
+    /// the waypoints: a plan's takeoff is pinned here and has to stay pickable, and the part of this
+    /// marker that takes a click is the label beside the ring rather than the ring underneath it.
+    LocalGridOriginMarker {
+        id:             originMarker
+        objectName:     "localGrid_originMarker"
+        x:              _root.gridTransform.pixelXForEast(0) - centreX
+        y:              _root.gridTransform.pixelYForNorth(0) - centreY
+        z:              0
+        originKnown:    _root.originKnown
+
+        // The one point on the grid the operator can put the aircraft on by hand and be sure of, so
+        // it is offered as the position rather than making them click the exact spot it is drawn at
+        onCorrectPositionRequested: _root.showPositionCorrectionDialog(0, 0, qsTr("the origin"))
+    }
+
     /// The waypoints themselves, above the legs drawn on the canvas and above the vehicle's own
     /// canvas so a marker can always be picked up. Positions are bindings on the transform, so they
     /// follow a pan or a zoom without the model being rebuilt.
@@ -1099,6 +1092,8 @@ Item {
         gridView:               _root
         z:                      1
         onSetOriginRequested:   _root.showSetOriginDialog()
+
+        onCorrectPositionRequested: (north, east) => _root.showPositionCorrectionDialog(north, east, "")
     }
 
     /// Built on demand rather than kept alive: it is opened rarely, and once per flight at most.
@@ -1117,6 +1112,44 @@ Item {
         id: setOriginDialogComponent
 
         SetEstimatorOriginDialog {
+        }
+    }
+
+    /// The global coordinate at a point on the grid, or an invalid one when there is no origin to
+    /// measure it from
+    function coordinateAtOffsets(north, east) {
+        return projection.coordinateAt(originCoordinate, north, east)
+    }
+
+    /// Opens the dialog for telling the vehicle it is standing at a point on the grid.
+    ///     @param placeName what to call that point, empty when it is only a pair of offsets
+    ///
+    /// Opened rather than refused while the vehicle is armed. The lock lives in the dialog, next to
+    /// the sentence explaining it: an entry point that goes dead in flight teaches the operator that
+    /// the feature is broken, where a dialog that opens and says why teaches them when to use it.
+    function showPositionCorrectionDialog(north, east, placeName) {
+        if (!originKnown) {
+            return
+        }
+
+        positionCorrectionDialogFactory.open({
+            vehicle:    _root.vehicle,
+            north:      north,
+            east:       east,
+            coordinate: coordinateAtOffsets(north, east),
+            placeName:  placeName
+        })
+    }
+
+    QGCPopupDialogFactory {
+        id:                 positionCorrectionDialogFactory
+        dialogComponent:    positionCorrectionDialogComponent
+    }
+
+    Component {
+        id: positionCorrectionDialogComponent
+
+        LocalGridPositionCorrection {
         }
     }
 

@@ -57,6 +57,8 @@ private slots:
     void _listIsAsTallAsItsRowsUntilItRunsOutOfRoom_test();
     void _typeIsChangedFromTheRowHeader_test();
     void _selectedRowIsBroughtIntoView_test();
+    void _gridOffsetsBecomeTheCoordinateACorrectionSends_test();
+    void _positionCorrectionIsOfferedOnlyAgainstAnOrigin_test();
     void _driftIsTheReportedPositionMovingWhileParked_test();
     void _parkedAwayFromTheOriginIsNotDrift_test();
     void _armedVehicleIsNotWatchedForDrift_test();

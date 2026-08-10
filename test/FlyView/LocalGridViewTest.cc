@@ -1858,6 +1858,71 @@ static QObject *createOriginDrift(QQmlComponent &component, Vehicle *vehicle, QS
     return drift;
 }
 
+/// A correction is sent as a coordinate, and the grid is the only thing that knows which coordinate
+/// the operator pointed at. Swapping north for east here, or losing a sign, puts the aircraft's
+/// believed position on the wrong side of the field -- and the vehicle takes it, because what arrives
+/// is a perfectly ordinary coordinate. Nothing downstream can catch this, which is why it is asserted
+/// on the same geodesic terms the plan itself is.
+void LocalGridViewTest::_gridOffsetsBecomeTheCoordinateACorrectionSends_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QVERIFY(gridView->property("originKnown").toBool());
+
+    // Standing on the origin: the correction the operator reaches for after carrying a drifted
+    // aircraft back to where it took off from, and the one the origin marker offers in one click
+    QVariant atOrigin;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "coordinateAtOffsets", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, atOrigin),
+                                      Q_ARG(QVariant, 0.0), Q_ARG(QVariant, 0.0)));
+    const QGeoCoordinate originPoint = atOrigin.value<QGeoCoordinate>();
+    QVERIFY(originPoint.isValid());
+    QVERIFY2(origin.distanceTo(originPoint) < 0.05, "the origin has to correct to the origin itself");
+
+    // And an arbitrary point on the grid, checked as a distance and a bearing rather than as a
+    // latitude, so a transposed pair cannot pass by landing somewhere plausible
+    QVariant atPoint;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "coordinateAtOffsets", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, atPoint),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
+    const QGeoCoordinate point = atPoint.value<QGeoCoordinate>();
+    QVERIFY(point.isValid());
+    QVERIFY2(qAbs(origin.distanceTo(point) - std::hypot(20.0, -10.0)) < 0.05,
+             "the point must be the stated distance from the origin");
+    // 20 north and 10 west is a bearing of about 333 degrees
+    const double bearing = origin.azimuthTo(point);
+    QVERIFY2(qAbs(bearing - 333.435) < 0.5, qPrintable(QStringLiteral("bearing came out %1").arg(bearing)));
+}
+
+/// Without an origin there is no frame to correct a position inside of, so the offer is withdrawn
+/// rather than left to produce a coordinate invented from nothing.
+void LocalGridViewTest::_positionCorrectionIsOfferedOnlyAgainstAnOrigin_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY2(!vehicle()->estimatorOrigin().isValid(), "the mock vehicle starts without an origin");
+
+    MAKE_GRID_VIEW(gridView);
+    QVERIFY(!gridView->property("originKnown").toBool());
+
+    QObject *const marker = gridView->findChild<QObject *>(QStringLiteral("localGrid_originMarker"));
+    QVERIFY2(marker, "the origin has to be an item that can be pointed at, not a painting of one");
+    QVERIFY2(!marker->property("originKnown").toBool(),
+             "a marker that invites a click with no origin behind it invites a coordinate out of nowhere");
+
+    // Nothing to send, and nothing sent: the guard is in the view rather than only in the dialog, so
+    // there is no path that opens a dialog holding an invalid coordinate
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "showPositionCorrectionDialog", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 0.0), Q_ARG(QVariant, 0.0), Q_ARG(QVariant, QString())));
+
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("originKnown").toBool(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(marker->property("originKnown").toBool(), TestTimeout::mediumMs());
+}
+
 #define MAKE_ORIGIN_DRIFT(name)                                                     \
     QQmlEngine name##Engine;                                                        \
     name##Engine.addImportPath(QStringLiteral("qrc:/qml"));                         \

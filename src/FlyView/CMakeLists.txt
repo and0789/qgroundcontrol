@@ -55,6 +55,8 @@ qt_add_qml_module(FlyViewModule
         LocalGridMissionItemRow.qml
         LocalGridMissionList.qml
         LocalGridOriginDrift.qml
+        LocalGridOriginMarker.qml
+        LocalGridPositionCorrection.qml
         LocalGridProjection.qml
         LocalGridReadout.qml
         LocalGridScaleBar.qml

@@ -34,6 +34,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/SetEstimatorOriginUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewLocalGridUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewLocalGridUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridPositionCorrectionUITest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridPositionCorrectionUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewProximityRadarUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewProximityRadarUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/NTRIPSettingsUITest.cc
@@ -63,6 +65,7 @@ add_qgc_test(PX4AirframeSetupUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(AppCloseWarningUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(FlyViewLocalGridUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(SetEstimatorOriginUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(LocalGridPositionCorrectionUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(FlyViewProximityRadarUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(NTRIPSettingsUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(OnboardLogUITest LABELS Integration NoSanitizer TIMEOUT 180)

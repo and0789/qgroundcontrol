@@ -18,6 +18,10 @@ Rectangle {
     /// decides how the dialog is shown rather than this panel reaching out to build one
     signal setOriginRequested()
 
+    /// Raised when the operator says the vehicle is standing on the point clicked, in metres north
+    /// and east of the origin
+    signal correctPositionRequested(real north, real east)
+
     visible:        false
     width:          layout.implicitWidth + (_margins * 2)
     height:         layout.implicitHeight + (_margins * 2)
@@ -164,6 +168,22 @@ Rectangle {
             font.pointSize:         ScreenTools.smallFontPointSize
             color:                  qgcPal.colorOrange
             text:                   _root._cannotPlaceReason()
+        }
+
+        // Not a waypoint but a statement about where the aircraft already is, which is why it sits
+        // apart from the three above. The offsets shown at the top of this panel are exactly what
+        // makes it usable: the operator marks a spot, stands the aircraft on it, clicks that spot on
+        // the grid and reads back the same two numbers before committing to them.
+        QGCButton {
+            objectName:         "localGrid_correctPositionButton"
+            Layout.fillWidth:   true
+            Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
+            visible:            _root.gridView ? _root.gridView.originKnown : false
+            text:               qsTr("Vehicle is here…")
+            onClicked: {
+                _root.visible = false
+                _root.correctPositionRequested(_root._north, _root._east)
+            }
         }
 
         // The way out of that message. Without it the operator has to turn the grid off, find the
