@@ -1281,37 +1281,7 @@ void LocalGridViewTest::_everyItemAboveTheCeilingIsFound_test()
              "a vehicle that does not depend on the rangefinder has no ceiling to breach");
 }
 
-/// The fields live in LocalGridWaypointEditor now, and the panel only frames them. Everything else
-/// in this file drives the grid's own API and never builds the panel at all, so a panel that loaded
-/// but lost its editor -- an empty bordered box on screen -- would pass the whole suite.
-void LocalGridViewTest::_waypointPanelCarriesTheEditorFields_test()
-{
-    QQmlEngine engine;
-    engine.addImportPath(QStringLiteral("qrc:/qml"));
-    QQmlComponent component(&engine);
-    component.setData(R"(
-        import QtQuick
-        import QGroundControl.FlyView
-
-        LocalGridWaypointPanel { }
-    )", QUrl());
-    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
-
-    const QScopedPointer<QObject> panel(component.create());
-    QVERIFY2(panel, qPrintable(component.errorString()));
-
-    // Reached only through the editor, so finding it proves the two are composed rather than merely
-    // that both files parse
-    QVERIFY2(panel->findChild<QObject *>(QStringLiteral("localGrid_applyAltitudeToAllButton")),
-             "the panel must still carry the editor's fields");
-    QVERIFY2(panel->findChild<QObject *>(QStringLiteral("localGrid_deleteWaypointButton")),
-             "the panel keeps the controls that are its own");
-
-    QVERIFY(panel->property("implicitHeight").toReal() > 0);
-}
-
-/// Builds one list row on its own. Nothing shows these rows yet, so without this the file is only
-/// proved to parse.
+/// Builds one list row on its own.
 ///
 /// The editor is loaded on demand rather than built for every item and hidden. A row that built it
 /// anyway would look identical on screen and cost a set of live bindings -- on the transform, the
@@ -1569,8 +1539,8 @@ void LocalGridViewTest::_missionListOpensTheRowTheGridHasSelected_test()
     QTRY_COMPARE_WITH_TIMEOUT(openRowCount(), 1, TestTimeout::mediumMs());
 }
 
-/// The grid shows the plan as a list now, and the floating single-item panel is gone with it. Both
-/// halves matter: leaving the panel behind would put two editors for the same waypoint on screen.
+/// The grid shows the plan as a list, and exactly one of them: a second would be two editors for the
+/// same waypoint, each able to disagree with the other about which one is open.
 void LocalGridViewTest::_gridShowsThePlanAsAList_test()
 {
     QVERIFY(vehicle());
@@ -1580,8 +1550,6 @@ void LocalGridViewTest::_gridShowsThePlanAsAList_test()
     QVERIFY(gridItem);
 
     QCOMPARE(countItemsNamed(gridItem, QStringLiteral("localGrid_missionList")), 1);
-    QVERIFY2(countItemsNamed(gridItem, QStringLiteral("localGrid_deleteWaypointButton")) == 0,
-             "the floating waypoint panel must not still be on the grid beside the list");
 }
 
 /// Which waypoint the vehicle is flying to is not which waypoint the operator is editing, and the

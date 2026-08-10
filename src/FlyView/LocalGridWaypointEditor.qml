@@ -5,9 +5,9 @@ import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.FactControls
 
-/// What a selected waypoint is, in the terms it will be flown in.
+/// Where a waypoint is, in the terms it will be flown in.
 ///
-/// The same fields the Plan view offers, said in the frame the grid is already in. Adjusting a
+/// The same measurements the Plan view offers, said in the frame the grid is already in. Adjusting a
 /// mission is mostly nudging a leg by a few metres, and leaving the grid to do it means losing sight
 /// of the aircraft and the pattern it is flying.
 ///
@@ -16,8 +16,9 @@ import QGroundControl.FactControls
 /// before. A route flown without a map is briefed the second way -- "from there, ninety degrees for
 /// twenty metres" -- and each leg is what the vehicle actually flies.
 ///
-/// Carries no frame of its own -- no title, no border, no way to dismiss it. Those belong to
-/// whatever is showing the item, which is a floating panel today and a row in a list of items next.
+/// Measurements only. What the item *is* belongs to the row's header, beside its number, and so does
+/// deleting it -- along with the frame, which this carries none of: no title, no border, no way to
+/// dismiss it.
 ColumnLayout {
     id: _root
 
