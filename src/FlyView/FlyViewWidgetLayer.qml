@@ -179,6 +179,13 @@ Item {
     VehicleWarnings {
         anchors.centerIn:   parent
         z:                  QGroundControl.zOrderTopMost
+        // Not over the local grid, where both halves of this banner are wrong. The pre-arm reason is
+        // already on the grid's own panel and stays there for as long as the vehicle is refusing,
+        // where this copy expires after thirty-five seconds; and a missing GPS lock is the condition
+        // that view exists to fly in, so announcing it there is a warning about working as intended.
+        // It lands dead centre either way, which on the grid is where the origin and the vehicle are
+        // drawn -- so it covers the one thing it is standing in front of.
+        visible:            !QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
     }
 
     MapScale {

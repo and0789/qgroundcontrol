@@ -300,6 +300,14 @@ Item {
     readonly property string positionDriftWarning: originDrift.warning
     readonly property real   positionDriftMetres:  originDrift.driftMetres
 
+    /// Why the autopilot will not arm, exposed so the readout can say it beside everything else that
+    /// stops this grid being flown
+    property LocalGridArmingBlocker armingBlocker: LocalGridArmingBlocker {
+        vehicle: _root.vehicle
+    }
+
+    readonly property string armingBlockedWarning: armingBlocker.warning
+
     /// The sequence number the vehicle is flying to, or -1 when nothing is.
     ///
     /// MissionController reads this off the vehicle's own mission manager, and answers -1 outside
