@@ -5,6 +5,8 @@
 #include <QtTest/QTest>
 
 #include "MockLink.h"
+#include "MultiVehicleManager.h"
+#include "Vehicle.h"
 
 #include <QtCore/QPointer>
 
@@ -133,4 +135,91 @@ void ToolbarIndicatorUITest::_testAPMCopterIndicators()
     _runIndicatorTest(
         [] { return MockLink::startAPMArduCopterMockLink(MockConfiguration::OptionEnableGimbal); },
         QStringLiteral("APMCopter"));
+}
+
+// ---------------------------------------------------------------------------
+// Reboot
+// ---------------------------------------------------------------------------
+
+/// Opens the vehicle status drawer and returns the reboot button, scrolled into
+/// the drawer's viewport. Records a test failure and returns nullptr if either
+/// the drawer or the button never appears.
+QQuickItem *ToolbarIndicatorUITest::_openDrawerAndFindReboot()
+{
+    QQuickItem *const indicator = findVisibleItem(_rootItem, QStringLiteral("toolbar_mainStatusIndicator"), 3000);
+    if (!indicator) {
+        QTest::qFail("the main status indicator never appeared in the toolbar", __FILE__, __LINE__);
+        return nullptr;
+    }
+
+    const QPointF centre = indicator->mapToScene(QPointF(indicator->width() / 2.0, indicator->height() / 2.0));
+    QTest::mouseClick(_window, Qt::LeftButton, Qt::NoModifier, centre.toPoint());
+
+    if (!findVisibleItem(_rootItem, QStringLiteral("indicatorDrawerLoader"), 3000)) {
+        QTest::qFail("the status drawer did not open", __FILE__, __LINE__);
+        return nullptr;
+    }
+
+    QQuickItem *const reboot = findVisibleItem(_rootItem, QStringLiteral("mainStatus_rebootButton"), 3000);
+    if (!reboot) {
+        QTest::qFail("the drawer carried no reboot button", __FILE__, __LINE__);
+        return nullptr;
+    }
+    return reboot;
+}
+
+/// Rebooting an autopilot that is armed drops it out of the sky, so the control is
+/// offered only on the ground. ArduPilot refuses the command anyway, but a button
+/// that can only fail teaches the operator nothing about why.
+void ToolbarIndicatorUITest::_rebootIsOfferedOnlyWithTheVehicleOnTheGround_test()
+{
+    runWithMockLink(
+        [] { return MockLink::startPX4MockLink(); },
+        [this](const QPointer<MockLink> & /*mockLink*/, Vehicle *vehicle) {
+            QQuickItem *const reboot = _openDrawerAndFindReboot();
+            QVERIFY(reboot);
+            QVERIFY2(reboot->isEnabled(), "the reboot button was out with the vehicle disarmed");
+
+            vehicle->setArmed(true, false);
+            QTRY_VERIFY_WITH_TIMEOUT(vehicle->armed(), TestTimeout::longMs());
+            QTRY_VERIFY_WITH_TIMEOUT(!reboot->isEnabled(), TestTimeout::shortMs());
+
+            vehicle->setArmed(false, false);
+            QTRY_VERIFY_WITH_TIMEOUT(!vehicle->armed(), TestTimeout::longMs());
+            QTRY_VERIFY_WITH_TIMEOUT(reboot->isEnabled(), TestTimeout::shortMs());
+
+            QTest::keyClick(_window, Qt::Key_Escape);
+        });
+}
+
+/// The whole point of the control: held down, the vehicle actually restarts. QGC
+/// closes the vehicle out when the autopilot accepts, which is what makes the
+/// active vehicle going away the honest thing to wait for.
+void ToolbarIndicatorUITest::_holdingRebootRestartsTheVehicle_test()
+{
+    runWithMockLink(
+        [] { return MockLink::startPX4MockLink(); },
+        [this](const QPointer<MockLink> & /*mockLink*/, Vehicle * /*vehicle*/) {
+            QQuickItem *const reboot = _openDrawerAndFindReboot();
+            QVERIFY(reboot);
+
+            // Held, not clicked. A tap on a QGCDelayButton does nothing but show its
+            // "Hold to Confirm" hint, which is the guard being tested here as much as
+            // the reboot is.
+            const QPointF centre = reboot->mapToScene(QPointF(reboot->width() / 2.0, reboot->height() / 2.0));
+            QVERIFY2(_window->geometry().contains(centre.toPoint()),
+                     "the reboot button sits outside the window, so it cannot be pressed");
+
+            QTest::mouseClick(_window, Qt::LeftButton, Qt::NoModifier, centre.toPoint());
+            QVERIFY2(MultiVehicleManager::instance()->activeVehicle(),
+                     "a tap rebooted the vehicle, so the hold-to-confirm guard is not doing anything");
+
+            QTest::mousePress(_window, Qt::LeftButton, Qt::NoModifier, centre.toPoint());
+            const bool rebooted = waitForCondition(
+                [] { return MultiVehicleManager::instance()->activeVehicle() == nullptr; },
+                TestTimeout::longMs(),
+                QStringLiteral("the vehicle closed out after the reboot was accepted"));
+            QTest::mouseRelease(_window, Qt::LeftButton, Qt::NoModifier, centre.toPoint());
+            QVERIFY2(rebooted, "holding the button never rebooted the vehicle");
+        });
 }
