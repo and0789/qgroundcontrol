@@ -17,11 +17,11 @@ Rectangle {
     /// Raised when the operator asks to set an origin, handled by the view that owns this readout
     signal setOriginRequested()
 
-    /// The same width as the mission list stacked under it, so the right edge of the view is one
-    /// column of two panels rather than two boxes of different widths. Sized to its content before,
-    /// this panel came out narrower than the list and the pair looked ragged; with the numbers in two
-    /// columns there is something to fill the width with.
-    implicitWidth:  ScreenTools.defaultFontPixelWidth * 28
+    /// Sized to what it holds. A fixed width was tried and was wrong twice over: a Layout does not
+    /// shrink its children to fit but lets them overflow, and a panel whose width is read off a
+    /// layout anchored to both its edges is a loop that QML breaks by answering zero. The mission
+    /// list below follows this width instead, which is what keeps the right edge one column.
+    implicitWidth:  layout.implicitWidth + (_margins * 2)
     implicitHeight: layout.implicitHeight + (_margins * 2)
     color:          qgcPal.window
     opacity:        0.8
@@ -110,7 +110,6 @@ Rectangle {
         id:                 layout
         anchors.margins:    _root._margins
         anchors.left:       parent.left
-        anchors.right:      parent.right
         anchors.top:        parent.top
         spacing:            0
 
@@ -167,6 +166,7 @@ Rectangle {
         }
 
         GridLayout {
+            objectName:     "localGrid_readoutNumbers"
             visible:        !_root.collapsed
             // Two pairs to a row rather than six rows of one. The first two rows each hold one idea
             // whole: where the vehicle is in the frame's own axes, then the same position said as the
@@ -339,6 +339,7 @@ Rectangle {
         // already carries a Clear that wipes the flight plan, and a Clear trail beside it would be two
         // buttons a glance apart with very different consequences.
         RowLayout {
+            objectName:         "localGrid_readoutViewButtons"
             visible:            !_root.collapsed
             Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
             spacing:            ScreenTools.defaultFontPixelWidth

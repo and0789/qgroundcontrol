@@ -1960,6 +1960,30 @@ void LocalGridViewTest::_readoutFoldsUntilThereIsTelemetryAndNeverFoldsAWarning_
     QVERIFY2(!summary->property("visible").toBool(),
              "open, the same pair is spelled out below and repeating it reads as a second measurement");
 
+    // Open, the panel has to be big enough for what is in it. A Layout does not shrink its children
+    // to fit -- it lets them overflow -- so a width chosen without checking the contents put the
+    // second column of numbers and the whole button row outside the panel, running off across the
+    // grid. Nothing else here would have caught it: every value was correct and every binding fired.
+    auto *const readoutItem = qobject_cast<QQuickItem *>(readout);
+    QVERIFY(readoutItem);
+    for (const QString &name : { QStringLiteral("localGrid_readoutNumbers"),
+                                 QStringLiteral("localGrid_readoutViewButtons") }) {
+        auto *const content = gridItem->findChild<QQuickItem *>(name);
+        QVERIFY2(content, qPrintable(QStringLiteral("%1 is missing").arg(name)));
+
+        // Waited on rather than read once. These blocks are hidden while the panel is folded, a
+        // Layout leaves anything hidden out of its implicit size, and Qt Quick lays out on a later
+        // pass -- so the frame in which the panel opens is one where the panel has not been told yet
+        // how wide its contents became.
+        (void) QTest::qWaitFor([content, readoutItem]() {
+            return content->width() <= readoutItem->width();
+        }, TestTimeout::shortMs());
+
+        QVERIFY2(content->width() <= readoutItem->width(),
+                 qPrintable(QStringLiteral("%1 is %2 wide inside a panel of %3 — it overflows")
+                                .arg(name).arg(content->width()).arg(readoutItem->width())));
+    }
+
     // Folded again by hand while the position is still live, which is the operator's call to make
     readout->setProperty("collapsed", true);
     QVERIFY(readout->property("collapsed").toBool());

@@ -1116,7 +1116,9 @@ Item {
         anchors.top:            readout.bottom
         anchors.rightMargin:    _root._margins
         anchors.topMargin:      _root._margins
-        width:                  ScreenTools.defaultFontPixelWidth * 28
+        // Matched to the readout above rather than fixed, so the right edge of the view stays one
+        // column of two panels whatever the readout's own contents make it
+        width:                  Math.max(ScreenTools.defaultFontPixelWidth * 28, readout.width)
         // Anchored at the top and sized to its contents, so a plan of two waypoints gets a panel two
         // rows tall. The limit is what is left down to the bottom edge: past that the rows scroll
         // inside the panel rather than the panel running off the view.
