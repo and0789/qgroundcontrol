@@ -245,6 +245,32 @@ RowLayout {
                 }
             }
 
+            // Directly under the arm control, because this is the answer to why that control did not
+            // work. The toolbar has been saying "Not Ready" and the sensor list below has been saying
+            // "Pre-Arm Check: Error", and neither of them has ever said which check -- so an operator
+            // opening this drawer to find out was told that something was wrong and left to guess
+            // what. Cause and effect one under the other, rather than the effect here and the cause
+            // three views away in the parameter editor's message log.
+            SettingsGroupLayout {
+                objectName:         "mainStatus_armingBlockedGroup"
+                heading:            qsTr("Will Not Arm")
+                visible:            _activeVehicle && _activeVehicle.armingBlocked
+
+                QGCLabel {
+                    objectName:         "mainStatus_armingBlockedReason"
+                    Layout.fillWidth:   true
+                    // Capped and wrapped. A layout takes its width from the longest line a child
+                    // would draw unwrapped, and these are whole sentences from the autopilot -- left
+                    // alone one would set the width of the whole drawer.
+                    Layout.maximumWidth: ScreenTools.defaultFontPixelWidth * 50
+                    wrapMode:           Text.WordWrap
+                    color:              qgcPal.colorOrange
+                    text:               (_activeVehicle && (_activeVehicle.prearmError !== ""))
+                                            ? _activeVehicle.prearmError
+                                            : qsTr("Asking the autopilot which check is failing…")
+                }
+            }
+
             SettingsGroupLayout {
                 //Layout.fillWidth:   true
                 heading:            qsTr("Vehicle Messages")

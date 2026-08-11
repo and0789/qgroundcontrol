@@ -175,6 +175,7 @@ public:
     Q_PROPERTY(bool                 sub                         READ sub                                                            NOTIFY vehicleTypeChanged)
     Q_PROPERTY(VehicleSupports*     supports                    READ supports                                                       CONSTANT)
     Q_PROPERTY(QString              prearmError                 READ prearmError                WRITE setPrearmError                NOTIFY prearmErrorChanged)
+    Q_PROPERTY(bool                 armingBlocked               READ armingBlocked                                                  NOTIFY armingBlockedChanged)
     Q_PROPERTY(int                  motorCount                  READ motorCount                                                     CONSTANT)
     Q_PROPERTY(bool                 coaxialMotors               READ coaxialMotors                                                  CONSTANT)
     Q_PROPERTY(bool                 xConfigMotors               READ xConfigMotors                                                  CONSTANT)
@@ -521,6 +522,17 @@ public:
     void setGuidedMode(bool guidedMode);
 
     QString prearmError() const { return _prearmError; }
+
+    /// True while the autopilot is refusing to arm.
+    ///
+    /// Two things say so and neither is enough alone. SYS_STATUS carries a pre-arm check bit on
+    /// every frame, so it holds the refusal for as long as it lasts but never gives a reason;
+    /// prearmError is the reason, but it is a message rather than a state and QGC lets it go again
+    /// after 35 seconds. Either one being true is a refusal.
+    ///
+    /// Always false for firmware that reports its checks as structured events, which never sets
+    /// prearmError and states all of this in healthAndArmingCheckReport instead.
+    bool armingBlocked() const { return _armingBlocked; }
     void setPrearmError(const QString& prearmError);
 
     QmlObjectListModel* cameraTriggerPoints ();
@@ -822,6 +834,7 @@ signals:
     void inFwdFlightChanged             ();
     void vtolInFwdFlightChanged         (bool vtolInFwdFlight);
     void prearmErrorChanged             (const QString& prearmError);
+    void armingBlockedChanged           (bool armingBlocked);
     void soloFirmwareChanged            (bool soloFirmware);
     void defaultCruiseSpeedChanged      (double cruiseSpeed);
     void defaultHoverSpeedChanged       (double hoverSpeed);
@@ -1042,6 +1055,16 @@ private:
     QString             _prearmError;
     QTimer              _prearmErrorTimer;
     static const int    _prearmErrorTimeoutMSecs = 35 * 1000;   ///< Take away prearm error after 35 seconds
+
+    bool                _armingBlocked = false;
+    /// Asks the autopilot for a reason while it is refusing to arm without having given one
+    QTimer              _prearmReasonRequestTimer;
+    /// Set once the vehicle answers that it cannot run its checks on request, so we stop asking
+    bool                _prearmReportUnsupported = false;
+    static const int    _prearmReasonRequestIntervalMSecs = 10 * 1000;
+
+    void _updateArmingBlocked();
+    static void _prearmCheckRequestResultHandler(void* resultHandlerData, int compId, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode);
 
     bool                _initialPlanRequestComplete = false;
 

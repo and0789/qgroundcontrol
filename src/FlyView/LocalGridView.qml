@@ -300,13 +300,21 @@ Item {
     readonly property string positionDriftWarning: originDrift.warning
     readonly property real   positionDriftMetres:  originDrift.driftMetres
 
-    /// Why the autopilot will not arm, exposed so the readout can say it beside everything else that
-    /// stops this grid being flown
-    property LocalGridArmingBlocker armingBlocker: LocalGridArmingBlocker {
-        vehicle: _root.vehicle
+    /// Why the autopilot will not arm, said beside everything else that stops this grid being flown.
+    ///
+    /// The refusal is worth stating even before its reason arrives, because "will not arm" and "you
+    /// have not pressed arm yet" look identical on a grid and only one of them is a problem the
+    /// operator can go and fix. The vehicle asks the autopilot for the reason on its own account, so
+    /// the wait is measured in seconds rather than the half minute ArduPilot takes to volunteer one.
+    readonly property string armingBlockedWarning: {
+        if (!vehicle || !vehicle.armingBlocked) {
+            return ""
+        }
+        if (vehicle.prearmError !== "") {
+            return qsTr("Will not arm — %1").arg(vehicle.prearmError)
+        }
+        return qsTr("Will not arm. Asking the autopilot which check is failing…")
     }
-
-    readonly property string armingBlockedWarning: armingBlocker.warning
 
     /// The sequence number the vehicle is flying to, or -1 when nothing is.
     ///

@@ -116,7 +116,7 @@ void lambdaFallbackResultHandler(void* resultHandlerData, int /*compId*/, const 
         break;
     default:
         if (data->showError) {
-            MavCommandQueue::showCommandAckError(ack);
+            MavCommandQueue::showCommandAckError(ack, data->vehicle);
         }
         break;
     }
@@ -458,29 +458,44 @@ void MavCommandQueue::_responseTimeoutCheck()
     }
 }
 
-void MavCommandQueue::showCommandAckError(const mavlink_command_ack_t& ack)
+void MavCommandQueue::showCommandAckError(const mavlink_command_ack_t& ack, const Vehicle* vehicle)
 {
     QString rawName      = MissionCommandTree::instance()->rawName(static_cast<MAV_CMD>(ack.command));
     QString friendlyName = MissionCommandTree::instance()->friendlyName(static_cast<MAV_CMD>(ack.command));
     QString commandStr   = friendlyName.isEmpty() ? rawName : QStringLiteral("%1 (%2)").arg(friendlyName, rawName);
 
+    QString message;
     switch (ack.result) {
     case MAV_RESULT_TEMPORARILY_REJECTED:
-        QGC::showAppMessage(tr("%1 command temporarily rejected").arg(commandStr));
+        message = tr("%1 command temporarily rejected").arg(commandStr);
         break;
     case MAV_RESULT_DENIED:
-        QGC::showAppMessage(tr("%1 command denied").arg(commandStr));
+        message = tr("%1 command denied").arg(commandStr);
         break;
     case MAV_RESULT_UNSUPPORTED:
-        QGC::showAppMessage(tr("%1 command not supported").arg(commandStr));
+        message = tr("%1 command not supported").arg(commandStr);
         break;
     case MAV_RESULT_FAILED:
-        QGC::showAppMessage(tr("%1 command failed").arg(commandStr));
+        message = tr("%1 command failed").arg(commandStr);
         break;
     default:
         // Do nothing
-        break;
+        return;
     }
+
+    // The reason goes with the refusal for the one command whose refusal has a reason to hand. An
+    // operator who presses arm and is stopped is reading this dialog, not hunting the panel behind
+    // it -- and "command failed" on its own is the whole of what they used to be told.
+    //
+    // Only for arming, and only from the autopilot's own arming report, so the sentence attached is
+    // always about the thing that was refused. prearmError is by construction the last reason this
+    // vehicle gave for refusing to arm, and QGC drops it once it goes stale.
+    if ((ack.command == MAV_CMD_COMPONENT_ARM_DISARM) && vehicle && !vehicle->prearmError().isEmpty()) {
+        message.append(QStringLiteral("\n\n"));
+        message.append(vehicle->prearmError());
+    }
+
+    QGC::showAppMessage(message);
 }
 
 void MavCommandQueue::handleCommandAck(const mavlink_message_t& message, const mavlink_command_ack_t& ack)
@@ -516,7 +531,7 @@ void MavCommandQueue::handleCommandAck(const mavlink_message_t& message, const m
         (*commandEntry.ackHandlerInfo.resultHandler)(commandEntry.ackHandlerInfo.resultHandlerData, message.compid, ack, MavCmdResultCommandResultOnly);
     } else {
         if (commandEntry.showError) {
-            showCommandAckError(ack);
+            showCommandAckError(ack, _vehicle);
         }
         emit commandResult(_vehicle->id(), message.compid, ack.command, ack.result, MavCmdResultCommandResultOnly);
     }

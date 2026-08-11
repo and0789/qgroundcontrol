@@ -27,6 +27,7 @@
 #include "AudioOutput.h"
 #include "AutoPilotPlugin.h"
 #include "ComponentInformationManager.h"
+#include "HealthAndArmingCheckReport.h"
 #include "MAVLinkEventManager.h"
 #include "FirmwarePlugin.h"
 #include "FirmwarePluginManager.h"
@@ -151,6 +152,19 @@ Vehicle::Vehicle(LinkInterface*             link,
     connect(&_prearmErrorTimer, &QTimer::timeout, this, &Vehicle::_prearmErrorTimeout);
     _prearmErrorTimer.setInterval(_prearmErrorTimeoutMSecs);
     _prearmErrorTimer.setSingleShot(true);
+
+    // Whether the vehicle is refusing to arm is derived from three things that each change on their
+    // own schedule, so it is recomputed rather than worked out at the point of use
+    connect(this, &Vehicle::armedChanged,               this, &Vehicle::_updateArmingBlocked);
+    connect(this, &Vehicle::readyToFlyChanged,          this, &Vehicle::_updateArmingBlocked);
+    connect(this, &Vehicle::readyToFlyAvailableChanged, this, &Vehicle::_updateArmingBlocked);
+    connect(this, &Vehicle::prearmErrorChanged,         this, &Vehicle::_updateArmingBlocked);
+
+    // Asks the autopilot why while it is refusing to arm and has not said. Left to itself ArduPilot
+    // volunteers a reason once every thirty seconds, and ARMING_OPTIONS bit 0 switches even that off,
+    // so an operator can otherwise be told nothing for half a minute or nothing at all.
+    _prearmReasonRequestTimer.setInterval(_prearmReasonRequestIntervalMSecs);
+    connect(&_prearmReasonRequestTimer, &QTimer::timeout, this, &Vehicle::requestPrearmCheckReport);
 
     // Command queue timer is managed by MavCommandQueue itself.
 
@@ -2415,15 +2429,74 @@ void Vehicle::requestPrearmCheckReport()
         return;
     }
 
+    // A stack that has already said it cannot do this is not going to change its mind
+    if (_prearmReportUnsupported) {
+        return;
+    }
+
     // ArduPilot answers this by running its pre-arm checks with reporting forced on, which is the
-    // only way to make it name the failing check on demand. Left to itself it volunteers one every
-    // thirty seconds, and ARMING_OPTIONS bit 0 switches even that off -- so an operator standing over
-    // a vehicle that will not arm can otherwise be told nothing for half a minute, or nothing at all.
+    // only way to make it name the failing check on demand -- the ARMING_OPTIONS switch that silences
+    // its periodic report does not reach this path.
     //
-    // Errors are not shown. A stack that does not implement the command would answer every ask with
-    // a dialog, and this is asked on the operator's behalf rather than at their request -- a question
-    // they did not put has no business reporting back that it went unanswered.
-    sendMavCommand(_defaultComponentId, MAV_CMD_RUN_PREARM_CHECKS, false /* showError */);
+    // Errors are not shown. This is asked on the operator's behalf rather than at their request, and
+    // a question they did not put has no business reporting back that it went unanswered; an answer
+    // of "unsupported" is handled below by not asking again.
+    MavCmdAckHandlerInfo_t handlerInfo = {};
+    handlerInfo.resultHandler       = _prearmCheckRequestResultHandler;
+    handlerInfo.resultHandlerData   = this;
+
+    sendMavCommandWithHandler(&handlerInfo, _defaultComponentId, MAV_CMD_RUN_PREARM_CHECKS);
+}
+
+void Vehicle::_prearmCheckRequestResultHandler(void* resultHandlerData, int /*compId*/, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode)
+{
+    Vehicle* const vehicle = static_cast<Vehicle*>(resultHandlerData);
+    if (!vehicle) {
+        return;
+    }
+
+    // Only an outright "I do not have this command" stops the asking. A refusal for any other reason
+    // -- busy, armed by the time it arrived, no answer at all this once -- says nothing about whether
+    // asking again will work, and the whole point of asking on a timer is that a lost question is
+    // cheap to repeat.
+    if ((failureCode == MavCmdResultCommandResultOnly) && (ack.result == MAV_RESULT_UNSUPPORTED)) {
+        qCDebug(VehicleLog) << "Vehicle cannot report its pre-arm checks on request; will not ask again";
+        vehicle->_prearmReportUnsupported = true;
+        vehicle->_prearmReasonRequestTimer.stop();
+    }
+}
+
+void Vehicle::_updateArmingBlocked()
+{
+    // Firmware that reports its checks as structured events never sets prearmError -- QGC drops those
+    // status texts because the same content arrives in healthAndArmingCheckReport, which says all of
+    // this in more detail. Claiming a refusal here as well would be a second, worse verdict on one
+    // state.
+    const bool reportsAsEvents = _eventManager && healthAndArmingCheckReport()->supported();
+
+    // The check bit is the steady signal and is preferred, but a reason having arrived is itself
+    // proof the autopilot refused -- and a vehicle that does not publish the bit at all would
+    // otherwise be treated as willing while it is plainly saying no.
+    const bool checksFailing = _readyToFlyAvailable && !_readyToFly;
+    const bool blocked = !_armed && !reportsAsEvents && (checksFailing || !_prearmError.isEmpty());
+
+    if (blocked != _armingBlocked) {
+        _armingBlocked = blocked;
+        emit armingBlockedChanged(_armingBlocked);
+    }
+
+    // Ask only while refusing with nothing to show for it. A reason arriving stops the asking, and
+    // that reason expiring starts it again, which is what keeps one on screen rather than letting it
+    // blink out every thirty-five seconds.
+    const bool shouldAsk = _armingBlocked && _prearmError.isEmpty() && !_prearmReportUnsupported;
+    if (shouldAsk) {
+        if (!_prearmReasonRequestTimer.isActive()) {
+            _prearmReasonRequestTimer.start();
+            requestPrearmCheckReport();
+        }
+    } else {
+        _prearmReasonRequestTimer.stop();
+    }
 }
 
 void Vehicle::startCalibration(QGCMAVLink::CalibrationType calType)
@@ -3784,6 +3857,10 @@ void Vehicle::_createMAVLinkEventManager()
     _eventManager = std::make_unique<MAVLinkEventManager>(this);
 
     (void) connect(_eventManager.get(), &MAVLinkEventManager::statusTextMessageFromEvent, this, &Vehicle::_onStatusTextFromEvent);
+
+    // Whether this firmware reports its checks as events decides whether armingBlocked may speak at
+    // all, and that is not known until the first report arrives
+    (void) connect(_eventManager->healthAndArmingCheckReport(), &HealthAndArmingCheckReport::updated, this, &Vehicle::_updateArmingBlocked);
 }
 
 void Vehicle::_handleEventMessage(const mavlink_message_t& msg)

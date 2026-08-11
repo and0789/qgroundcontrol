@@ -58,7 +58,12 @@ public:
     void stop();
 
     static QString failureCodeToString(MavCmdResultFailureCode_t failureCode);
-    static void showCommandAckError(const mavlink_command_ack_t& ack);
+    /// Report a refused command to the operator.
+    ///
+    /// \a vehicle is optional and used only to attach the autopilot's own reason where it has one:
+    /// a refused arm command is the case where "command failed" alone leaves the operator with
+    /// nowhere to go.
+    static void showCommandAckError(const mavlink_command_ack_t& ack, const Vehicle* vehicle = nullptr);
 
     // Test tuning knobs.
     static constexpr int kTestAckTimeoutMs = 500;
