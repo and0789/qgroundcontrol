@@ -41,6 +41,16 @@ Rectangle {
 
     property real _margins: ScreenTools.defaultFontPixelHeight / 3
 
+    /// How wide a warning is allowed to make this panel.
+    ///
+    /// Everything else here is a number in a column, and the columns are narrow. The warnings are
+    /// sentences, and a layout takes its width from the longest line a child would draw with no
+    /// wrapping at all -- so one warning arriving stretched the panel, and the mission list that
+    /// follows its width, across half the grid, and spread the six numbers out over the gap. Capped,
+    /// a sentence wraps into roughly the column the numbers had already asked for, and a warning
+    /// changes the panel's height rather than the shape of the view.
+    readonly property real _warningWidth: ScreenTools.defaultFontPixelWidth * 34
+
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     readonly property var  _transform: gridView ? gridView.gridTransform : null
@@ -60,6 +70,8 @@ Rectangle {
 
     readonly property bool   _drifting:      gridView ? gridView.positionDrifting : false
     readonly property string _driftWarning:  gridView ? gridView.positionDriftWarning : ""
+
+    readonly property string _armingWarning: gridView ? gridView.armingBlockedWarning : ""
 
     readonly property bool _nearCeiling:  gridView ? gridView.heightNearCeiling : false
     readonly property bool _aboveCeiling: gridView ? gridView.heightAboveCeiling : false
@@ -256,6 +268,7 @@ Rectangle {
             objectName:             "localGrid_staleWarning"
             Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
             Layout.fillWidth:       true
+            Layout.maximumWidth:    _root._warningWidth
             visible:                _root._stale
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
@@ -272,6 +285,7 @@ Rectangle {
         QGCLabel {
             Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
             Layout.fillWidth:       true
+            Layout.maximumWidth:    _root._warningWidth
             visible:                _root._estimatorDegraded && (_root._estimatorWarning !== "")
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
@@ -290,6 +304,7 @@ Rectangle {
             objectName:             "localGrid_driftWarning"
             Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
             Layout.fillWidth:       true
+            Layout.maximumWidth:    _root._warningWidth
             visible:                _root._drifting
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
@@ -304,6 +319,7 @@ Rectangle {
         QGCLabel {
             Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
             Layout.fillWidth:       true
+            Layout.maximumWidth:    _root._warningWidth
             visible:                _root._nearCeiling
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
@@ -316,6 +332,26 @@ Rectangle {
                                         : qsTr("%1 — nearing the rangefinder's %2 range.")
                                             .arg(_root._distanceText(_root._height))
                                             .arg(_root._limitText)
+        }
+
+        // Kept here rather than left to the banner the fly view already has for it. That banner
+        // stands in the middle of the view for thirty-five seconds and then takes the reason away
+        // with it, so an operator who was watching the aircraft rather than the screen is told
+        // nothing; this line stays for as long as the vehicle is refusing. It sits directly above the
+        // origin button because the commonest reason on this way of flying -- the estimator having no
+        // position to arm against -- is the one that button fixes.
+        QGCLabel {
+            objectName:             "localGrid_armingWarning"
+            Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+            Layout.fillWidth:       true
+            Layout.maximumWidth:    _root._warningWidth
+            visible:                _root._armingWarning !== ""
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            // Orange rather than red: the aircraft is on the ground and being kept there, which is
+            // the check working. Red on this panel means the picture cannot be trusted.
+            color:                  qgcPal.colorOrange
+            text:                   _root._armingWarning
         }
 
         // Only while there is no origin, which is the one state where nothing else on this view means
