@@ -17,7 +17,11 @@ Rectangle {
     /// Raised when the operator asks to set an origin, handled by the view that owns this readout
     signal setOriginRequested()
 
-    implicitWidth:  layout.implicitWidth + (_margins * 2)
+    /// The same width as the mission list stacked under it, so the right edge of the view is one
+    /// column of two panels rather than two boxes of different widths. Sized to its content before,
+    /// this panel came out narrower than the list and the pair looked ragged; with the numbers in two
+    /// columns there is something to fill the width with.
+    implicitWidth:  ScreenTools.defaultFontPixelWidth * 28
     implicitHeight: layout.implicitHeight + (_margins * 2)
     color:          qgcPal.window
     opacity:        0.8
@@ -74,7 +78,13 @@ Rectangle {
         if (!_transform || isNaN(metres)) {
             return qsTr("--")
         }
-        return _transform.toDisplay(metres).toFixed(1) + " " + _transform.displayUnits
+        // Rounded to the shown precision first, then nudged off negative zero: adding zero to -0
+        // gives +0, while toFixed alone would print "-0.0". Without it a vehicle a millimetre south
+        // of the origin reads as minus nothing, and on a panel whose whole job is telling north from
+        // south, a minus sign carrying no distance is a direction the operator has to talk
+        // themselves out of.
+        const rounded = Math.round(_transform.toDisplay(metres) * 10) / 10
+        return (rounded + 0).toFixed(1) + " " + _transform.displayUnits
     }
 
     /// Opens itself when telemetry starts arriving and folds away again when there is none, so the
@@ -100,6 +110,7 @@ Rectangle {
         id:                 layout
         anchors.margins:    _root._margins
         anchors.left:       parent.left
+        anchors.right:      parent.right
         anchors.top:        parent.top
         spacing:            0
 
@@ -157,7 +168,13 @@ Rectangle {
 
         GridLayout {
             visible:        !_root.collapsed
-            columns:        2
+            // Two pairs to a row rather than six rows of one. The first two rows each hold one idea
+            // whole: where the vehicle is in the frame's own axes, then the same position said as the
+            // range and bearing a return leg is flown on. The third pairs the two that are left over
+            // and means nothing by being together -- which is the price of the halved height, and
+            // cheap at six numbers.
+            Layout.fillWidth: true
+            columns:        4
             columnSpacing:  ScreenTools.defaultFontPixelWidth
             rowSpacing:     0
 
@@ -185,6 +202,7 @@ Rectangle {
                 text:                   _root._distanceText(_root._range)
             }
 
+            // Beside the range, because the two are read as one figure: how far, and which way.
             QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Bearing") }
             QGCLabel {
                 font.pointSize:         ScreenTools.smallFontPointSize
@@ -193,10 +211,9 @@ Rectangle {
                 text:                   isNaN(_root._bearing) ? qsTr("--") : Math.round(_root._bearing) + "°"
             }
 
-            // Next to the bearing, because the pair is what a turn is worked out from: where the
-            // nose points against where the operator wants to go. Kept as a number rather than a
-            // rose of its own -- the fly view's instrument panel already draws one, and reading a
-            // heading off a dial by eye is the estimate this whole grid exists to replace.
+            // Kept as a number rather than a rose of its own -- the fly view's instrument panel
+            // already draws one, and reading a heading off a dial by eye is the estimate this whole
+            // grid exists to replace.
             QGCLabel { objectName: "localGrid_headingLabel"; font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Heading") }
             QGCLabel {
                 objectName:             "localGrid_headingValue"
@@ -238,7 +255,7 @@ Rectangle {
         QGCLabel {
             objectName:             "localGrid_staleWarning"
             Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 22
+            Layout.fillWidth:       true
             visible:                _root._stale
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
@@ -254,7 +271,7 @@ Rectangle {
         // anything. Silent while the solution is healthy, so it is never background noise.
         QGCLabel {
             Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 22
+            Layout.fillWidth:       true
             visible:                _root._estimatorDegraded && (_root._estimatorWarning !== "")
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
@@ -272,7 +289,7 @@ Rectangle {
         QGCLabel {
             objectName:             "localGrid_driftWarning"
             Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 22
+            Layout.fillWidth:       true
             visible:                _root._drifting
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
@@ -286,7 +303,7 @@ Rectangle {
         // estimator has no height source at all.
         QGCLabel {
             Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 22
+            Layout.fillWidth:       true
             visible:                _root._nearCeiling
             wrapMode:               Text.WordWrap
             font.pointSize:         ScreenTools.smallFontPointSize
