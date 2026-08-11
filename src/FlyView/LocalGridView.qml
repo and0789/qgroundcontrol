@@ -1230,6 +1230,7 @@ Item {
     // that panel open at the same time as this one.
     LocalGridReadout {
         id:                     readout
+        objectName:             "localGrid_readout"
         anchors.right:          parent.right
         anchors.top:            parent.top
         // Hugs the right edge, but drops below whatever the fly view has stacked in that corner --

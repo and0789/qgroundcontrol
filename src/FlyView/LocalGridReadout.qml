@@ -22,6 +22,18 @@ Rectangle {
     color:          qgcPal.window
     opacity:        0.8
     radius:         ScreenTools.defaultFontPixelHeight / 4
+    // Outlined like the mission list beside it, and for the reason that panel found: folded away,
+    // an unbordered header is a line of text floating on the grid with nothing to say it is a panel
+    // or that clicking it brings the numbers back.
+    border.color:   qgcPal.groupBorder
+    border.width:   1
+
+    /// Folded to leave the grid clear, keeping the header and its summary so it can be found again.
+    ///
+    /// Starts folded, because a panel that opens before there is any telemetry stands over the grid
+    /// showing six dashes and a line saying it has nothing -- which is the largest this panel ever
+    /// gets and the least it ever says.
+    property bool collapsed: true
 
     property real _margins: ScreenTools.defaultFontPixelHeight / 3
 
@@ -65,6 +77,25 @@ Rectangle {
         return _transform.toDisplay(metres).toFixed(1) + " " + _transform.displayUnits
     }
 
+    /// Opens itself when telemetry starts arriving and folds away again when there is none, so the
+    /// panel stands in front of the grid only while it has something to say. A toggle in between is
+    /// the operator's and is left alone.
+    property bool _wasValid: false
+
+    on_ValidChanged: {
+        if (_valid !== _wasValid) {
+            collapsed = !_valid
+            _wasValid = _valid
+        }
+    }
+
+    /// What the header carries while folded: the pair a return leg is flown on. Without it, folding
+    /// costs a click on the very thing the operator most wants to see, and the panel would be opened
+    /// again every time it was closed.
+    readonly property string _summary: _valid && !isNaN(_range) && !isNaN(_bearing)
+                                        ? qsTr("%1 @ %2°").arg(_distanceText(_range)).arg(Math.round(_bearing))
+                                        : qsTr("--")
+
     ColumnLayout {
         id:                 layout
         anchors.margins:    _root._margins
@@ -72,13 +103,60 @@ Rectangle {
         anchors.top:        parent.top
         spacing:            0
 
-        QGCLabel {
-            font.pointSize: ScreenTools.smallFontPointSize
-            font.bold:      true
-            text:           qsTr("Local Position")
+        // The row is wrapped so the mouse area covering it has a sibling to anchor to. Anchored
+        // straight onto the RowLayout it would be an anchored child of a layout, which Qt calls
+        // undefined behaviour and warns about on every build of the grid.
+        Item {
+            id:                 headerBlock
+            Layout.fillWidth:   true
+            implicitHeight:     headerRow.implicitHeight
+
+            RowLayout {
+                id:                     headerRow
+                anchors.left:           parent.left
+                anchors.right:          parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing:                ScreenTools.defaultFontPixelWidth / 2
+
+                QGCColoredImage {
+                    Layout.preferredWidth:  ScreenTools.defaultFontPixelHeight * 0.75
+                    Layout.preferredHeight: Layout.preferredWidth
+                    Layout.alignment:       Qt.AlignVCenter
+                    source:                 "/InstrumentValueIcons/cheveron-right.svg"
+                    color:                  qgcPal.text
+                    rotation:               _root.collapsed ? 0 : 90
+                }
+
+                QGCLabel {
+                    Layout.alignment:   Qt.AlignVCenter
+                    font.pointSize:     ScreenTools.smallFontPointSize
+                    font.bold:          true
+                    text:               qsTr("Local Position")
+                }
+
+                // Only while folded. Open, the same pair is two rows below in full, and repeating it
+                // in the header reads as a second measurement rather than the same one.
+                QGCLabel {
+                    objectName:         "localGrid_readoutSummary"
+                    Layout.alignment:   Qt.AlignVCenter
+                    Layout.fillWidth:   true
+                    horizontalAlignment: Text.AlignRight
+                    visible:            _root.collapsed
+                    font.pointSize:     ScreenTools.smallFontPointSize
+                    color:              qgcPal.colorGrey
+                    text:               _root._summary
+                }
+            }
+
+            QGCMouseArea {
+                objectName: "localGrid_readoutHeader"
+                fillItem:   parent
+                onClicked:  _root.collapsed = !_root.collapsed
+            }
         }
 
         GridLayout {
+            visible:        !_root.collapsed
             columns:        2
             columnSpacing:  ScreenTools.defaultFontPixelWidth
             rowSpacing:     0
@@ -158,6 +236,7 @@ Rectangle {
         // measurement. Said in words with an age against it, because the figures themselves cannot
         // say how old they are -- and a frozen readout is indistinguishable from a steady hover.
         QGCLabel {
+            objectName:             "localGrid_staleWarning"
             Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
             Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 22
             visible:                _root._stale
@@ -237,7 +316,13 @@ Rectangle {
             onClicked:          _root.setOriginRequested()
         }
 
+        // Folded away with the numbers. These aim the camera and clear a drawn line -- nothing about
+        // them is urgent, and an operator who has folded the panel to see the grid is not looking for
+        // them. They stay here rather than joining the mission strip in the far corner: that panel
+        // already carries a Clear that wipes the flight plan, and a Clear trail beside it would be two
+        // buttons a glance apart with very different consequences.
         RowLayout {
+            visible:            !_root.collapsed
             Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
             spacing:            ScreenTools.defaultFontPixelWidth
 

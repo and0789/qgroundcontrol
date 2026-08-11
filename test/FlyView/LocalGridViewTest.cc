@@ -1894,6 +1894,89 @@ void LocalGridViewTest::_headingIsExposedAsANumberAndUnknownStaysUnknown_test()
              "the grid must report the vehicle's own heading, not one of its own");
 }
 
+/// The readout folds itself away while there is nothing to read, and opens when telemetry starts.
+///
+/// Folded is the right default: before the first position the panel is at its largest and says the
+/// least -- six dashes and a line explaining that it has nothing -- standing over the one picture the
+/// operator has. Once positions arrive, that panel is the instrument of the whole flight.
+///
+/// What must never fold is a warning. A panel that hides "the position you are looking at stopped
+/// being current" because the operator tidied it away is worse than a panel that was never tidy.
+void LocalGridViewTest::_readoutFoldsUntilThereIsTelemetryAndNeverFoldsAWarning_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+
+    // The link is cut further down to drive the estimate stale, and anything still in flight when it
+    // goes will run out of retries and say so. That is the consequence of cutting it, not a fault.
+    ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Giving up sending command")));
+
+    // Started without a vehicle, which is the only way to see the state the operator meets on a cold
+    // fly view. telemetryAvailable is a one-way latch -- FactGroup never puts it back -- so a vehicle
+    // that has ever reported a position keeps reporting one no matter what the link does.
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/qml"));
+    QQmlComponent component(&engine);
+    QString error;
+    const QScopedPointer<QObject> gridView(createGridView(component, nullptr, error));
+    QVERIFY2(gridView, qPrintable(error));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    QObject *const readout = gridItem->findChild<QObject *>(QStringLiteral("localGrid_readout"));
+    QVERIFY2(readout, "the readout has to be findable, or nothing below is testing it");
+
+    QVERIFY2(readout->property("collapsed").toBool(),
+             "a panel with nothing to say must not stand over the grid saying it");
+
+    // The summary is what makes folding worth doing -- folded and silent, the operator opens it again
+    // every time -- so it has to be there even before there is a number to put in it
+    QObject *const summary = gridItem->findChild<QObject *>(QStringLiteral("localGrid_readoutSummary"));
+    QVERIFY(summary);
+    QVERIFY(summary->property("visible").toBool());
+
+    // Short enough to keep the test quick, long enough that it is silence being measured -- the same
+    // bargain the stale-position test strikes
+    gridView->setProperty("stalePositionTimeoutMs", 250);
+
+    // MockLink streams LOCAL_POSITION_NED at 10 Hz, and every one of those restarts the countdown to
+    // a stale estimate. Silenced here so the only position on this grid is the one put there below.
+    mockLink()->setCommLost(true);
+
+    // A vehicle arrives and reports: the instrument opens itself rather than waiting to be asked. The
+    // position is injected into the fact group rather than flown in, which is the only way to have
+    // one with the link cut -- and it lands after the grid has the vehicle, because attaching one
+    // stops the countdown on the grounds that a new aircraft has not gone silent, it has simply not
+    // spoken yet.
+    gridView->setProperty("vehicle", QVariant::fromValue(vehicle()));
+    sendLocalPosition(vehicle(), 12.0F, -5.0F, -2.0F);
+
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("positionValid").toBool(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(!readout->property("collapsed").toBool(), TestTimeout::mediumMs());
+    QVERIFY2(!summary->property("visible").toBool(),
+             "open, the same pair is spelled out below and repeating it reads as a second measurement");
+
+    // Folded again by hand while the position is still live, which is the operator's call to make
+    readout->setProperty("collapsed", true);
+    QVERIFY(readout->property("collapsed").toBool());
+
+    // And the warning shows through the fold. This is the whole safety case for it: what is hidden is
+    // the numbers, never the reason they cannot be trusted.
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("positionStale").toBool(), TestTimeout::mediumMs());
+    QObject *const staleWarning = gridItem->findChild<QObject *>(QStringLiteral("localGrid_staleWarning"));
+    QVERIFY(staleWarning);
+    QVERIFY2(staleWarning->property("visible").toBool(),
+             "a folded panel must still say that the position it is holding stopped being current");
+    QVERIFY2(readout->property("collapsed").toBool(),
+             "a warning must not quietly unfold the panel either -- that is the operator's choice");
+
+    mockLink()->setCommLost(false);
+}
+
 /// A correction is sent as a coordinate, and the grid is the only thing that knows which coordinate
 /// the operator pointed at. Swapping north for east here, or losing a sign, puts the aircraft's
 /// believed position on the wrong side of the field -- and the vehicle takes it, because what arrives

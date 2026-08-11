@@ -58,6 +58,7 @@ private slots:
     void _typeIsChangedFromTheRowHeader_test();
     void _selectedRowIsBroughtIntoView_test();
     void _headingIsExposedAsANumberAndUnknownStaysUnknown_test();
+    void _readoutFoldsUntilThereIsTelemetryAndNeverFoldsAWarning_test();
     void _gridOffsetsBecomeTheCoordinateACorrectionSends_test();
     void _planIsMovedByOneOffsetKeepingItsShape_test();
     void _positionCorrectionIsOfferedOnlyAgainstAnOrigin_test();
