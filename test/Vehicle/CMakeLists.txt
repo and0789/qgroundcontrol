@@ -7,6 +7,8 @@ target_sources(${CMAKE_PROJECT_NAME}
     PRIVATE
         APMAirframeComponentControllerTest.cc
         APMAirframeComponentControllerTest.h
+        ArmingRefusalReasonTest.cc
+        ArmingRefusalReasonTest.h
         FTPManagerTest.cc
         FTPManagerTest.h
         FTPControllerTest.cc
@@ -57,6 +59,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_
 add_subdirectory(ComponentInformation)
 
 add_qgc_test(APMAirframeComponentControllerTest LABELS Integration Vehicle)
+add_qgc_test(ArmingRefusalReasonTest LABELS Integration Vehicle)
 add_qgc_test(FTPControllerTest LABELS Integration Vehicle RESOURCE_LOCK TempFiles)
 add_qgc_test(FTPManagerTest LABELS Integration Vehicle)
 add_qgc_test(FirmwareUpgradeControllerTest LABELS Unit Vehicle)

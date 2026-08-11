@@ -63,6 +63,13 @@ public:
     ///     @param severity MAV_SEVERITY value
     void sendStatusTextMessage(uint8_t severity, const QString &text);
 
+    /// Test API: report the autopilot's pre-arm check as present, enabled and failing — the state a
+    /// vehicle sits in when it will not arm.
+    ///
+    /// Off by default, and that default is a third state rather than the opposite of this one: the
+    /// stock mock does not publish the bit at all, which is not the same as publishing it healthy.
+    void setPrearmCheckFailing(bool failing) { _prearmCheckFailing = failing; }
+
     /// Test API: places the simulated vehicle into the given pose during calibration
     void setCalibrationPose(MockLinkPX4Calibration::Pose pose) const { _mockLinkPX4Calibration->setPose(pose); }
 
@@ -397,6 +404,7 @@ private:
     static constexpr int kTestParamRequestListBatch = 25;
     static constexpr int32_t _batteryMaxTimeRemaining = 15 * 60;
     int8_t _battery1PctRemaining = 100;
+    bool _prearmCheckFailing = false;
     int32_t _battery1TimeRemaining = _batteryMaxTimeRemaining;
     MAV_BATTERY_CHARGE_STATE _battery1ChargeState = MAV_BATTERY_CHARGE_STATE_OK;
     int8_t _battery2PctRemaining = 100;

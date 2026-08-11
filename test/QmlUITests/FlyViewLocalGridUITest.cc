@@ -136,16 +136,45 @@ void FlyViewLocalGridUITest::_theReasonTheVehicleWillNotArmIsOnThePanel_test()
             QVERIFY(verifyVisibility(QStringLiteral("localGrid_armingWarning"), false,
                                      QStringLiteral("before any refusal")));
 
-            // The real path a reason travels: a PreArm status text off the link, which Vehicle picks
-            // out of the message stream
+            // The real path a reason travels: a status text off the link, which Vehicle picks out of
+            // the message stream. "Arm: " rather than "PreArm: " because that is how ArduPilot names
+            // the failing check during an arming attempt, which is the moment the operator asked.
             mockLink->sendStatusTextMessage(MAV_SEVERITY_CRITICAL,
-                                            QStringLiteral("PreArm: Need Position Estimate"));
+                                            QStringLiteral("Arm: Need Position Estimate"));
 
             QQuickItem *const arming = findVisibleItem(_rootItem, QStringLiteral("localGrid_armingWarning"),
                                                        TestTimeout::longMs());
             QVERIFY2(arming, "the panel never said the vehicle would not arm");
-            QVERIFY2(arming->property("text").toString().contains(QStringLiteral("PreArm: Need Position Estimate")),
+            QVERIFY2(arming->property("text").toString().contains(QStringLiteral("Need Position Estimate")),
                      qPrintable(QStringLiteral("the panel said \"%1\" rather than the autopilot's reason")
                                     .arg(arming->property("text").toString())));
+        });
+}
+
+/// A vehicle can refuse to arm and never say why: ArduPilot volunteers a reason once every thirty
+/// seconds and ARMING_OPTIONS bit 0 stops even that. The panel asks rather than waits, so the line it
+/// shows is filled in on demand instead of whenever the firmware next feels like speaking.
+void FlyViewLocalGridUITest::_aSilentRefusalMakesTheGridAskWhy_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle * /*vehicle*/) {
+            QQuickItem *const readout = findVisibleItem(_rootItem, QStringLiteral("localGrid_readout"), 10000);
+            QVERIFY2(readout, "the readout never appeared on the grid");
+
+            mockLink->clearReceivedMavCommandCounts();
+
+            // The state the operator is stuck in: the vehicle's own pre-arm check bit says it will
+            // not arm, and no status text has arrived to say what is failing.
+            mockLink->setPrearmCheckFailing(true);
+
+            QQuickItem *const arming = findVisibleItem(_rootItem, QStringLiteral("localGrid_armingWarning"),
+                                                       TestTimeout::longMs());
+            QVERIFY2(arming, "the panel stayed silent about a vehicle that was refusing to arm");
+
+            QVERIFY_TRUE_WAIT(mockLink->receivedMavCommandCount(MAV_CMD_RUN_PREARM_CHECKS) >= 1,
+                              TestTimeout::longMs());
         });
 }

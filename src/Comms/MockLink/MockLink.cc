@@ -756,14 +756,23 @@ void MockLink::_sendHighLatency2()
 
 void MockLink::_sendSysStatus()
 {
+    uint32_t sensorsPresent = MAV_SYS_STATUS_SENSOR_GPS;
+    uint32_t sensorsEnabled = 0;
+    // Health stays clear for the pre-arm check: present and enabled says the autopilot runs the
+    // check, and the health bit being down is how it says the check is failing
+    if (_prearmCheckFailing) {
+        sensorsPresent |= MAV_SYS_STATUS_PREARM_CHECK;
+        sensorsEnabled |= MAV_SYS_STATUS_PREARM_CHECK;
+    }
+
     mavlink_message_t msg{};
     (void) mavlink_msg_sys_status_pack_chan(
         _vehicleSystemId,
         _vehicleComponentId,
         _outgoingMavlinkChannel,
         &msg,
-        MAV_SYS_STATUS_SENSOR_GPS,  // onboard_control_sensors_present
-        0,                          // onboard_control_sensors_enabled
+        sensorsPresent,             // onboard_control_sensors_present
+        sensorsEnabled,             // onboard_control_sensors_enabled
         0,                          // onboard_control_sensors_health
         250,                        // load
         4200 * 4,                   // voltage_battery

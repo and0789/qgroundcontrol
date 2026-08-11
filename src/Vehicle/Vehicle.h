@@ -361,6 +361,13 @@ public:
     /// Reboot vehicle
     Q_INVOKABLE void rebootVehicle();
 
+    /// Ask the autopilot to run its pre-arm checks now and say what is failing.
+    ///
+    /// The answer comes back as ordinary status text, which is the path a refusal reason already
+    /// takes to the UI. Nothing is sent while armed: the checks are meaningless then and ArduPilot
+    /// rejects the command outright.
+    Q_INVOKABLE void requestPrearmCheckReport();
+
     Q_INVOKABLE void sendPlan(QString planFile);
     Q_INVOKABLE void setEstimatorOrigin(const QGeoCoordinate& centerCoord);
 

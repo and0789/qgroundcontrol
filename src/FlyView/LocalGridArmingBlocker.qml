@@ -33,11 +33,9 @@ QtObject {
 
     /// One line for the panel, empty while there is nothing to say.
     ///
-    /// The refusal is worth stating even with no reason attached, because "will not arm" and "you
+    /// The refusal is worth stating even before its reason arrives, because "will not arm" and "you
     /// have not pressed arm yet" look identical on a grid, and only one of them is a problem the
-    /// operator can go and fix. Where no reason has arrived the line says what makes the autopilot
-    /// produce one: it reports the failing check when arming is attempted, so the way to find out is
-    /// to ask and be refused.
+    /// operator can go and fix.
     readonly property string warning: {
         if (!blocked) {
             return ""
@@ -45,7 +43,30 @@ QtObject {
         if (reason !== "") {
             return qsTr("Will not arm — %1").arg(reason)
         }
-        return qsTr("Will not arm. No reason sent yet — the autopilot reports the failing check when arming is attempted.")
+        return qsTr("Will not arm. Asking the autopilot which check is failing…")
+    }
+
+    /// Asks the autopilot what is failing, whenever it is refusing to arm and has not said why.
+    ///
+    /// Left alone, ArduPilot volunteers the reason once every thirty seconds, and ARMING_OPTIONS bit
+    /// 0 turns even that off -- so the answer to the question the operator is asking right now can be
+    /// half a minute away, or never coming. Asking runs the checks with reporting forced on, and the
+    /// answer arrives as the same status text a volunteered reason would have.
+    ///
+    /// Stops the moment there is a reason to show, and starts again if that reason goes stale and is
+    /// dropped, which is what keeps the line on the panel rather than blinking out every half minute.
+    /// Repeated rather than asked once, because the question is a single packet and the answer to a
+    /// lost one is to ask again.
+    property Timer _reasonRequestTimer: Timer {
+        interval:           10000
+        repeat:             true
+        triggeredOnStart:   true
+        running:            _root.blocked && (_root.reason === "")
+        onTriggered: {
+            if (_root.vehicle) {
+                _root.vehicle.requestPrearmCheckReport()
+            }
+        }
     }
 
     readonly property bool _armed: vehicle ? vehicle.armed : false

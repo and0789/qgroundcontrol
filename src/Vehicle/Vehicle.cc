@@ -2408,6 +2408,24 @@ void Vehicle::rebootVehicle()
     sendMavCommandWithHandler(&handlerInfo, _defaultComponentId, MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN, 1);
 }
 
+void Vehicle::requestPrearmCheckReport()
+{
+    // Nothing to ask about, and ArduPilot answers TEMPORARILY_REJECTED in this state anyway
+    if (_armed) {
+        return;
+    }
+
+    // ArduPilot answers this by running its pre-arm checks with reporting forced on, which is the
+    // only way to make it name the failing check on demand. Left to itself it volunteers one every
+    // thirty seconds, and ARMING_OPTIONS bit 0 switches even that off -- so an operator standing over
+    // a vehicle that will not arm can otherwise be told nothing for half a minute, or nothing at all.
+    //
+    // Errors are not shown. A stack that does not implement the command would answer every ask with
+    // a dialog, and this is asked on the operator's behalf rather than at their request -- a question
+    // they did not put has no business reporting back that it went unanswered.
+    sendMavCommand(_defaultComponentId, MAV_CMD_RUN_PREARM_CHECKS, false /* showError */);
+}
+
 void Vehicle::startCalibration(QGCMAVLink::CalibrationType calType)
 {
     SharedLinkInterfacePtr sharedLink = vehicleLinkManager()->primaryLink().lock();
@@ -3639,8 +3657,15 @@ void Vehicle::_textMessageReceived(MAV_COMPONENT componentid, MAV_SEVERITY sever
 
     bool skipSpoken = false;
     const bool ardupilotPrearm = text.startsWith(QStringLiteral("PreArm"));
+    // ArduPilot tags a refusal "Arm: " rather than "PreArm: " for the whole of an arming attempt.
+    // AP_Arming::arm() raises running_arming_checks before it runs the pre-arm checks, and
+    // check_failed() picks its prefix off that flag -- so the same failing check that is announced as
+    // "PreArm: ..." while the vehicle sits there is announced as "Arm: ..." the moment someone
+    // presses arm. Matching only the first name missed the reason in exactly the case where an
+    // operator has just asked for it and is standing waiting to be told.
+    const bool ardupilotArm = text.startsWith(QStringLiteral("Arm: "));
     const bool px4Prearm = text.startsWith(QStringLiteral("preflight"), Qt::CaseInsensitive) && (severity >= MAV_SEVERITY::MAV_SEVERITY_CRITICAL);
-    if (ardupilotPrearm || px4Prearm) {
+    if (ardupilotPrearm || ardupilotArm || px4Prearm) {
         if (_healthAndArmingChecksSupported(componentid)) {
             qCDebug(VehicleLog) << "Dropping preflight message (expected as event):" << text;
             return;
