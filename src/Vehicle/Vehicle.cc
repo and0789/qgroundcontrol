@@ -2299,11 +2299,6 @@ int Vehicle::_findMavCommandListEntryIndex(int targetCompId, MAV_CMD command)
     return _mavCmdQueue->findEntryIndex(targetCompId, command);
 }
 
-void Vehicle::showCommandAckError(const mavlink_command_ack_t& ack)
-{
-    MavCommandQueue::showCommandAckError(ack);
-}
-
 void Vehicle::_handleCommandAck(mavlink_message_t& message)
 {
     mavlink_command_ack_t ack;

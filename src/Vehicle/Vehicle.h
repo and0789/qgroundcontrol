@@ -650,8 +650,6 @@ public:
     OpticalFlowCalibrator*          opticalFlowCalibrator() const { return _opticalFlowCalibrator; }
     RemoteIDManager*                remoteIDManager     () { return _remoteIDManager; }
 
-    static void showCommandAckError(const mavlink_command_ack_t& ack);
-
     /// Sends the specified MAV_CMD to the vehicle. If no Ack is received command will be retried. If a sendMavCommand is already in progress
     /// the command will be queued and sent when the previous command completes.
     ///     @param compId Component to send to.

@@ -20,5 +20,5 @@ private slots:
     void _gridReplacesTheMapAndPaints_test();
     void _aWarningWrapsRatherThanWideningTheReadout_test();
     void _theReasonTheVehicleWillNotArmIsOnThePanel_test();
-    void _aSilentRefusalMakesTheGridAskWhy_test();
+    void _aSilentRefusalMakesTheVehicleAskWhy_test();
 };

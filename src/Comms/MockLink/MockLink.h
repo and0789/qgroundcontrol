@@ -68,7 +68,17 @@ public:
     ///
     /// Off by default, and that default is a third state rather than the opposite of this one: the
     /// stock mock does not publish the bit at all, which is not the same as publishing it healthy.
+    ///
+    /// A failing check refuses the arm command as well, the way a real autopilot does. The bit and
+    /// the refusal are one state, and a mock that reported the first while accepting arm would let a
+    /// test pass over a vehicle that cannot exist.
     void setPrearmCheckFailing(bool failing) { _prearmCheckFailing = failing; }
+
+    /// The failing check this mock names when it is asked why it will not arm.
+    ///
+    /// Sent under the "PreArm: " prefix ArduPilot uses while the vehicle is sitting there, as
+    /// opposed to the "Arm: " it switches to once somebody has pressed arm.
+    static constexpr const char *kPrearmCheckFailureText = "PreArm: Need Position Estimate";
 
     /// Test API: places the simulated vehicle into the given pose during calibration
     void setCalibrationPose(MockLinkPX4Calibration::Pose pose) const { _mockLinkPX4Calibration->setPose(pose); }
@@ -405,6 +415,8 @@ private:
     static constexpr int32_t _batteryMaxTimeRemaining = 15 * 60;
     int8_t _battery1PctRemaining = 100;
     bool _prearmCheckFailing = false;
+    /// param2 of MAV_CMD_COMPONENT_ARM_DISARM that says arm regardless of the checks
+    static constexpr float kForceArmMagic = 2989.0f;
     int32_t _battery1TimeRemaining = _batteryMaxTimeRemaining;
     MAV_BATTERY_CHARGE_STATE _battery1ChargeState = MAV_BATTERY_CHARGE_STATE_OK;
     int8_t _battery2PctRemaining = 100;

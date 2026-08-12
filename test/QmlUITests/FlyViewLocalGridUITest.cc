@@ -152,9 +152,11 @@ void FlyViewLocalGridUITest::_theReasonTheVehicleWillNotArmIsOnThePanel_test()
 }
 
 /// A vehicle can refuse to arm and never say why: ArduPilot volunteers a reason once every thirty
-/// seconds and ARMING_OPTIONS bit 0 stops even that. The panel asks rather than waits, so the line it
-/// shows is filled in on demand instead of whenever the firmware next feels like speaking.
-void FlyViewLocalGridUITest::_aSilentRefusalMakesTheGridAskWhy_test()
+/// seconds and ARMING_OPTIONS bit 0 stops even that. Vehicle asks rather than waits -- on its own
+/// timer, for as long as the refusal stands unexplained, and whether or not this panel or any other
+/// is on screen. What the grid adds is stating the refusal while that question is outstanding,
+/// rather than looking exactly like a grid nobody has tried to arm from.
+void FlyViewLocalGridUITest::_aSilentRefusalMakesTheVehicleAskWhy_test()
 {
     SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
 
@@ -174,6 +176,8 @@ void FlyViewLocalGridUITest::_aSilentRefusalMakesTheGridAskWhy_test()
                                                        TestTimeout::longMs());
             QVERIFY2(arming, "the panel stayed silent about a vehicle that was refusing to arm");
 
+            // Sent by the vehicle off the back of the refusal, not by the panel drawing the line
+            // above -- the grid being open is what makes the answer visible here, not what asks.
             QVERIFY_TRUE_WAIT(mockLink->receivedMavCommandCount(MAV_CMD_RUN_PREARM_CHECKS) >= 1,
                               TestTimeout::longMs());
         });

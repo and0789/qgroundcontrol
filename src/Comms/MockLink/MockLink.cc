@@ -1938,10 +1938,27 @@ void MockLink::_handleCommandLong(const mavlink_message_t &msg)
     case MAV_CMD_COMPONENT_ARM_DISARM:
         if (request.param1 == 0.0f) {
             _mavBaseMode &= ~MAV_MODE_FLAG_SAFETY_ARMED;
+            commandResult = MAV_RESULT_ACCEPTED;
+        } else if (_prearmCheckFailing && (request.param2 != kForceArmMagic)) {
+            // Refusing to arm is what a failing pre-arm check is for. Force arming is the one way
+            // past it, the same as on a real vehicle.
+            commandResult = MAV_RESULT_FAILED;
         } else {
             _mavBaseMode |= MAV_MODE_FLAG_SAFETY_ARMED;
+            commandResult = MAV_RESULT_ACCEPTED;
         }
-        commandResult = MAV_RESULT_ACCEPTED;
+        break;
+    case MAV_CMD_RUN_PREARM_CHECKS:
+        // Only ArduPilot implements this. It runs the checks with reporting forced on and names the
+        // failing one in ordinary status text -- the same path a volunteered reason travels. Every
+        // other stack falls through to the UNSUPPORTED default, which is the answer QGC reads as
+        // "stop asking".
+        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+            commandResult = MAV_RESULT_ACCEPTED;
+            if (_prearmCheckFailing) {
+                sendStatusTextMessage(MAV_SEVERITY_CRITICAL, QString::fromLatin1(kPrearmCheckFailureText));
+            }
+        }
         break;
     case MAV_CMD_PREFLIGHT_CALIBRATION:
         _handlePreFlightCalibration(request);
