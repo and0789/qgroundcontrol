@@ -182,3 +182,47 @@ void FlyViewLocalGridUITest::_aSilentRefusalMakesTheVehicleAskWhy_test()
                               TestTimeout::longMs());
         });
 }
+
+/// The airspeed panel is on the grid only while a sensor is talking, and goes when one stops.
+///
+/// The second half is the part that needed writing. FactGroup::telemetryAvailable is never set back
+/// to false, so a panel gated on it would appear at the first message and then stand there for the
+/// rest of the flight showing whatever a pitot last reported before it was unplugged -- which reads
+/// exactly like a sensor measuring still air.
+void FlyViewLocalGridUITest::_theAirspeedPanelFollowsTheSensor_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(MockConfiguration::OptionEnableAirspeed); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle * /*vehicle*/) {
+            QQuickItem *const readout = findVisibleItem(_rootItem, QStringLiteral("localGrid_readout"), 10000);
+            QVERIFY2(readout, "the readout never appeared on the grid");
+
+            QQuickItem *const panel = findVisibleItem(_rootItem, QStringLiteral("localGrid_airspeed"),
+                                                      TestTimeout::longMs());
+            QVERIFY2(panel, "the airspeed panel never appeared for a vehicle reporting a sensor");
+
+            // A reading rather than dashes. The panel appearing proves a message arrived; it says
+            // nothing about whether anything was decoded out of it.
+            QQuickItem *const value = findVisibleItem(_rootItem, QStringLiteral("localGrid_airspeedValue"),
+                                                      TestTimeout::longMs());
+            QVERIFY2(value, "the panel appeared without its airspeed reading");
+            QVERIFY_TRUE_WAIT(value->property("text").toString().contains(QStringLiteral("m/s")),
+                              TestTimeout::longMs());
+
+            // The sensor stops. Not a disconnect -- the vehicle stays up and every other panel on the
+            // grid carries on, which is what an unplugged pitot actually looks like.
+            mockLink->setAirspeedEnabled(false);
+
+            // Waited for rather than checked once: the group gives the sensor several seconds of
+            // silence before calling it gone, so that it survives a slow RAW_SENSORS stream.
+            QVERIFY_TRUE_WAIT(findVisibleItem(_rootItem, QStringLiteral("localGrid_airspeed"), 0) == nullptr,
+                              TestTimeout::longMs());
+
+            // The panel above it is still there, so what just happened was the sensor going and not
+            // the grid falling over.
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("localGrid_readout"), 0),
+                     "the position readout went with the airspeed panel");
+        });
+}

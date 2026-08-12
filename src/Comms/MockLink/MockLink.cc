@@ -69,6 +69,7 @@ MockLink::MockLink(SharedLinkConfigurationPtr &config, QObject *parent)
     , _enableCamera(_mockConfig->enableCamera())
     , _enableGimbal(_mockConfig->enableGimbal())
     , _enableProximity(_mockConfig->enableProximity())
+    , _enableAirspeed(_mockConfig->enableAirspeed())
     , _failureMode(_mockConfig->failureMode())
     , _stayMavlinkV1(_mockConfig->stayMavlinkV1())
     , _ftpCapability(_mockConfig->ftpCapability())
@@ -327,6 +328,10 @@ void MockLink::run1HzTasks()
 
     if (_enableProximity) {
         _sendDistanceSensors();
+    }
+
+    if (_enableAirspeed) {
+        _sendAirspeed();
     }
 
     _sendEscInfo();
@@ -920,6 +925,35 @@ void MockLink::_sendVibration()
         1,       // clipping_0
         2,       // clipping_0
         3        // clipping_0
+    );
+    respondWithMavlinkMessage(msg);
+}
+
+void MockLink::_sendAirspeed()
+{
+    // Swept rather than fixed. A reading that never moves is exactly what a dead sensor looks like,
+    // so a mock that sends one constant number cannot show that the panel reading it is live.
+    const double sweep = std::sin(_runningTime.elapsed() / 5000.0);
+    const float airspeedMetersPerSecond = static_cast<float>(3.0 + (2.0 * sweep));
+
+    // Derived from the speed above rather than picked separately, using q = 1/2 rho v^2 at sea level
+    // density. The autopilot works one from the other, and a mock whose two numbers disagreed would
+    // let a unit or scaling mistake in the panel pass unnoticed.
+    const float rawPressurePascals = 0.5f * 1.225f * airspeedMetersPerSecond * airspeedMetersPerSecond;
+
+    mavlink_message_t msg{};
+    (void) mavlink_msg_airspeed_pack_chan(
+        _vehicleSystemId,
+        _vehicleComponentId,
+        _outgoingMavlinkChannel,
+        &msg,
+        0,                          // id: first sensor
+        airspeedMetersPerSecond,
+        2500,                       // temperature, centi-degrees C
+        rawPressurePascals,
+        // Healthy, and not the estimator's source -- which is what a multirotor with ARSPD_USE at
+        // zero reports, and the state the panel has a line of its own for.
+        0
     );
     respondWithMavlinkMessage(msg);
 }
@@ -2529,6 +2563,7 @@ MockLink *MockLink::_startMockLinkWorker(const QString &configName, MAV_AUTOPILO
     mockConfig->setEnableCamera(options.testFlag(MockConfiguration::OptionEnableCamera));
     mockConfig->setEnableGimbal(options.testFlag(MockConfiguration::OptionEnableGimbal));
     mockConfig->setEnableProximity(options.testFlag(MockConfiguration::OptionEnableProximity));
+    mockConfig->setEnableAirspeed(options.testFlag(MockConfiguration::OptionEnableAirspeed));
     mockConfig->setPreloadMission(options.testFlag(MockConfiguration::OptionPreloadMission));
     mockConfig->setStayMavlinkV1(options.testFlag(MockConfiguration::OptionStayMavlinkV1));
     mockConfig->setApmStartFreshParams(options.testFlag(MockConfiguration::OptionAPMStartFreshParams));

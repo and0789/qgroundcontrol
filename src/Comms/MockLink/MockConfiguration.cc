@@ -18,6 +18,7 @@ MockConfiguration::MockConfiguration(const MockConfiguration *copy, QObject *par
     , _enableCamera(copy->enableCamera())
     , _enableGimbal(copy->enableGimbal())
     , _enableProximity(copy->enableProximity())
+    , _enableAirspeed(copy->enableAirspeed())
     , _failureMode(copy->failureMode())
     , _incrementVehicleId(copy->incrementVehicleId())
     , _startArmed(copy->startArmed())
@@ -62,6 +63,7 @@ void MockConfiguration::copyFrom(const LinkConfiguration *source)
     setEnableCamera(mockLinkSource->enableCamera());
     setEnableGimbal(mockLinkSource->enableGimbal());
     setEnableProximity(mockLinkSource->enableProximity());
+    setEnableAirspeed(mockLinkSource->enableAirspeed());
     setIncrementVehicleId(mockLinkSource->incrementVehicleId());
     setFailureMode(mockLinkSource->failureMode());
     setCameraCaptureVideo(mockLinkSource->cameraCaptureVideo());
@@ -97,6 +99,7 @@ void MockConfiguration::loadSettings(QSettings &settings, const QString &root)
     setEnableCamera(settings.value(_enableCameraKey, false).toBool());
     setEnableGimbal(settings.value(_enableGimbalKey, false).toBool());
     setEnableProximity(settings.value(_enableProximityKey, false).toBool());
+    setEnableAirspeed(settings.value(_enableAirspeedKey, false).toBool());
     setIncrementVehicleId(settings.value(_incrementVehicleIdKey, true).toBool());
     setFailureMode(static_cast<FailureMode_t>(settings.value(_failureModeKey, static_cast<int>(FailNone)).toInt()));
     setCameraCaptureVideo(settings.value(_cameraCaptureVideoKey, true).toBool());
@@ -131,6 +134,7 @@ void MockConfiguration::saveSettings(QSettings &settings, const QString &root) c
     settings.setValue(_enableCameraKey, enableCamera());
     settings.setValue(_enableGimbalKey, enableGimbal());
     settings.setValue(_enableProximityKey, enableProximity());
+    settings.setValue(_enableAirspeedKey, enableAirspeed());
     settings.setValue(_incrementVehicleIdKey, incrementVehicleId());
     settings.setValue(_failureModeKey, failureMode());
     settings.setValue(_cameraCaptureVideoKey, cameraCaptureVideo());

@@ -21,4 +21,5 @@ private slots:
     void _aWarningWrapsRatherThanWideningTheReadout_test();
     void _theReasonTheVehicleWillNotArmIsOnThePanel_test();
     void _aSilentRefusalMakesTheVehicleAskWhy_test();
+    void _theAirspeedPanelFollowsTheSensor_test();
 };

@@ -74,6 +74,13 @@ public:
     /// test pass over a vehicle that cannot exist.
     void setPrearmCheckFailing(bool failing) { _prearmCheckFailing = failing; }
 
+    /// Whether this mock carries an airspeed sensor and so sends the AIRSPEED message.
+    ///
+    /// Settable while connected, unlike the option it starts from, because the interesting half of
+    /// the behaviour it drives is what the UI does when a sensor stops reporting -- and a link that
+    /// could only be configured at construction could never show that happening.
+    void setAirspeedEnabled(bool enabled) { _enableAirspeed = enabled; }
+
     /// The failing check this mock names when it is asked why it will not arm.
     ///
     /// Sent under the "PreArm: " prefix ArduPilot uses while the vehicle is sitting there, as
@@ -324,6 +331,7 @@ private:
     void _sendBatteryStatus();
     void _sendNamedValueFloats();
     void _sendDistanceSensors();
+    void _sendAirspeed();
     void _sendChunkedStatusText(uint16_t chunkId, bool missingChunks);
     void _sendStatusTextMessages();
     void _respondWithAutopilotVersion();
@@ -370,6 +378,9 @@ private:
     const bool _enableCamera = false;
     const bool _enableGimbal = false;
     const bool _enableProximity = false;
+    /// Not const, unlike its neighbours: a test turns this off mid-connection to watch the UI drop
+    /// a sensor that has stopped reporting.
+    bool _enableAirspeed = false;
     const MockConfiguration::FailureMode_t _failureMode = MockConfiguration::FailNone;
     const bool _stayMavlinkV1 = false;  ///< Test-only: never upgrade outgoing traffic to MAVLink v2
     const bool _ftpCapability = false;  ///< Test-only: advertise MAV_PROTOCOL_CAPABILITY_FTP
