@@ -410,9 +410,12 @@ Item {
             break
         case "landHere":
             return _insertLandHere(coordinate)
-        default:
-            _applyDefaultAltitude(missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */))
+        default: {
+            const item = missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
+            _applyDefaultAltitude(item)
+            _applyDefaultSpeed(item)
             break
+        }
         }
 
         _selectNewestItem()
@@ -600,6 +603,61 @@ Item {
     function waypointAltitudeFact(index) {
         const item = _visualItemAt(index)
         return (item && item.altitude) ? item.altitude : null
+    }
+
+    /// The speed a newly placed waypoint is given.
+    ///
+    /// Written onto the waypoint rather than left to the vehicle's WP_SPD, because on this way of
+    /// navigating the cruise speed is not a matter of taste. Above EK3_RNG_USE_SPD the estimator
+    /// stops using the rangefinder as its height source, and optical flow is scaled by height -- so
+    /// the speed a leg is flown at decides how far the aircraft thinks it has gone. A plan that does
+    /// not say its speed is flown at whatever the last person to touch the parameters chose.
+    readonly property real defaultWaypointSpeedMetersPerSecond: 1
+
+    /// The speed section of a waypoint, or null for an item that has none.
+    ///
+    /// ArduPilot carries a per-waypoint speed as a DO_CHANGE_SPEED item flown alongside the
+    /// waypoint, and QGC models that as a section on the item rather than as a visual item of its
+    /// own -- which is why adding one does not renumber anything on this grid. Only plain waypoints
+    /// have one: a takeoff climbs at its own rate and a landing descends at its own.
+    function waypointSpeedSection(index) {
+        const item = _visualItemAt(index)
+        if (!item || !item.speedSection || !item.speedSection.available) {
+            return null
+        }
+        return item.speedSection
+    }
+
+    /// Gives every placed waypoint the same speed, and makes each of them say so.
+    ///
+    /// The companion to setAllWaypointAltitudes, and needed for the same reason: flying one pattern
+    /// at two speeds to compare them means retyping every waypoint otherwise. It also repairs a plan
+    /// arrived from a file whose waypoints carry no speed of their own.
+    ///     @return how many waypoints were changed
+    function setAllWaypointSpeeds(metersPerSecond) {
+        if (isNaN(metersPerSecond) || (metersPerSecond <= 0)) {
+            return 0
+        }
+
+        var changed = 0
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            const section = waypointSpeedSection(points[i].index)
+            if (section) {
+                section.flightSpeed.rawValue = metersPerSecond
+                section.specifyFlightSpeed = true
+                changed++
+            }
+        }
+        return changed
+    }
+
+    function _applyDefaultSpeed(item) {
+        if (!item || !item.speedSection || !item.speedSection.available) {
+            return
+        }
+        item.speedSection.flightSpeed.rawValue = defaultWaypointSpeedMetersPerSecond
+        item.speedSection.specifyFlightSpeed = true
     }
 
     // Written out because MAVLinkEnums exposes no values to QML in this build: moc emits an empty

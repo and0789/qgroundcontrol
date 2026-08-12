@@ -47,6 +47,15 @@ ColumnLayout {
 
     readonly property string _distanceUnits: _transform ? _transform.displayUnits : ""
 
+    /// Null for items that carry no speed of their own -- a takeoff or a landing
+    readonly property var _speedSection: (gridView && (visualItemIndex >= 0))
+                                            ? gridView.waypointSpeedSection(visualItemIndex)
+                                            : null
+
+    /// Whether this waypoint will actually carry its speed into the uploaded plan. A speed sitting
+    /// in the field with this false is a number that will not be flown.
+    readonly property bool _speedSpecified: _speedSection ? _speedSection.specifyFlightSpeed : false
+
     readonly property int    _altitudeFrame: (gridView && (visualItemIndex >= 0))
                                                 ? gridView.waypointAltitudeFrame(visualItemIndex)
                                                 : -1
@@ -107,6 +116,18 @@ ColumnLayout {
     function _applyAltitudeToAll() {
         if (gridView && _altitudeFact) {
             gridView.setAllWaypointAltitudes(_altitudeFact.rawValue)
+        }
+    }
+
+    function _markSpeedSpecified() {
+        if (_speedSection) {
+            _speedSection.specifyFlightSpeed = true
+        }
+    }
+
+    function _applySpeedToAll() {
+        if (gridView && _speedSection) {
+            gridView.setAllWaypointSpeeds(_speedSection.flightSpeed.rawValue)
         }
     }
 
@@ -366,6 +387,56 @@ ColumnLayout {
         visible:            _root._altitudeFact !== null
         text:               qsTr("Set this altitude on all")
         onClicked:          _root._applyAltitudeToAll()
+    }
+
+    // Only on plain waypoints. A takeoff climbs at its own rate and a landing descends at its own,
+    // so neither carries a speed of this kind, and the row is dropped rather than shown holding a
+    // number that would not be flown.
+    RowLayout {
+        Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
+        visible:            _root._speedSection !== null
+        spacing:            ScreenTools.defaultFontPixelWidth
+
+        QGCLabel {
+            Layout.preferredWidth:  _root._labelWidth
+            horizontalAlignment:    Text.AlignRight
+            font.pointSize:         ScreenTools.smallFontPointSize
+            text:                   qsTr("Speed")
+        }
+
+        FactTextField {
+            objectName:             "localGrid_waypointSpeedField"
+            Layout.preferredWidth:  _root._fieldWidth
+            font.pointSize:         ScreenTools.smallFontPointSize
+            fact:                   _root._speedSection ? _root._speedSection.flightSpeed : null
+            // Typing a speed is the operator saying they want this leg flown at it. Without this a
+            // number could be entered, sit in the field, upload as nothing, and be flown at the
+            // vehicle's own WP_SPD -- a plan that disagrees with the panel that drew it.
+            onEditingFinished:      _root._markSpeedSpecified()
+        }
+    }
+
+    // Said only for the case that produces it: a plan arriving from a file or from the vehicle whose
+    // waypoints carry no speed of their own. Waypoints placed on this grid always carry one, so this
+    // line is never background noise on a plan built here.
+    QGCLabel {
+        objectName:             "localGrid_waypointSpeedUnspecified"
+        Layout.maximumWidth:    _root._textWidth
+        visible:                (_root._speedSection !== null) && !_root._speedSpecified
+        wrapMode:               Text.WordWrap
+        font.pointSize:         ScreenTools.smallFontPointSize
+        color:                  qgcPal.colorOrange
+        text:                   qsTr("This waypoint carries no speed of its own — it will be flown at the vehicle's WP_SPD. Type a speed, or set one on all below.")
+    }
+
+    // The button the comparison flights are actually flown from: one pattern at two speeds means
+    // retyping every waypoint otherwise, and the speed is the thing being varied.
+    QGCButton {
+        objectName:         "localGrid_applySpeedToAllButton"
+        Layout.fillWidth:   true
+        visible:            _root._speedSection !== null
+        text:               qsTr("Set this speed on all")
+        onClicked:          _root._applySpeedToAll()
     }
 
     QGCLabel {
