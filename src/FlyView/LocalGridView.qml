@@ -1129,7 +1129,9 @@ Item {
         id:                     missionList
         objectName:             "localGrid_missionList"
         anchors.right:          parent.right
-        anchors.top:            readout.bottom
+        // Follows the airspeed panel when there is one and the readout when there is not, rather
+        // than leaving a panel-shaped gap on a vehicle with no pitot fitted.
+        anchors.top:            airspeed.visible ? airspeed.bottom : readout.bottom
         anchors.rightMargin:    _root._margins
         anchors.topMargin:      _root._margins
         // Matched to the readout above rather than fixed, so the right edge of the view stays one
@@ -1259,5 +1261,22 @@ Item {
         anchors.topMargin:      _root.topEdgeOffset + _root._margins + _root._inset("topEdgeRightInset")
         gridView:               _root
         onSetOriginRequested:   _root.showSetOriginDialog()
+    }
+
+    /// Between the position numbers and the plan, and only while a pitot is reporting.
+    ///
+    /// It belongs in this column rather than the instrument panel because it is read against the
+    /// numbers directly above it: airspeed beside the ground track this grid draws is what says
+    /// whether a leg was flown into wind, and either figure alone says nothing about that.
+    LocalGridAirspeed {
+        id:                     airspeed
+        objectName:             "localGrid_airspeed"
+        anchors.right:          parent.right
+        anchors.top:            readout.bottom
+        anchors.rightMargin:    _root._margins
+        anchors.topMargin:      visible ? _root._margins : 0
+        width:                  Math.max(implicitWidth, readout.width)
+        vehicle:                _root.vehicle
+        z:                      2
     }
 }
