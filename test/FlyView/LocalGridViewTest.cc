@@ -15,6 +15,7 @@
 
 #include "Fact.h"
 #include "FactGroup.h"
+#include "FactMetaData.h"
 #include "FirmwarePlugin.h"
 #include "Vehicle.h"
 
@@ -70,6 +71,15 @@ constexpr const char *kMissionControllerStub = R"(
                 // A real Fact, not a look-alike: the panel binds it into a FactTextField, which
                 // refuses anything else and says so on every rebuild.
                 property Fact altitude: Fact { }
+
+                // Where ArduPilot's per-waypoint speed lives. QGC carries it as a section on the
+                // item rather than as a visual item of its own, and only a plain waypoint has one --
+                // which is the check the grid makes before touching it.
+                property QtObject speedSection: QtObject {
+                    property bool available: true
+                    property bool specifyFlightSpeed: false
+                    property Fact flightSpeed: Fact { }
+                }
             }
         }
 
@@ -208,6 +218,38 @@ QObject *createMissionControllerStub(QQmlComponent &component, QString &error)
 QObject *createPlanMasterControllerStub(QQmlComponent &component, QString &error)
 {
     return createStub(component, kPlanMasterControllerStub, error);
+}
+
+/// Gives a QML-declared Fact the type the real one has.
+///
+/// A Fact built in QML carries no metadata, and FactMetaData defaults to int32 -- so a stub fact
+/// takes 1.5 m/s and hands back 2. The real SpeedSection fact is a double, and a stub that rounds
+/// would let a speed the operator can actually type pass here and fail in the air.
+void makeFactDouble(QObject *factObject)
+{
+    Fact *const fact = qobject_cast<Fact *>(factObject);
+    if (!fact) {
+        return;
+    }
+    fact->setMetaData(new FactMetaData(FactMetaData::valueTypeDouble, fact));
+}
+
+/// The speed section of a stub item, with its fact typed the way the real one is
+QObject *stubSpeedSection(QObject *stub, int index)
+{
+    const QVariantList items = stub->property("items").toList();
+    if ((index < 0) || (index >= items.count())) {
+        return nullptr;
+    }
+    QObject *const item = items.at(index).value<QObject *>();
+    if (!item) {
+        return nullptr;
+    }
+    QObject *const section = item->property("speedSection").value<QObject *>();
+    if (section) {
+        makeFactDouble(section->property("flightSpeed").value<QObject *>());
+    }
+    return section;
 }
 
 /// Feeds the vehicle an EKF_STATUS_REPORT, the message ArduPilot reports estimator health in
@@ -2252,3 +2294,104 @@ void LocalGridViewTest::_armedVehicleIsNotWatchedForDrift_test()
 }
 
 UT_REGISTER_TEST(LocalGridViewTest, TestLabel::Integration, TestLabel::Vehicle)
+
+/// A waypoint placed on the grid says how fast it will be flown, rather than inheriting whatever
+/// WP_SPD happens to be.
+///
+/// It matters more here than on a GPS aircraft: above EK3_RNG_USE_SPD the estimator stops taking
+/// its height from the rangefinder, and optical flow is scaled by height -- so the speed a leg is
+/// flown at changes how far the aircraft believes it has travelled. A plan that does not carry its
+/// speed is a plan whose accuracy depends on a parameter nobody looked at.
+void LocalGridViewTest::_aPlacedWaypointCarriesTheGridsOwnSpeed_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
+    QVERIFY(placed.toBool());
+
+    QVariant sectionValue;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointSpeedSection", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, sectionValue),
+                                      Q_ARG(QVariant, stub->property("items").toList().count() - 1)));
+    QObject *const section = sectionValue.value<QObject *>();
+    QVERIFY2(section, "a placed waypoint reported no speed section");
+
+    const QVariant expected = gridView->property("defaultWaypointSpeedMetersPerSecond");
+    QObject *const speed = section->property("flightSpeed").value<QObject *>();
+    QVERIFY(speed);
+    QCOMPARE(speed->property("rawValue").toDouble(), expected.toDouble());
+
+    // The value alone is not enough. Left unspecified it uploads as nothing and the leg is flown at
+    // the vehicle's own speed, which is a plan that disagrees with the panel that drew it.
+    QVERIFY2(section->property("specifyFlightSpeed").toBool(),
+             "the speed was filled in but the waypoint would not carry it");
+}
+
+/// One pattern flown at two speeds is the comparison this grid exists to make, and retyping every
+/// waypoint between runs is how a run ends up half at one speed and half at the other.
+void LocalGridViewTest::_oneSpeedCanBeSetOnEveryWaypoint_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    for (int i = 0; i < 3; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0 * (i + 1), 0.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // 1.5 m/s is the speed the comparison flights are actually flown at, and a stub fact left at
+    // its default int32 type would quietly hand back 2
+    for (int i = 0; i < 3; i++) {
+        QVERIFY(stubSpeedSection(stub.get(), i));
+    }
+
+    QVariant changed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointSpeeds", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, 1.5)));
+    QCOMPARE(changed.toInt(), 3);
+
+    for (int i = 0; i < 3; i++) {
+        QVariant sectionValue;
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointSpeedSection", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, sectionValue), Q_ARG(QVariant, i)));
+        QObject *const section = sectionValue.value<QObject *>();
+        QVERIFY(section);
+        QObject *const speed = section->property("flightSpeed").value<QObject *>();
+        QVERIFY(speed);
+        QCOMPARE(speed->property("rawValue").toDouble(), 1.5);
+        // Repairs a plan arrived from a file as well as setting one built here
+        QVERIFY(section->property("specifyFlightSpeed").toBool());
+    }
+
+    // A speed that is not a number, or one that cannot be flown, must leave the plan alone rather
+    // than writing a standstill into every leg
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointSpeeds", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed),
+                                      Q_ARG(QVariant, std::numeric_limits<double>::quiet_NaN())));
+    QCOMPARE(changed.toInt(), 0);
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointSpeeds", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, 0.0)));
+    QCOMPARE(changed.toInt(), 0);
+}

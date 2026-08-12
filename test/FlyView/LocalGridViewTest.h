@@ -65,6 +65,8 @@ private slots:
     void _driftIsTheReportedPositionMovingWhileParked_test();
     void _parkedAwayFromTheOriginIsNotDrift_test();
     void _armedVehicleIsNotWatchedForDrift_test();
+    void _aPlacedWaypointCarriesTheGridsOwnSpeed_test();
+    void _oneSpeedCanBeSetOnEveryWaypoint_test();
 
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);
