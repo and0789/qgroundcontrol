@@ -36,6 +36,7 @@ class EscStatusFactGroupListModel;
 class GimbalController;
 class RadioStatusFactGroup;
 class TerrainFactGroup;
+class VehicleAirspeedSensorFactGroup;
 class VehicleClockFactGroup;
 class VehicleDistanceSensorFactGroup;
 class VehicleEFIFactGroup;
@@ -256,6 +257,7 @@ public:
     Q_PROPERTY(FactGroup*           localPositionSetpoint READ localPositionSetpointFactGroup CONSTANT)
     Q_PROPERTY(FactGroup*           opticalFlow     READ opticalFlowFactGroup       CONSTANT)
     Q_PROPERTY(FactGroup*           hygrometer      READ hygrometerFactGroup        CONSTANT)
+    Q_PROPERTY(FactGroup*           airspeedSensor  READ airspeedSensorFactGroup    CONSTANT)
     Q_PROPERTY(FactGroup*           generator       READ generatorFactGroup         CONSTANT)
     Q_PROPERTY(FactGroup*           efi             READ efiFactGroup               CONSTANT)
     Q_PROPERTY(FactGroup*           radioStatus     READ radioStatusFactGroup       CONSTANT)
@@ -629,6 +631,7 @@ public:
     FactGroup* estimatorStatusFactGroup     ();
     FactGroup* terrainFactGroup             ();
     FactGroup* hygrometerFactGroup          ();
+    FactGroup* airspeedSensorFactGroup      ();
     FactGroup* generatorFactGroup           ();
     FactGroup* efiFactGroup                 ();
     FactGroup* radioStatusFactGroup         ();
@@ -1187,6 +1190,7 @@ public:
     const QString _estimatorStatusFactGroupName =    QStringLiteral("estimatorStatus");
     const QString _terrainFactGroupName =            QStringLiteral("terrain");
     const QString _hygrometerFactGroupName =         QStringLiteral("hygrometer");
+    const QString _airspeedSensorFactGroupName =     QStringLiteral("airspeedSensor");
     const QString _generatorFactGroupName =          QStringLiteral("generator");
     const QString _efiFactGroupName =                QStringLiteral("efi");
     const QString _rpmFactGroupName =                QStringLiteral("rpm");
@@ -1207,6 +1211,7 @@ public:
     VehicleOpticalFlowFactGroup*        _opticalFlowFactGroup       = nullptr;
     VehicleEstimatorStatusFactGroup*    _estimatorStatusFactGroup   = nullptr;
     VehicleHygrometerFactGroup*         _hygrometerFactGroup        = nullptr;
+    VehicleAirspeedSensorFactGroup*     _airspeedSensorFactGroup    = nullptr;
     VehicleGeneratorFactGroup*          _generatorFactGroup         = nullptr;
     VehicleEFIFactGroup*                _efiFactGroup               = nullptr;
     VehicleRPMFactGroup*                _rpmFactGroup               = nullptr;

@@ -1,0 +1,44 @@
+{
+    "version":      1,
+    "fileType":  "FactMetaData",
+    "QGC.MetaData.Facts":
+[
+{
+    "name":             "airspeed",
+    "shortDesc": "Airspeed (CAS)",
+    "type":             "double",
+    "decimalPlaces":    2,
+    "units":            "m/s"
+},
+{
+    "name":             "diffPressure",
+    "shortDesc": "Differential pressure",
+    "type":             "double",
+    "decimalPlaces":    1,
+    "units":            "Pa"
+},
+{
+    "name":             "temperature",
+    "shortDesc": "Sensor temperature",
+    "type":             "double",
+    "decimalPlaces":    1,
+    "units":            "C"
+},
+{
+    "name":             "sensorId",
+    "shortDesc": "Sensor ID",
+    "type":             "uint8",
+    "decimalPlaces":    0
+},
+{
+    "name":             "healthy",
+    "shortDesc": "Sensor healthy",
+    "type":             "bool"
+},
+{
+    "name":             "inUse",
+    "shortDesc": "Used by the estimator",
+    "type":             "bool"
+}
+]
+}

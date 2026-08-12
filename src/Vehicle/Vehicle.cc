@@ -12,6 +12,7 @@
 #include "VehicleGPS2FactGroup.h"
 #include "VehicleGPSFactGroup.h"
 #include "VehicleGPSAggregateFactGroup.h"
+#include "VehicleAirspeedSensorFactGroup.h"
 #include "VehicleHygrometerFactGroup.h"
 #include "VehicleLocalPositionFactGroup.h"
 #include "VehicleLocalPositionSetpointFactGroup.h"
@@ -340,6 +341,7 @@ void Vehicle::_commonInit(LinkInterface* link)
     _opticalFlowFactGroup           = new VehicleOpticalFlowFactGroup(this);
     _estimatorStatusFactGroup       = new VehicleEstimatorStatusFactGroup(this);
     _hygrometerFactGroup            = new VehicleHygrometerFactGroup(this);
+    _airspeedSensorFactGroup        = new VehicleAirspeedSensorFactGroup(this);
     _generatorFactGroup             = new VehicleGeneratorFactGroup(this);
     _efiFactGroup                   = new VehicleEFIFactGroup(this);
     _rpmFactGroup                   = new VehicleRPMFactGroup(this);
@@ -375,6 +377,7 @@ void Vehicle::_commonInit(LinkInterface* link)
     _addFactGroup(_opticalFlowFactGroup,       _opticalFlowFactGroupName);
     _addFactGroup(_estimatorStatusFactGroup,   _estimatorStatusFactGroupName);
     _addFactGroup(_hygrometerFactGroup,        _hygrometerFactGroupName);
+    _addFactGroup(_airspeedSensorFactGroup,    _airspeedSensorFactGroupName);
     _addFactGroup(_generatorFactGroup,         _generatorFactGroupName);
     _addFactGroup(_efiFactGroup,               _efiFactGroupName);
     _addFactGroup(_rpmFactGroup,               _rpmFactGroupName);
@@ -443,6 +446,7 @@ FactGroup* Vehicle::opticalFlowFactGroup()          { return _opticalFlowFactGro
 FactGroup* Vehicle::estimatorStatusFactGroup()      { return _estimatorStatusFactGroup; }
 FactGroup* Vehicle::terrainFactGroup()              { return _terrainFactGroup; }
 FactGroup* Vehicle::hygrometerFactGroup()           { return _hygrometerFactGroup; }
+FactGroup* Vehicle::airspeedSensorFactGroup()       { return _airspeedSensorFactGroup; }
 FactGroup* Vehicle::generatorFactGroup()            { return _generatorFactGroup; }
 FactGroup* Vehicle::efiFactGroup()                  { return _efiFactGroup; }
 FactGroup* Vehicle::rpmFactGroup()                  { return _rpmFactGroup; }

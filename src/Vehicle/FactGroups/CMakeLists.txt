@@ -7,6 +7,8 @@ target_sources(${CMAKE_PROJECT_NAME}
     PRIVATE
         BatteryFactGroupListModel.cc
         BatteryFactGroupListModel.h
+        VehicleAirspeedSensorFactGroup.cc
+        VehicleAirspeedSensorFactGroup.h
         EscStatusFactGroupListModel.cc
         EscStatusFactGroupListModel.h
         RadioStatusFactGroup.cc
@@ -52,6 +54,7 @@ target_sources(${CMAKE_PROJECT_NAME}
 )
 
 set(JSON_FILES
+    AirspeedSensorFact.json
     RPMFact.json
     TemperatureFact.json
     GPSFact.json
