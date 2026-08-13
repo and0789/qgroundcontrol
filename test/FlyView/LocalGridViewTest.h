@@ -67,6 +67,15 @@ private slots:
     void _armedVehicleIsNotWatchedForDrift_test();
     void _aPlacedWaypointCarriesTheGridsOwnSpeed_test();
     void _oneSpeedCanBeSetOnEveryWaypoint_test();
+    void _planIsNumberedInTheOrderItIsFlown_test();
+    void _rowIsMarkedWhereverTheVehicleIsInsideIt_test();
+    void _takeoffWithNoCoordinateIsStillPartOfThePlan_test();
+    void _planCanBeMovedToStartFromTheAircraft_test();
+    void _movingThePlanToTheAircraftTwiceMovesItOnce_test();
+    void _aFreshPatternIsNotOffsetByTheLastPlansMove_test();
+    void _planSaysWhereTheVehicleWouldPickItUp_test();
+    void _uploadIsRefusedWhenThePreCheckSaysSo_test();
+    void _planAnchorOutlivesTheView_test();
 
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);

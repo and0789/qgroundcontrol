@@ -12,9 +12,10 @@ import QGroundControl.FlyView
 /// it is. The row being edited is the only one open.
 ///
 /// Rows come from the same missionPoints the markers are drawn from, so a row and its marker can
-/// never name different items. That array is what the grid can place: an item carrying no coordinate
-/// is drawn nowhere and listed nowhere either, which is the grid's existing rule rather than one
-/// introduced here.
+/// never name different items. Every item the aircraft will fly gets a row, including the ones the
+/// grid has nowhere to draw -- ArduPilot's takeoff climbs in place and carries no coordinate at all,
+/// and a list that left it out started the plan at "2" and gave the operator no way to reach the one
+/// item whose altitude is flown first.
 Rectangle {
     id: _root
 
@@ -48,7 +49,7 @@ Rectangle {
     readonly property real collapsedHeight: headerBlock.implicitHeight + (_margins * 2)
 
     /// How many items the list is showing, which is not the plan's item count: the home position is
-    /// not one of these, and neither is anything without a coordinate
+    /// not one of these
     readonly property int rowCount: _points.length
 
     readonly property var _points:   gridView ? gridView.missionPoints : []
@@ -238,7 +239,7 @@ Rectangle {
                         visible:         point !== null
                         gridView:        _root.gridView
                         visualItemIndex: point ? point.index : -1
-                        sequenceNumber:  point ? point.sequence : 0
+                        itemNumber:      point ? point.number : 0
                         north:           point ? point.north : NaN
                         east:            point ? point.east : NaN
                         isCurrentItem:   point ? (_root._selected === point.index) : false

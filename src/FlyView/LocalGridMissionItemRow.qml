@@ -24,9 +24,15 @@ Rectangle {
 
     /// Index into the mission's visual items, which is what every gridView call takes
     property int  visualItemIndex: -1
-    /// The number on the marker's face, which diverges from the index as soon as the plan holds
-    /// anything that is not a plain waypoint
-    property int  sequenceNumber:  0
+
+    /// Where this item comes in the plan, counting from one, and the number on its marker's face.
+    ///
+    /// Not the mission sequence number. Those count the home position and the DO_CHANGE_SPEED items
+    /// QGC folds into a waypoint's speed, so a plan of takeoff-waypoint-land numbered its rows 2 and
+    /// 4 -- with the takeoff, and the speed item nobody placed, silently taking 1 and 3.
+    property int  itemNumber:      0
+
+    /// NaN for an item the grid has nowhere to put, which is listed all the same
     property real north:           NaN
     property real east:            NaN
 
@@ -156,7 +162,7 @@ Rectangle {
                         font.pointSize:     ScreenTools.smallFontPointSize
                         font.bold:          true
                         color:              _root.isVehicleTarget ? qgcPal.window : _root._textColor
-                        text:               _root.sequenceNumber
+                        text:               _root.itemNumber
                     }
                 }
 

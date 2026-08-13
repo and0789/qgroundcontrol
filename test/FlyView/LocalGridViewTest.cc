@@ -17,6 +17,8 @@
 #include "FactGroup.h"
 #include "FactMetaData.h"
 #include "FirmwarePlugin.h"
+#include "FlyViewSettings.h"
+#include "SettingsManager.h"
 #include "Vehicle.h"
 
 namespace {
@@ -59,6 +61,10 @@ constexpr const char *kMissionControllerStub = R"(
                 property bool specifiesCoordinate: true
                 property var  coordinate
                 property int  sequenceNumber: 0
+                // The last mission sequence number this one item occupies. A waypoint carrying a
+                // speed is uploaded as a NAV_WAYPOINT followed by a DO_CHANGE_SPEED, so one visual
+                // item can span two numbers -- which is what puts gaps in the plan's numbering.
+                property int  lastSequenceNumber: sequenceNumber
                 property bool isCurrentItem: false
                 property int  command: 16
                 // QGC's display name for the command, which is what a row in a list of items shows
@@ -110,6 +116,16 @@ constexpr const char *kMissionControllerStub = R"(
         // vehicle's mission manager and answers -1 outside the fly view.
         property int currentMissionIndex: -1
 
+        /// What MissionController::sendToVehiclePreCheck would answer, by the order of its own enum:
+        /// 0 Ok, 1 NoActiveVehicle, 2 FirwmareVehicleMismatch, 3 ActiveMission.
+        property int preCheckState: 0
+        function sendToVehiclePreCheck() { return preCheckState }
+
+        /// How far through a transfer the mission panel's progress bar is. Present because the panel
+        /// binds it into a real: left off, it reads as undefined and QML says so on every rebuild --
+        /// which the runner counts as a failure.
+        property real progressPct: 0
+
         readonly property var visualItems: QtObject {
             readonly property int count: items.length
             function get(index) { return items[index] }
@@ -135,6 +151,12 @@ constexpr const char *kMissionControllerStub = R"(
         property int takeoffCount: 0
         property int landCount: 0
 
+        /// Whether a takeoff item carries a coordinate of its own, which is a firmware difference
+        /// rather than a preference. PX4 gives its takeoff a position; ArduPilot's is altitude-only
+        /// and QGC's command tree says so, which leaves the grid a plan item it cannot draw.
+        /// Defaults to the PX4 shape so tests naming the other one have to say it.
+        property bool takeoffSpecifiesCoordinate: true
+
         /// Where MissionController would put a takeoff regardless of what it was asked for, when
         /// the plan has a home position. Left null for a plan that has none.
         property var takeoffLandsOn: null
@@ -154,6 +176,7 @@ constexpr const char *kMissionControllerStub = R"(
             const item = items[items.length - 1]
             item.isTakeoffItem = true
             item.commandName = "Takeoff"
+            item.specifiesCoordinate = takeoffSpecifiesCoordinate
             lastInsertedItem = item
             return item
         }
@@ -192,6 +215,21 @@ constexpr const char *kPlanMasterControllerStub = R"(
         property bool syncInProgress: false
         property bool offline: false
         property bool dirtyForUpload: false
+
+        /// What the mission panel reaches through this one for its upload pre-check. Null by
+        /// default, which is the shape every test that never presses Upload sees.
+        property var missionController: null
+
+        /// VisualMissionItem.ReadyForSave is 0. Anything else means an item is still waiting on
+        /// data and has no coordinate to send.
+        property int saveState: 0
+        function readyForSaveState() { return saveState }
+
+        property int sendCount: 0
+        function sendToVehicle() { sendCount++ }
+
+        property int showPlanCount: 0
+        function showPlanFromManagerVehicle() { showPlanCount++ }
     }
 )";
 
@@ -1632,7 +1670,7 @@ void LocalGridViewTest::_listMarksTheWaypointTheVehicleIsFlyingTo_test()
         const QList<QQuickItem *> rows = collectItemsNamed(gridItem, QStringLiteral("localGrid_missionItemRow"));
         for (QQuickItem *const row : rows) {
             if (row->property("isVehicleTarget").toBool()) {
-                sequences.append(row->property("sequenceNumber").toInt());
+                sequences.append(row->property("itemNumber").toInt());
             }
         }
         return sequences;
@@ -2394,4 +2432,675 @@ void LocalGridViewTest::_oneSpeedCanBeSetOnEveryWaypoint_test()
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointSpeeds", Qt::DirectConnection,
                                       Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, 0.0)));
     QCOMPARE(changed.toInt(), 0);
+}
+
+/// A plan reads as the sequence it will be flown: one, two, three, with nothing missing between
+/// them.
+///
+/// The numbers on screen used to be the mission sequence numbers, which count things nobody placed.
+/// The home position takes zero, ArduPilot's takeoff takes one and is drawn nowhere because it
+/// carries no coordinate, and a waypoint's speed is uploaded as a DO_CHANGE_SPEED that takes another
+/// -- so a plan of takeoff, waypoint and landing listed exactly two rows, numbered 2 and 4, with no
+/// way for the operator to tell whether items 1 and 3 were missing or merely unlabelled.
+void LocalGridViewTest::_planIsNumberedInTheOrderItIsFlown_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    // The plan the screenshot came from, in the shape ArduPilot gives it: home at 0, a takeoff at 1
+    // with no coordinate of its own, a waypoint at 2 whose speed occupies 3, and a landing at 4.
+    stub->setProperty("takeoffSpecifiesCoordinate", false);
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "addHomeItem", Qt::DirectConnection,
+                                      Q_ARG(QVariant, QVariant::fromValue(origin))));
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "insertTakeoffItem", Qt::DirectConnection,
+                                      Q_ARG(QVariant, QVariant::fromValue(origin)),
+                                      Q_ARG(QVariant, -1), Q_ARG(QVariant, true)));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 0.0))),
+        Q_ARG(QVariant, 2)));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 90.0))),
+        Q_ARG(QVariant, 4)));
+
+    // The waypoint's DO_CHANGE_SPEED, which is why the landing after it is numbered 4 on the wire
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 4);
+    QObject *const waypoint = items.at(2).value<QObject *>();
+    QVERIFY(waypoint);
+    waypoint->setProperty("lastSequenceNumber", 3);
+
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+
+    const auto numberAt = [&points](int index) {
+        return points.property(index).property(QStringLiteral("number")).toInt();
+    };
+    QCOMPARE(numberAt(0), 1);
+    QCOMPARE(numberAt(1), 2);
+    QCOMPARE(numberAt(2), 3);
+
+    // The takeoff is listed even though there is nowhere to draw it. It is the item whose altitude
+    // is flown first, and a plan that hides it is a plan the operator cannot check.
+    QVERIFY2(!points.property(0).property(QStringLiteral("onGrid")).toBool(),
+             "ArduPilot's takeoff carries no coordinate, so it cannot be drawn");
+    QVERIFY(points.property(0).property(QStringLiteral("isPinned")).toBool());
+    QVERIFY(points.property(1).property(QStringLiteral("onGrid")).toBool());
+    QVERIFY(points.property(2).property(QStringLiteral("onGrid")).toBool());
+
+    // The rows say the same numbers, since the whole complaint was what is on screen
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+
+    const auto rowNumbers = [gridItem]() {
+        QList<int> numbers;
+        const QList<QQuickItem *> rows = collectItemsNamed(gridItem, QStringLiteral("localGrid_missionItemRow"));
+        for (QQuickItem *const row : rows) {
+            numbers.append(row->property("itemNumber").toInt());
+        }
+        std::sort(numbers.begin(), numbers.end());
+        return numbers;
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(rowNumbers(), QList<int>({ 1, 2, 3 }), TestTimeout::mediumMs());
+
+    // And the marker for an item with no position is not drawn standing at the origin, which is
+    // where a NaN offset would otherwise put it
+    QVariant marker;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointMarkerAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, marker), Q_ARG(QVariant, 0)));
+    QObject *const takeoffMarker = marker.value<QObject *>();
+    QVERIFY(takeoffMarker);
+    QVERIFY2(!takeoffMarker->property("visible").toBool(),
+             "an item with no coordinate must not be drawn anywhere on the grid");
+}
+
+/// The vehicle's mission index can land on the second half of an item. A waypoint carrying a speed
+/// is flown as a NAV_WAYPOINT followed by a DO_CHANGE_SPEED, and matching only the first of those
+/// left the plan with nothing marked while the aircraft was working through the rest of it.
+void LocalGridViewTest::_rowIsMarkedWhereverTheVehicleIsInsideIt_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 0.0))), Q_ARG(QVariant, 1)));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 90.0))), Q_ARG(QVariant, 3)));
+
+    // The first waypoint's speed occupies sequence 2, which is why the second one starts at 3
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 2);
+    QObject *const firstWaypoint = items.at(0).value<QObject *>();
+    QVERIFY(firstWaypoint);
+    firstWaypoint->setProperty("lastSequenceNumber", 2);
+
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    const auto markedNumbers = [&gridView]() {
+        QList<int> numbers;
+        const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+        const int count = points.property(QStringLiteral("length")).toInt();
+        for (int i = 0; i < count; i++) {
+            if (points.property(i).property(QStringLiteral("isVehicleTarget")).toBool()) {
+                numbers.append(points.property(i).property(QStringLiteral("number")).toInt());
+            }
+        }
+        return numbers;
+    };
+
+    QVERIFY2(markedNumbers().isEmpty(), "a plan nobody is flying marks nothing");
+
+    stub->setProperty("currentMissionIndex", 1);
+    QCOMPARE(markedNumbers(), QList<int>({ 1 }));
+
+    // Still the first waypoint: sequence 2 is its speed, not the item after it
+    stub->setProperty("currentMissionIndex", 2);
+    QCOMPARE(markedNumbers(), QList<int>({ 1 }));
+
+    stub->setProperty("currentMissionIndex", 3);
+    QCOMPARE(markedNumbers(), QList<int>({ 2 }));
+}
+
+/// The takeoff is the item whose altitude the aircraft climbs to first, and on ArduPilot it is the
+/// one the grid cannot draw. Leaving it out of the sweeps meant "set this altitude on all" missed
+/// it, and the ceiling warning -- which exists because the item that runs a flight away is usually
+/// the takeoff -- could not see the very item it was written for.
+void LocalGridViewTest::_takeoffWithNoCoordinateIsStillPartOfThePlan_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    stub->setProperty("takeoffSpecifiesCoordinate", false);
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // Placing the first waypoint gives the plan its takeoff, the way it does on the flight line
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY(!points.property(0).property(QStringLiteral("onGrid")).toBool());
+
+    // Every item, including the one with nowhere to be drawn
+    QVariant changed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointAltitudes", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, 3.0)));
+    QCOMPARE(changed.toInt(), 2);
+
+    for (int index = 0; index < 2; index++) {
+        QVariant factValue;
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointAltitudeFact", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, factValue), Q_ARG(QVariant, index)));
+        auto *const fact = factValue.value<Fact *>();
+        QVERIFY(fact);
+        QCOMPARE(fact->rawValue().toDouble(), 3.0);
+    }
+
+    // The ceiling scan walks this same list, so it now reaches the takeoff too. What the ceiling
+    // itself is worth on a given aircraft is LocalGridAltitudeLimitTest's business; this mock takes
+    // its height from the barometer, so there is no ceiling here to breach.
+    QVERIFY(!gridView->property("altitudeLimitKnown").toBool());
+}
+
+/// A second flight of the same pattern is the whole point of drawing one, and until now it needed
+/// the aircraft rebooted. The plan is held as coordinates worked out from the origin the aircraft
+/// was standing on; after a flight it is standing somewhere else, so flying the plan again sends it
+/// back over the ground it has already covered from a start point part way along the route.
+/// ArduPilot will not take a second origin, so moving the frame meant a reboot. Moving the plan
+/// needs nothing from the firmware.
+void LocalGridViewTest::_planCanBeMovedToStartFromTheAircraft_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    stub->setProperty("takeoffSpecifiesCoordinate", false);
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    const auto place = [&gridView](double north, double east) {
+        QVariant added;
+        const bool called = QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                                      Q_RETURN_ARG(QVariant, added),
+                                                      Q_ARG(QVariant, north), Q_ARG(QVariant, east));
+        return called && added.toBool();
+    };
+    // An empty plan has no pattern to move, so the offer is withdrawn rather than left to move
+    // nothing and report that it did
+    QCOMPARE(gridView->property("canReanchorPlan").toBool(), false);
+
+    QVERIFY(place(20.0, 0.0));
+    QVERIFY(place(20.0, 20.0));
+
+    // Where the aircraft came to rest at the end of the pattern it just flew
+    sendLocalPosition(vehicle(), 20.0F, 20.0F, 0.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("canReanchorPlan").toBool(), TestTimeout::mediumMs());
+    QCOMPARE(gridView->property("reanchorNorthMetres").toDouble(), 20.0);
+    QCOMPARE(gridView->property("reanchorEastMetres").toDouble(), 20.0);
+
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "reanchorPlanToVehicle", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved)));
+    QCOMPARE(moved.toInt(), 2);
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+
+    const auto pointIsAbout = [&points](int index, double north, double east) {
+        const QJSValue point = points.property(index);
+        return (qAbs(point.property(QStringLiteral("north")).toNumber() - north) < 0.05)
+               && (qAbs(point.property(QStringLiteral("east")).toNumber() - east) < 0.05);
+    };
+
+    // The pattern keeps its shape and now runs from where the aircraft is standing
+    QVERIFY2(pointIsAbout(1, 40.0, 20.0), "the first leg must start from the aircraft, not the origin");
+    QVERIFY2(pointIsAbout(2, 40.0, 40.0), "and the rest of the pattern must move with it");
+
+    // The takeoff has no coordinate to move and is pinned besides, so it is not counted as moved
+    QVERIFY2(!points.property(0).property(QStringLiteral("onGrid")).toBool(),
+             "an item with no position must not be handed a NaN one by the move");
+
+    // Not while it is flying. Moving the plan under an aircraft already following it changes where
+    // it is going mid-flight, which is not what anyone reaching for this between flights means.
+    // Walked away from the pattern first, so the refusal being tested is the arming one rather than
+    // the plan already sitting where the button would put it.
+    sendLocalPosition(vehicle(), 40.0F, 40.0F, 0.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("canReanchorPlan").toBool(), TestTimeout::mediumMs());
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+    QTRY_COMPARE_WITH_TIMEOUT(gridView->property("canReanchorPlan").toBool(), false, TestTimeout::mediumMs());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "reanchorPlanToVehicle", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved)));
+    QCOMPARE(moved.toInt(), 0);
+}
+
+/// Pressing it a second time must not move the pattern a second time.
+///
+/// The offer used to be the aircraft's whole distance from the origin, worked out fresh on every
+/// press. That is right once and wrong afterwards: the plan moved by the first press already starts
+/// where the aircraft is, and a second press moved it by the full distance again. The failure is
+/// worse than it sounds, because the first press does exactly what the operator wanted -- so the
+/// pattern that ends up twice as far out is the one they have already learned to trust.
+void LocalGridViewTest::_movingThePlanToTheAircraftTwiceMovesItOnce_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    stub->setProperty("takeoffSpecifiesCoordinate", false);
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+
+    // The anchor lives in settings now, and settings facts keep their values across test functions
+    // within a process. Started from a known one rather than from whatever ran before this.
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    const auto place = [&gridView](double north, double east) {
+        QVariant added;
+        const bool called = QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                                      Q_RETURN_ARG(QVariant, added),
+                                                      Q_ARG(QVariant, north), Q_ARG(QVariant, east));
+        return called && added.toBool();
+    };
+    QVERIFY(place(20.0, 0.0));
+    QVERIFY(place(20.0, 20.0));
+
+    const auto pointIsAbout = [&gridView](int index, double north, double east) {
+        const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+        const QJSValue point = points.property(index);
+        return (qAbs(point.property(QStringLiteral("north")).toNumber() - north) < 0.05)
+               && (qAbs(point.property(QStringLiteral("east")).toNumber() - east) < 0.05);
+    };
+    const auto reanchor = [&gridView]() {
+        QVariant moved;
+        const bool called = QMetaObject::invokeMethod(gridView.get(), "reanchorPlanToVehicle",
+                                                      Qt::DirectConnection, Q_RETURN_ARG(QVariant, moved));
+        return called ? moved.toInt() : -1;
+    };
+
+    // Where the aircraft came to rest at the end of the pattern it just flew
+    sendLocalPosition(vehicle(), 20.0F, 20.0F, 0.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("canReanchorPlan").toBool(), TestTimeout::mediumMs());
+    QCOMPARE(reanchor(), 2);
+    QVERIFY(pointIsAbout(1, 40.0, 20.0));
+    QVERIFY(pointIsAbout(2, 40.0, 40.0));
+
+    // The pattern now starts where the aircraft is standing, so there is nothing left to offer and
+    // the button goes quiet rather than staying live with a move of zero behind it
+    QVERIFY2(gridView->property("planStartsAtVehicle").toBool(),
+             "the plan must be reported as already starting at the aircraft");
+    QCOMPARE(gridView->property("canReanchorPlan").toBool(), false);
+    QCOMPARE(gridView->property("reanchorNorthMetres").toDouble(), 0.0);
+    QCOMPARE(gridView->property("reanchorEastMetres").toDouble(), 0.0);
+
+    // Pressed again anyway -- from a stale binding, a double tap, or an operator making sure
+    QCOMPARE(reanchor(), 0);
+    QVERIFY2(pointIsAbout(1, 40.0, 20.0), "a second press must not move the pattern a second time");
+    QVERIFY(pointIsAbout(2, 40.0, 40.0));
+
+    // And after the next flight, only the distance covered since is offered
+    sendLocalPosition(vehicle(), 40.0F, 40.0F, 0.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("canReanchorPlan").toBool(), TestTimeout::mediumMs());
+    QCOMPARE(gridView->property("reanchorNorthMetres").toDouble(), 20.0);
+    QCOMPARE(gridView->property("reanchorEastMetres").toDouble(), 20.0);
+
+    QCOMPARE(reanchor(), 2);
+    QVERIFY2(pointIsAbout(1, 60.0, 40.0), "the third flight moves the pattern by one flight's worth");
+    QVERIFY(pointIsAbout(2, 60.0, 60.0));
+}
+
+/// A pattern drawn after one has been moved is laid out from the origin like every other one, so
+/// where the last plan was moved to must not be carried over to it -- that would take the first move
+/// of the new pattern short by however far the old one had travelled.
+void LocalGridViewTest::_aFreshPatternIsNotOffsetByTheLastPlansMove_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    stub->setProperty("takeoffSpecifiesCoordinate", false);
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    const auto place = [&gridView](double north, double east) {
+        QVariant added;
+        const bool called = QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                                      Q_RETURN_ARG(QVariant, added),
+                                                      Q_ARG(QVariant, north), Q_ARG(QVariant, east));
+        return called && added.toBool();
+    };
+    QVERIFY(place(20.0, 0.0));
+
+    sendLocalPosition(vehicle(), 15.0F, -5.0F, 0.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("canReanchorPlan").toBool(), TestTimeout::mediumMs());
+
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "reanchorPlanToVehicle", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved)));
+    QCOMPARE(moved.toInt(), 1);
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 15.0);
+
+    // The operator wipes the plan and draws a new one, the way a second sortie starts
+    const int itemCount = stub->property("items").toList().count();
+    for (int i = itemCount - 1; i >= 0; i--) {
+        QVERIFY(QMetaObject::invokeMethod(stub.get(), "removeVisualItem", Qt::DirectConnection,
+                                          Q_ARG(QVariant, i)));
+    }
+    QCOMPARE(gridView->property("missionPoints").value<QJSValue>()
+                 .property(QStringLiteral("length")).toInt(), 0);
+
+    QVERIFY(place(20.0, 0.0));
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 0.0);
+    QCOMPARE(gridView->property("planAnchorEast").toDouble(), 0.0);
+
+    // So the whole distance from the origin is offered again, not what is left of it
+    QCOMPARE(gridView->property("reanchorNorthMetres").toDouble(), 15.0);
+    QCOMPARE(gridView->property("reanchorEastMetres").toDouble(), -5.0);
+}
+
+/// A plan already on the vehicle is picked up where the last flight stopped, not at its head.
+///
+/// ArduPilot resumes rather than restarts -- MIS_RESTART defaults to Resume -- so entering Auto after
+/// a flight that was cut short carries on from the item it stopped on. The aircraft takes off and
+/// then flies to the middle of the route, which is what a second flight "not working" looks like
+/// from the ground. Nothing on screen said so, because the vehicle's own index counts things nobody
+/// placed: the home position, and the DO_CHANGE_SPEED a waypoint's speed is uploaded as.
+void LocalGridViewTest::_planSaysWhereTheVehicleWouldPickItUp_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    // ArduPilot's shape: home at 0, a takeoff at 1 carrying no coordinate, a waypoint at 2 whose
+    // speed occupies 3, and a landing at 4.
+    stub->setProperty("takeoffSpecifiesCoordinate", false);
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "addHomeItem", Qt::DirectConnection,
+                                      Q_ARG(QVariant, QVariant::fromValue(origin))));
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "insertTakeoffItem", Qt::DirectConnection,
+                                      Q_ARG(QVariant, QVariant::fromValue(origin)),
+                                      Q_ARG(QVariant, -1), Q_ARG(QVariant, true)));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 0.0))),
+        Q_ARG(QVariant, 2)));
+    QVERIFY(QMetaObject::invokeMethod(
+        stub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 90.0))),
+        Q_ARG(QVariant, 4)));
+
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 4);
+    // The stub numbers items as it appends them, which puts the takeoff at 2. On the wire it is 1:
+    // home takes 0, and this test is about the mapping between the two numberings.
+    QObject *const takeoff = items.at(1).value<QObject *>();
+    QVERIFY(takeoff);
+    takeoff->setProperty("sequenceNumber", 1);
+    QObject *const waypoint = items.at(2).value<QObject *>();
+    QVERIFY(waypoint);
+    waypoint->setProperty("lastSequenceNumber", 3);
+
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    const auto resumeNumber = [&gridView]() {
+        return gridView->property("vehicleResumeItemNumber").toInt();
+    };
+
+    // Nothing reported yet, so nothing to warn about
+    QCOMPARE(resumeNumber(), 0);
+
+    // Sitting on home is the head of the plan, which is where it should start
+    stub->setProperty("currentMissionIndex", 0);
+    QCOMPARE(resumeNumber(), 0);
+
+    // The takeoff. Still the head of the plan.
+    stub->setProperty("currentMissionIndex", 1);
+    QCOMPARE(resumeNumber(), 1);
+
+    // The waypoint, and then its own speed item. Both are the same item as far as the operator is
+    // concerned, and naming the speed as a separate one would point at a waypoint nobody placed.
+    stub->setProperty("currentMissionIndex", 2);
+    QCOMPARE(resumeNumber(), 2);
+    stub->setProperty("currentMissionIndex", 3);
+    QCOMPARE(resumeNumber(), 2);
+
+    // The landing -- the third item on screen, not the fourth number on the wire
+    stub->setProperty("currentMissionIndex", 4);
+    QCOMPARE(resumeNumber(), 3);
+
+    // And the plan can be sent back to its head. The plan's own first sequence number rather than a
+    // literal one, because what the firmware counts differs.
+    QVariant restarted;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "restartPlanOnVehicle", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, restarted)));
+    QVERIFY2(restarted.toBool(), "a disarmed vehicle holding a plan must accept being sent to its head");
+
+    // Not while it is armed: the index is what the aircraft is flying to, and moving it mid-flight
+    // sends it somewhere nobody asked for.
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "restartPlanOnVehicle", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, restarted)));
+    QCOMPARE(restarted.toBool(), false);
+}
+
+/// Upload from the grid used to go straight to sendToVehicle, skipping the pre-check the Plan view
+/// runs before its own. Two of the states that check catches are the ones this view meets most:
+/// a mission already running on the vehicle, and a plan file built for another firmware or vehicle
+/// class. Both upload cleanly and fly as something else.
+void LocalGridViewTest::_uploadIsRefusedWhenThePreCheckSaysSo_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    // The panel reaches its mission controller through the plan controller, the way the real one does
+    plan->setProperty("missionController", QVariant::fromValue(stub.get()));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    const QList<QQuickItem *> panels = collectItemsNamed(gridItem, QStringLiteral("localGrid_missionActions"));
+    QCOMPARE(panels.count(), 1);
+    QQuickItem *const panel = panels.first();
+
+    const auto upload = [panel]() {
+        return QMetaObject::invokeMethod(panel, "_upload", Qt::DirectConnection);
+    };
+    const auto sendCount = [&plan]() { return plan->property("sendCount").toInt(); };
+
+    // MissionController::SendToVehiclePreCheckState, by the order of its own enum
+    constexpr int kPreCheckOk = 0;
+    constexpr int kPreCheckNoActiveVehicle = 1;
+    constexpr int kPreCheckFirmwareMismatch = 2;
+    constexpr int kPreCheckActiveMission = 3;
+
+    stub->setProperty("preCheckState", kPreCheckOk);
+    QVERIFY(upload());
+    QCOMPARE(sendCount(), 1);
+
+    // A mission running on the vehicle. ArduPilot rewrites its mission store in place, so a write
+    // landing now leaves the aircraft part way through a route that no longer exists.
+    stub->setProperty("preCheckState", kPreCheckActiveMission);
+    QVERIFY(upload());
+    QCOMPARE(sendCount(), 1);
+
+    stub->setProperty("preCheckState", kPreCheckNoActiveVehicle);
+    QVERIFY(upload());
+    QCOMPARE(sendCount(), 1);
+
+    // A mismatched plan is asked about rather than refused -- the operator may know better -- so
+    // nothing is sent until the confirmation is answered
+    stub->setProperty("preCheckState", kPreCheckFirmwareMismatch);
+    QVERIFY(upload());
+    QCOMPARE(sendCount(), 1);
+
+    // An item still waiting on data has no coordinate to send, whatever the pre-check says.
+    // VisualMissionItem::NotReadyForSaveData is 2.
+    stub->setProperty("preCheckState", kPreCheckOk);
+    plan->setProperty("saveState", 2);
+    QVERIFY(upload());
+    QCOMPARE(sendCount(), 1);
+
+    plan->setProperty("saveState", 0);
+    QVERIFY(upload());
+    QCOMPARE(sendCount(), 2);
+}
+
+/// The plan outlives the view that moved it, so the anchor has to as well.
+///
+/// A pattern moved to the aircraft and uploaded is on the vehicle. Close QGC, open it again, and the
+/// fly view shows that same moved plan back from the vehicle -- but an anchor held only in the view
+/// went back to the origin with it, so the button offered to move the pattern by the whole distance
+/// a second time. The operator gets a plan twice as far out as they asked for, on the press that
+/// worked correctly the day before.
+///
+/// Stored against the vehicle it was measured under, because a distance travelled by one aircraft
+/// says nothing about where another one's plan is drawn.
+void LocalGridViewTest::_planAnchorOutlivesTheView_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    stub->setProperty("takeoffSpecifiesCoordinate", false);
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    sendLocalPosition(vehicle(), 20.0F, 10.0F, 0.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("canReanchorPlan").toBool(), TestTimeout::mediumMs());
+
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "reanchorPlanToVehicle", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved)));
+    QCOMPARE(moved.toInt(), 1);
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 20.0);
+    QCOMPARE(gridView->property("planAnchorEast").toDouble(), 10.0);
+
+    // A second view of the same aircraft, which is what the next run of QGC amounts to
+    QQmlComponent restartedComponent(&gridViewEngine);
+    QString restartedError;
+    const QScopedPointer<QObject> restarted(createGridView(restartedComponent, vehicle(), restartedError));
+    QVERIFY2(restarted, qPrintable(restartedError));
+
+    QCOMPARE(restarted->property("planAnchorNorth").toDouble(), 20.0);
+    QCOMPARE(restarted->property("planAnchorEast").toDouble(), 10.0);
+    QVERIFY2(restarted->property("planStartsAtVehicle").toBool(),
+             "a plan already moved to this aircraft must not be offered the move again after a restart");
+
+    // A view with no vehicle, and one whose vehicle is not the one the anchor was recorded under,
+    // both read the plan as undrawn rather than inheriting a distance that was never theirs
+    QQmlComponent noVehicleComponent(&gridViewEngine);
+    QString noVehicleError;
+    const QScopedPointer<QObject> noVehicle(createGridView(noVehicleComponent, nullptr, noVehicleError));
+    QVERIFY2(noVehicle, qPrintable(noVehicleError));
+    QCOMPARE(noVehicle->property("planAnchorNorth").toDouble(), 0.0);
+    QCOMPARE(noVehicle->property("planAnchorEast").toDouble(), 0.0);
+
+    FlyViewSettings *const flyViewSettings = SettingsManager::instance()->flyViewSettings();
+    QVERIFY(flyViewSettings);
+    flyViewSettings->localGridPlanAnchorVehicleId()->setRawValue(vehicle()->id() + 1);
+    QCOMPARE(restarted->property("planAnchorNorth").toDouble(), 0.0);
+    QCOMPARE(restarted->property("planAnchorEast").toDouble(), 0.0);
+
+    // And clearing it puts every view back to a pattern drawn from the origin
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+    QCOMPARE(flyViewSettings->localGridPlanAnchorVehicleId()->rawValue().toUInt(), 0U);
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 0.0);
 }

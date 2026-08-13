@@ -82,6 +82,29 @@
             "label": "Last estimator origin longitude"
         },
         {
+            "name": "localGridPlanAnchorVehicleId",
+            "shortDesc": "MAVLink system id the stored plan anchor below was recorded against. Zero means none, and an id that does not match the connected vehicle makes the anchor be ignored -- a plan moved under one aircraft says nothing about another one's.",
+            "type": "uint32",
+            "default": 0,
+            "label": "Local grid plan anchor vehicle id"
+        },
+        {
+            "name": "localGridPlanAnchorNorth",
+            "shortDesc": "Metres north of the estimator origin that the local grid plan's pattern was last moved to start from, so a plan moved before a restart is not moved by the whole distance again afterwards.",
+            "type": "double",
+            "units": "m",
+            "default": 0,
+            "label": "Local grid plan anchor north"
+        },
+        {
+            "name": "localGridPlanAnchorEast",
+            "shortDesc": "Metres east of the estimator origin that the local grid plan's pattern was last moved to start from.",
+            "type": "double",
+            "units": "m",
+            "default": 0,
+            "label": "Local grid plan anchor east"
+        },
+        {
             "name": "showLocalGridView",
             "shortDesc": "Replace the fly view map with a local NED grid measured in metres.",
             "type": "bool",

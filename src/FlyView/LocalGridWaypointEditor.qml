@@ -79,6 +79,14 @@ ColumnLayout {
                                         ? gridView.waypointIsPinned(visualItemIndex)
                                         : false
 
+    /// False for an item that has no place on the grid at all: ArduPilot's takeoff, which is
+    /// altitude-only, or a return to launch, which flies to a point the plan does not name. Their
+    /// position fields would take a number and move nothing, so they are dropped rather than shown.
+    readonly property bool _placedOnGrid: !isNaN(north) && !isNaN(east)
+
+    /// Whether the fields that move this item are any use on it
+    readonly property bool _movable: _placedOnGrid && !_isPinned
+
     /// Said out loud when an altitude has just been brought back under the ceiling, so a number
     /// changing under the operator's cursor is explained rather than merely surprising. Cleared when
     /// the selection moves, since it describes one edit to one item.
@@ -274,14 +282,27 @@ ColumnLayout {
         text:                   qsTr("Held on the origin, where the aircraft is standing. Set its altitude below.")
     }
 
+    // An item that flies to a point the plan does not carry -- a return to launch goes to the
+    // vehicle's home rather than to anywhere drawn here. Said out loud, because a row with no
+    // position fields and no explanation reads as a row that failed to load.
+    QGCLabel {
+        Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 3
+        Layout.maximumWidth:    _root._textWidth
+        visible:                !_root._placedOnGrid && !_root._isPinned
+        wrapMode:               Text.WordWrap
+        font.pointSize:         ScreenTools.smallFontPointSize
+        color:                  qgcPal.colorGrey
+        text:                   qsTr("This item carries no position of its own, so it is not drawn on the grid.")
+    }
+
     SectionHeader {
-        visible: !_root._isPinned
+        visible: _root._movable
         text:    qsTr("Position From Origin")
     }
 
     EntryRow {
         id:         northRow
-        visible:    !_root._isPinned
+        visible:    _root._movable
         label:      qsTr("North")
         units:      _root._distanceUnits
         onApplied:  _root._applyOffsets()
@@ -289,7 +310,7 @@ ColumnLayout {
 
     EntryRow {
         id:         eastRow
-        visible:    !_root._isPinned
+        visible:    _root._movable
         label:      qsTr("East")
         units:      _root._distanceUnits
         onApplied:  _root._applyOffsets()
@@ -297,7 +318,7 @@ ColumnLayout {
 
     EntryRow {
         id:         bearingRow
-        visible:    !_root._isPinned
+        visible:    _root._movable
         label:      qsTr("Bearing")
         units:      "°"
         onApplied:  _root._applyPolar()
@@ -305,20 +326,20 @@ ColumnLayout {
 
     EntryRow {
         id:         distanceRow
-        visible:    !_root._isPinned
+        visible:    _root._movable
         label:      qsTr("Distance")
         units:      _root._distanceUnits
         onApplied:  _root._applyPolar()
     }
 
     SectionHeader {
-        visible: !_root._isPinned
+        visible: _root._movable
         text:    qsTr("Leg From Previous")
     }
 
     EntryRow {
         id:         legBearingRow
-        visible:    !_root._isPinned
+        visible:    _root._movable
         label:      qsTr("Bearing")
         units:      "°"
         onApplied:  _root._applyLeg()
@@ -326,7 +347,7 @@ ColumnLayout {
 
     EntryRow {
         id:         legDistanceRow
-        visible:    !_root._isPinned
+        visible:    _root._movable
         label:      qsTr("Distance")
         units:      _root._distanceUnits
         onApplied:  _root._applyLeg()
@@ -444,7 +465,7 @@ ColumnLayout {
         Layout.maximumWidth:    _root._textWidth
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
-        visible:                !_root._isPinned
+        visible:                _root._movable
         color:                  qgcPal.colorGrey
         text:                   qsTr("Drag the marker, or type into any field.")
     }

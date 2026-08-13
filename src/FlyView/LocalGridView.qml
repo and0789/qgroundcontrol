@@ -201,7 +201,7 @@ Item {
     readonly property alias heightAboveCeiling: altitudeLimit.aboveCeiling
     readonly property alias currentHeightMetres: altitudeLimit.currentHeightMetres
 
-    /// Sequence numbers of every item in the plan whose altitude climbs past that ceiling.
+    /// The numbers of every item in the plan whose altitude climbs past that ceiling.
     ///
     /// Scanned across the whole plan rather than reported per selected item. A warning that appears
     /// only when the operator happens to be looking at the offending waypoint is not a warning: the
@@ -220,7 +220,7 @@ Item {
             // rawValue is read inside the loop on purpose: it makes this binding depend on every
             // item's altitude, so editing one re-runs the scan
             if (fact && altitudeLimit.exceeds(fact.rawValue)) {
-                offenders.push(points[i].sequence)
+                offenders.push(points[i].number)
             }
         }
         return offenders
@@ -239,10 +239,17 @@ Item {
         return altitudeLimit.exceeds(metres) ? altitudeLimit.safeDefaultMetres : metres
     }
 
-    /// Walks the plan and places each item that has a coordinate on the grid. Reading
-    /// missionController.visualItems.count and the origin here is deliberate: both are what this
-    /// depends on, and touching them makes the binding re-run when a waypoint is added or the
-    /// vehicle's origin changes.
+    /// Walks the plan and turns every item in it into a row, working out grid offsets for the ones
+    /// that can be drawn. Reading missionController.visualItems.count and the origin here is
+    /// deliberate: both are what this depends on, and touching them makes the binding re-run when a
+    /// waypoint is added or the vehicle's origin changes.
+    ///
+    /// Every item, not only the ones with a coordinate. ArduPilot's takeoff carries no coordinate at
+    /// all -- it climbs in place, so the firmware describes it as altitude-only -- and a plan list
+    /// built from drawable items alone left it out entirely. The operator then saw a plan starting
+    /// at "2", could not set the takeoff's altitude with the rest of the pattern, and got no warning
+    /// when that one item was the one above the rangefinder's range. An item with nowhere to be
+    /// drawn is still an item the aircraft will fly.
     function _buildMissionPoints() {
         const points = []
         if (!missionController || !originKnown) {
@@ -256,7 +263,7 @@ Item {
 
         for (var i = 0; i < items.count; i++) {
             const item = items.get(i)
-            if (!item || !item.specifiesCoordinate || !item.coordinate.isValid) {
+            if (!item) {
                 continue
             }
             // The plan's first visual item is the mission settings, which carries the planned home
@@ -266,29 +273,60 @@ Item {
             if (item.homePosition === true) {
                 continue
             }
-            const offsets = projection.northEastFrom(originCoordinate, item.coordinate)
-            if (!offsets) {
-                continue
+
+            var north = NaN
+            var east = NaN
+            var onGrid = false
+            if (item.specifiesCoordinate && item.coordinate.isValid) {
+                const offsets = projection.northEastFrom(originCoordinate, item.coordinate)
+                if (offsets) {
+                    north = offsets.north
+                    east = offsets.east
+                    onGrid = true
+                }
             }
+
+            // Where the vehicle's own mission index falls for this item. An item can occupy more
+            // than one place in the uploaded mission -- a waypoint carrying a speed is flown as a
+            // NAV_WAYPOINT followed by a DO_CHANGE_SPEED -- so the match is against the span rather
+            // than the first number of it, otherwise no row is marked while the vehicle is working
+            // through the second half of one.
+            const firstSequence = item.sequenceNumber
+            const lastSequence = (item.lastSequenceNumber === undefined) ? firstSequence
+                                                                         : item.lastSequenceNumber
+
             points.push({
-                north:      offsets.north,
-                east:       offsets.east,
-                // The index into visualItems, which is what removal and reordering take. It is not
-                // the sequence number on the marker's face: the two diverge as soon as the plan
-                // holds anything that is not a plain waypoint.
+                north:      north,
+                east:       east,
+                /// False for an item the grid has nowhere to put: it is listed, but no marker is
+                /// drawn for it and it cannot be dragged or moved with the rest of the plan
+                onGrid:     onGrid,
+                /// Where this item comes in the plan, counting from one. This is what the row and
+                /// the marker show, and it is deliberately not the mission sequence number: those
+                /// count the home position and the DO_CHANGE_SPEED items QGC folds into a waypoint,
+                /// so a plan of three items read "2" and "4" on screen with nothing to say what
+                /// happened to 1 and 3.
+                number:     points.length + 1,
+                // The index into visualItems, which is what removal and reordering take
                 index:      i,
-                sequence:   item.sequenceNumber,
+                sequence:     firstSequence,
+                lastSequence: lastSequence,
                 // Compared against the vehicle's own mission index rather than reading the item's
                 // isCurrentItem. Both are written in the fly view: the vehicle advancing sets it,
                 // but so does inserting an item, so a freshly placed waypoint marked itself as the
                 // one being flown to while the aircraft was still standing on the origin.
-                isVehicleTarget: (_root.vehicleTargetSequence >= 0)
-                                    && (item.sequenceNumber === _root.vehicleTargetSequence),
-                // Takeoffs are drawn but not dragged: this one is anchored to the origin
+                isVehicleTarget: (_root.vehicleTargetSequence >= firstSequence)
+                                    && (_root.vehicleTargetSequence <= lastSequence),
+                // Takeoffs are listed but not dragged: this one is anchored to the origin
                 isPinned:   _isPinnedItem(item)
             })
         }
         return points
+    }
+
+    /// The plan's items that have somewhere on the grid to be drawn, in plan order
+    function _drawnMissionPoints() {
+        return missionPoints.filter(point => point.onGrid)
     }
 
     /// Whether the estimator's frame has slid away from the ground while the aircraft sat on it
@@ -382,6 +420,13 @@ Item {
     function addMissionItemAt(kind, north, east) {
         if (!canPlaceWaypoints) {
             return false
+        }
+
+        // A plan started from nothing is a new pattern, laid out from the origin like every other
+        // one. Wherever the last plan had been moved to describes that plan, not this one, and left
+        // standing it would take the first move of this one short by that distance.
+        if (_planIsEmpty()) {
+            resetPlanAnchor()
         }
 
         // Wherever on the grid it was asked for, a takeoff belongs on the origin
@@ -488,8 +533,10 @@ Item {
         return addMissionItemAt("waypoint", north, east)
     }
 
-    /// True when the plan holds nothing that has been placed on the ground yet. Mission settings and
-    /// other item types that carry no coordinate are not part of a route.
+    /// True when the plan holds nothing yet. The mission settings item is not part of a route, and
+    /// neither is an item the vehicle's copy of the plan has not produced yet, but everything the
+    /// aircraft would fly counts -- including a takeoff, which carries no coordinate on ArduPilot
+    /// and so is nowhere on the grid.
     function _planIsEmpty() {
         return missionPoints.length === 0
     }
@@ -557,16 +604,23 @@ Item {
 
     /// Where the leg that reaches a waypoint starts, in grid metres: the waypoint drawn before it,
     /// or the origin for the first one, since that is where the vehicle starts.
+    ///
+    /// Items with nowhere on the grid to be drawn are stepped over rather than counted as the leg's
+    /// start. A takeoff carries no coordinate on ArduPilot, and a leg measured from an item that has
+    /// no position is a leg measured from nothing.
     ///     @return { north, east }, or null when the index names no drawn waypoint
     function legStartFor(index) {
         const points = missionPoints
         for (var i = 0; i < points.length; i++) {
-            if (points[i].index !== index) {
+            if ((points[i].index !== index) || !points[i].onGrid) {
                 continue
             }
-            return (i > 0)
-                ? { north: points[i - 1].north, east: points[i - 1].east }
-                : { north: 0, east: 0 }
+            for (var previous = i - 1; previous >= 0; previous--) {
+                if (points[previous].onGrid) {
+                    return { north: points[previous].north, east: points[previous].east }
+                }
+            }
+            return { north: 0, east: 0 }
         }
         return null
     }
@@ -766,7 +820,7 @@ Item {
         var moved = 0
         for (var i = 0; i < points.length; i++) {
             const point = points[i]
-            if (point.isPinned) {
+            if (point.isPinned || !point.onGrid) {
                 continue
             }
             if (moveWaypointTo(point.index, point.north + northMetres, point.east + eastMetres)) {
@@ -774,6 +828,184 @@ Item {
             }
         }
         return moved
+    }
+
+    // Read into a property of its own rather than inline below. A binding that reaches for
+    // vehicle.armed behind a short-circuit only picks up the dependency on the passes that get that
+    // far, so the plan stayed movable after the aircraft armed.
+    readonly property bool vehicleArmed: vehicle ? vehicle.armed : false
+
+    /// Where the plan's pattern currently starts, in metres from the origin.
+    ///
+    /// (0, 0) for a pattern as drawn: the grid lays one out from the origin, which is the point the
+    /// aircraft was standing on at the time. reanchorPlanToVehicle moves the pattern and records
+    /// where it moved it to, so the next move is the distance the aircraft has covered since rather
+    /// than the whole distance from the origin all over again.
+    ///
+    /// Without this the offer was right exactly once. A third flight moved a pattern that had
+    /// already been moved, by the full offset again, and put it twice as far out as the operator
+    /// asked for -- in the direction they were least likely to be watching, since the first press
+    /// had done exactly what they wanted.
+    ///
+    /// Kept in settings rather than in this object, because the plan outlives it. A plan moved and
+    /// uploaded is on the aircraft; close QGC and open it again and the fly view shows that same
+    /// moved plan back from the vehicle, while an anchor held only here would have gone back to the
+    /// origin and offered to move it all over again. Stored against the vehicle it describes, so a
+    /// different aircraft does not inherit a distance that was measured under this one.
+    readonly property real planAnchorNorth: _anchorAppliesToThisVehicle
+                                                ? _planAnchorNorthFact.rawValue : 0
+    readonly property real planAnchorEast:  _anchorAppliesToThisVehicle
+                                                ? _planAnchorEastFact.rawValue  : 0
+
+    readonly property var _flyViewSettings:     QGroundControl.settingsManager.flyViewSettings
+    readonly property var _planAnchorIdFact:    _flyViewSettings.localGridPlanAnchorVehicleId
+    readonly property var _planAnchorNorthFact: _flyViewSettings.localGridPlanAnchorNorth
+    readonly property var _planAnchorEastFact:  _flyViewSettings.localGridPlanAnchorEast
+
+    /// Zero is the stored id for "no anchor", and is not a system id any vehicle carries
+    readonly property bool _anchorAppliesToThisVehicle: (vehicle !== null)
+                                                            && (_planAnchorIdFact.rawValue !== 0)
+                                                            && (_planAnchorIdFact.rawValue === vehicle.id)
+
+    /// Puts the anchor back on the origin, for a plan that is not the one that was moved.
+    ///
+    /// Called when the plan is cleared, loaded from a file or fetched from the vehicle. Each of
+    /// those brings its own coordinates, drawn around the origin of whoever drew them, so what the
+    /// last move did to the last plan says nothing about this one.
+    function resetPlanAnchor() {
+        _planAnchorIdFact.rawValue    = 0
+        _planAnchorNorthFact.rawValue = 0
+        _planAnchorEastFact.rawValue  = 0
+    }
+
+    /// Records where the pattern has just been moved to, against the aircraft it was measured under
+    function _storePlanAnchor(north, east) {
+        _planAnchorIdFact.rawValue    = vehicle ? vehicle.id : 0
+        _planAnchorNorthFact.rawValue = north
+        _planAnchorEastFact.rawValue  = east
+    }
+
+    /// How far the plan would still move to start from where the aircraft is standing now
+    readonly property real reanchorNorthMetres: positionValid ? (vehicleNorth - planAnchorNorth) : NaN
+    readonly property real reanchorEastMetres:  positionValid ? (vehicleEast  - planAnchorEast)  : NaN
+
+    /// The shortest move worth making. Under this the pattern already starts where the button would
+    /// put it, and the position an estimator reports drifts by more than this while the aircraft
+    /// stands still -- so a smaller threshold would offer a move that only shuffles the plan around
+    /// inside the noise.
+    readonly property real _reanchorMinimumMetres: 0.5
+
+    /// True when the pattern already starts where the aircraft is standing
+    readonly property bool planStartsAtVehicle: positionValid
+                                                    && (Math.abs(reanchorNorthMetres) < _reanchorMinimumMetres)
+                                                    && (Math.abs(reanchorEastMetres) < _reanchorMinimumMetres)
+
+    /// True when there is a pattern here that the grid could move
+    readonly property bool _hasMovablePlan: _drawnMissionPoints().length > 0
+
+    /// True when the plan could be moved to start from where the aircraft is standing now
+    readonly property bool canReanchorPlan: !vehicleArmed && canPlaceWaypoints && positionValid
+                                                && _hasMovablePlan && !planStartsAtVehicle
+
+    /// Why the plan cannot be moved to the aircraft, or an empty string when it can -- and also when
+    /// there is no plan at all, since a grid with nothing drawn on it explains itself.
+    ///
+    /// Said in the panel beside the button. This is a control an operator reaches for after every
+    /// flight, and one that goes dead without a reason teaches them the feature is broken rather
+    /// than that the aircraft is not ready for it yet.
+    readonly property string reanchorBlockedReason: {
+        if (canReanchorPlan || !_hasMovablePlan) {
+            return ""
+        }
+        if (!originKnown) {
+            return qsTr("The plan can be moved once the estimator has an origin to measure from.")
+        }
+        if (planSyncInProgress) {
+            return qsTr("The plan can be moved once the transfer finishes.")
+        }
+        if (vehicleArmed) {
+            return qsTr("The plan can be moved once the aircraft is disarmed. Moving it under an aircraft already flying it changes where it is going mid-flight.")
+        }
+        if (!positionValid) {
+            return qsTr("The plan can be moved once the aircraft is reporting a position.")
+        }
+        return qsTr("The plan already starts where the aircraft is standing.")
+    }
+
+    /// Moves the whole plan so the pattern starts from where the aircraft is standing now.
+    ///
+    /// This is what a second flight of the same pattern needs. The plan is held as coordinates, and
+    /// those were worked out from the origin -- the point the aircraft was standing on when the
+    /// pattern was drawn. After a flight the aircraft is somewhere else, usually at the far end of
+    /// the pattern it just flew, and re-flying the plan unchanged sends it back over the same patch
+    /// of ground from a start point inside the route rather than at the head of it.
+    ///
+    /// The remedy operators found for that was to reboot the aircraft: ArduPilot refuses a second
+    /// origin, so the only way to move the frame under the plan was to make the estimator take a new
+    /// one from scratch. This moves the plan instead, which needs nothing from the firmware, and can
+    /// be done between flights without touching the aircraft.
+    ///
+    /// The takeoff does not move -- it is pinned to the origin because a multirotor climbs in place
+    /// whatever coordinate is uploaded with it -- and nothing reaches the vehicle until the plan is
+    /// sent.
+    ///     @return how many items moved
+    function reanchorPlanToVehicle() {
+        if (!canReanchorPlan) {
+            return 0
+        }
+
+        const moved = offsetMission(reanchorNorthMetres, reanchorEastMetres)
+        if (moved > 0) {
+            // Recorded only when something actually moved. A plan whose every item is pinned or off
+            // the grid is unchanged, and an anchor moved anyway would report the next press as
+            // unnecessary while the pattern still sat on the origin.
+            _storePlanAnchor(vehicleNorth, vehicleEast)
+        }
+        return moved
+    }
+
+    /// Which item of the plan a mission sequence number falls on, counting from the head of the plan.
+    ///
+    /// The two do not run together. ArduPilot's sequence numbers count the home position and the
+    /// DO_CHANGE_SPEED items QGC folds into a waypoint, so a plan of three items runs 1, 2, 4 on the
+    /// wire. Answers the last item the number has reached, so a sequence landing on a folded item
+    /// reads as the item it belongs to rather than as nothing.
+    ///     @return the item's number, or 0 for a sequence that has not reached the first item
+    function planItemNumberForSequence(sequence) {
+        const points = missionPoints
+        var number = 0
+        for (var i = 0; i < points.length; i++) {
+            if (sequence >= points[i].sequence) {
+                number = points[i].number
+            }
+        }
+        return number
+    }
+
+    /// Which item of the plan the vehicle would pick up at, counting from the head of it, or 0 when
+    /// it would start at the beginning.
+    ///
+    /// ArduPilot resumes rather than restarts: MIS_RESTART defaults to Resume, so entering Auto
+    /// carries on from the item the last flight stopped on. After a flight cut short -- landed by
+    /// hand, or switched out of Auto -- the aircraft takes off and then flies to the middle of the
+    /// route. This is what says so before the flight rather than during it.
+    readonly property int vehicleResumeItemNumber: (vehicleTargetSequence < 0)
+                                                        ? 0
+                                                        : planItemNumberForSequence(vehicleTargetSequence)
+
+    /// Sends the vehicle back to the head of the plan it is holding, so the next Auto starts there.
+    ///
+    /// The plan's own first sequence number rather than a literal, because what the firmware counts
+    /// differs: ArduPilot keeps the home position at zero and starts the plan at one, and Vehicle
+    /// takes the offset off again for firmware that does not.
+    ///     @return true when a number was sent
+    function restartPlanOnVehicle() {
+        const points = missionPoints
+        if (!vehicle || vehicleArmed || (points.length === 0)) {
+            return false
+        }
+        vehicle.setCurrentMissionSequence(points[0].sequence)
+        return true
     }
 
     onWidthChanged:  _fitIfUnstarted()
@@ -981,7 +1213,9 @@ Item {
     }
 
     function _drawMission(ctx) {
-        const points = missionPoints
+        // Only the items with somewhere to be: an item carrying no coordinate has no pixel to run a
+        // leg to, and putting one in the path would break the whole route rather than that one leg.
+        const points = _drawnMissionPoints()
         if (points.length === 0) {
             return
         }
@@ -1161,18 +1395,24 @@ Item {
             // it came from on the pass where an item is removed.
             readonly property var point: _root.missionPoints[index] ?? null
 
-            visible:         point !== null
+            /// An item the plan holds but the grid has nowhere to put -- ArduPilot's takeoff, or a
+            /// return to launch -- is listed in the panel and left off the grid. Drawing one would
+            /// mean inventing a position for it, and a marker standing somewhere the aircraft was
+            /// never told to go is worse than no marker at all.
+            readonly property bool onGrid: (point !== null) && point.onGrid
+
+            visible:         onGrid
             gridView:        _root
             visualItemIndex: point ? point.index : -1
-            sequenceNumber:  point ? point.sequence : 0
+            sequenceNumber:  point ? point.number : 0
             isVehicleTarget: point ? point.isVehicleTarget : false
             draggable:       point ? !point.isPinned : false
             isSelected:      point ? (_root.selectedWaypointIndex === point.index) : false
             // _root.gridTransform, not the bare id: every Item carries its own `transform` property
             // and it shadows the id inside this delegate, which resolved to a list of graphical
             // transforms and left the markers unplaced.
-            x:               point ? (_root.gridTransform.pixelXForEast(point.east) - (width / 2)) : 0
-            y:               point ? (_root.gridTransform.pixelYForNorth(point.north) - (height / 2)) : 0
+            x:               onGrid ? (_root.gridTransform.pixelXForEast(point.east) - (width / 2)) : 0
+            y:               onGrid ? (_root.gridTransform.pixelYForNorth(point.north) - (height / 2)) : 0
             z:               isSelected ? 2 : 1
 
             onSelected: _root.selectWaypoint(waypointMarker.visualItemIndex)
@@ -1284,6 +1524,7 @@ Item {
     // Bottom left, the corner the waypoint panel gave up when it moved under the readout. It sits
     // above the scale bar, which owns the very corner.
     LocalGridMissionActions {
+        objectName:             "localGrid_missionActions"
         anchors.left:           parent.left
         anchors.bottom:         parent.bottom
         anchors.leftMargin:     _root._margins + _root._inset("leftEdgeBottomInset")
