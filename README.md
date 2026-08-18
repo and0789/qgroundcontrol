@@ -1,63 +1,104 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Dronecode/UX-Design/35d8148a8a0559cd4bcf50bfa2c94614983cce91/QGC/Branding/Deliverables/QGC_RGB_Logo_Horizontal_Positive_PREFERRED/QGC_RGB_Logo_Horizontal_Positive_PREFERRED.svg" alt="QGroundControl Logo" width="500">
-</p>
+# QGroundControl — Non-GPS Edition
 
-<p align="center">
-  <a href="https://github.com/mavlink/QGroundControl/releases"><img src="https://img.shields.io/github/v/release/mavlink/QGroundControl" alt="Latest Release"></a>
-  <a href="https://github.com/mavlink/qgroundcontrol/blob/master/.github/COPYING.md"><img src="https://img.shields.io/github/license/mavlink/QGroundControl" alt="License"></a>
-  <a href="https://github.com/mavlink/QGroundControl/actions/workflows/linux.yml"><img src="https://github.com/mavlink/QGroundControl/actions/workflows/linux.yml/badge.svg" alt="Linux Build"></a>
-  <a href="https://securityscorecards.dev/viewer/?uri=github.com/mavlink/qgroundcontrol"><img src="https://img.shields.io/ossf-scorecard/github.com/mavlink/qgroundcontrol?label=openssf%20scorecard" alt="OpenSSF Scorecard"></a>
-  <a href="https://crowdin.com/project/qgroundcontrol"><img src="https://badges.crowdin.net/qgroundcontrol/localized.svg" alt="Crowdin"></a>
-  <a href="https://discord.com/channels/1022170275984457759/1022185820683255908"><img src="https://img.shields.io/discord/1022170275984457759?logo=discord&logoColor=white&label=Discord" alt="Dronecode Discord"></a>
-  <a href="https://doi.org/10.5281/zenodo.595404"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.595404.svg" alt="DOI"></a>
-</p>
+**Ground control station for autonomous drone flight without GNSS.**
+An unofficial research fork of [QGroundControl](https://github.com/mavlink/qgroundcontrol),
+built around a local grid in metres instead of a world map.
 
-**QGroundControl** (QGC) is a Ground Control Station (GCS) for UAVs, providing full flight control
-and mission planning for any *MAVLink-enabled* drone, including *PX4* and *ArduPilot* platforms.
+> [!WARNING]
+> **Research preview — not flight validated.** This build runs and has been exercised against
+> ArduPilot SITL, but it has not yet been tested in the field on real hardware. Do not use it to
+> fly an aircraft you cannot afford to lose. See the [roadmap](docs/nongps/roadmap.md) for where
+> the project actually is.
 
-## Features
+<!-- TODO: tambahkan screenshot Local Grid View di sini — README dengan gambar jauh lebih menarik. -->
 
-- **Mission planning** — plan, edit, and fly autonomous waypoint, survey, and structure-scan missions.
-- **Live Fly View** — real-time flight display with map, instruments, and full vehicle telemetry.
-- **Vehicle setup** — guided wizards for sensor calibration, radio, flight modes, and power.
-- **Parameter tuning** — inspect and edit every vehicle parameter through the Fact System.
-- **Video streaming** — GStreamer-based UDP RTP / RTSP video with recording in the Flight Display.
-- **Multi-vehicle** — connect to and monitor multiple vehicles simultaneously.
-- **MAVLink tooling** — built-in MAVLink Inspector, console, and log download/analysis.
-- **Cross-platform** — Windows, macOS, Linux, Android, and iOS from a single codebase.
+## Why this fork exists
 
-## Download
+Conventional drone navigation depends entirely on GNSS. Indoors, under canopy, in urban canyons,
+or under jamming, GNSS is unavailable or untrustworthy. This project flies missions using modern
+dead reckoning instead — optical flow, rangefinder, IMU and compass fused by ArduPilot's EKF3 —
+with missions expressed as **points in metres relative to home**, not latitude/longitude.
 
-Grab the latest stable build for your platform, or see all assets on the
-[releases page](https://github.com/mavlink/QGroundControl/releases/latest):
+A ground station built around a world map cannot express that. So the fly view was rebuilt around
+a **local grid**: a cartesian plane in metres, annotated in compass degrees, North = 0°.
 
-<p align="center">
-  <a href="https://github.com/mavlink/QGroundControl/releases/latest/download/QGroundControl-installer.exe"><img src="https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white" alt="Windows"></a>
-  <a href="https://github.com/mavlink/QGroundControl/releases/latest/download/QGroundControl.dmg"><img src="https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white" alt="macOS"></a>
-  <a href="https://github.com/mavlink/QGroundControl/releases/latest/download/QGroundControl-x86_64.AppImage"><img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black" alt="Linux (AppImage)"></a>
-  <a href="https://github.com/mavlink/QGroundControl/releases/latest/download/QGroundControl.apk"><img src="https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white" alt="Android"></a>
-</p>
+The research goal is to characterise position drift: return-to-home error after a known pattern,
+normalised per metre travelled. GNSS stays on the aircraft purely as ground truth, never as a
+navigation source.
 
-## Links
+## What is different from upstream QGroundControl
 
-- [Official Website](http://qgroundcontrol.com)
-- [User Manual](https://docs.qgroundcontrol.com/en/)
-- [Developer Guide](https://dev.qgroundcontrol.com/en/) / [Build Instructions](https://dev.qgroundcontrol.com/en/getting_started/)
-- [Discussion & Support](https://docs.qgroundcontrol.com/en/Support/Support.html)
-- [Dronecode Discord](https://discord.com/channels/1022170275984457759/1022185820683255908)
-- [Security Policy](.github/SECURITY.md)
-- [Code of Conduct](.github/CODE_OF_CONDUCT.md)
-- [License](https://github.com/mavlink/qgroundcontrol/blob/master/.github/COPYING.md)
+| Area | What was added |
+|---|---|
+| **Local Grid View** | A fly view in metres rather than on a map — plan, fly and monitor without any map tiles |
+| **Planning on the grid** | Place waypoints by bearing and distance, set per-leg speed, start with takeoff and land where the pattern ends; send, save and clear plans |
+| **Non-GNSS status panel** | Optical flow health judged against the EKF's own limit, rangefinder height, estimator aiding status and why it stopped |
+| **Estimator origin** | Set and correct the EKF origin without a map; tell the vehicle where it actually stands, and surface a missing origin before it costs a flight |
+| **Optical flow calibration** | Run flow scale calibration from the fly view, with the message rate raised while calibrating |
+| **Arming diagnostics** | Read ArduPilot's arming refusal under the name it actually sends, and show why the vehicle will not arm wherever the operator is looking |
+| **Airspeed** | Read the airspeed sensor's own numbers rather than the estimator's |
 
-## Contributing
+Roughly 80 commits and 16,000 lines across `src/FlyView`, `src/PlanView` and `src/Vehicle`,
+with unit and integration tests alongside.
 
-QGC is open source and welcomes contributions. See [AGENTS.md](AGENTS.md) for build/test/lint
-commands and coding conventions, and [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) for
-architecture patterns and the contribution workflow.
+## Documentation
 
-QGC's interface is translated by the community — help translate it into your language on
-[Crowdin](https://crowdin.com/project/qgroundcontrol).
+- [Project brief](docs/nongps/project-brief.md) — vision, scientific background, scope *(Bahasa Indonesia)*
+- [Roadmap](docs/nongps/roadmap.md) — 6 phases, deliverables, risks, current status *(Bahasa Indonesia)*
+- [Upstream QGC README](README.upstream.md) — the original project's documentation
 
-## Star History
+## Building
 
-[![Star History Chart](https://star-history.dera.page/svg?repos=mavlink/qgroundcontrol&type=date&legend=top-left)](https://star-history.dera.page/#mavlink/qgroundcontrol&type=date&legend=top-left)
+Verified on macOS (Apple Silicon) with Qt 6.11.1, CMake 3.25+ and Ninja.
+For other platforms, follow the [upstream build instructions](https://docs.qgroundcontrol.com/master/en/qgc-dev-guide/getting_started/).
+
+```bash
+git clone --recursive https://github.com/and0789/qgroundcontrol.git
+```
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+```
+
+```bash
+cmake --build build
+```
+
+**macOS note.** Upstream defaults to a universal binary (`x86_64h;arm64`). If your Qt is
+arm64-only — Homebrew's `qt` is — the x86_64h slice has no Qt to link against and the build
+fails with `symbol(s) not found for architecture x86_64h`. Configure with
+`-DQGC_MACOS_UNIVERSAL_BUILD=OFF` to build for your host architecture only.
+
+## Branch model
+
+This repository tracks upstream continuously rather than diverging from it.
+
+| Branch | Role |
+|---|---|
+| `master` | A clean mirror of `mavlink/qgroundcontrol`. Never committed to directly, only fast-forwarded |
+| `main` | This project: upstream plus the non-GNSS work. **Default branch** |
+| `feat/*` | Work in progress, merged into `main` |
+
+Keeping `master` pristine means upstream can always be merged without conflict archaeology, and
+the exact difference from stock QGroundControl stays one `git diff` away.
+
+## Relationship to upstream
+
+This is a derivative work, not a competitor. Changes here that are not specific to GNSS-denied
+flight — arming refusal reporting, airspeed sourcing — belong upstream, and are intended to be
+submitted there as individual pull requests.
+
+QGroundControl is developed by the [Dronecode Foundation](https://www.dronecode.org/) and its
+contributors. This fork is **not affiliated with, endorsed by, or supported by** the
+QGroundControl project. Please report issues with this fork here, not to upstream.
+
+## License
+
+Same as upstream QGroundControl: dual-licensed under
+[Apache 2.0](LICENSE-APACHE) and [GPL v3](LICENSE-GPL).
+Upstream copyright notices are retained in full.
+
+## Acknowledgements
+
+Built on the work of the QGroundControl and ArduPilot communities. This fork exists because they
+made their work open — the same reason its changes are open in turn.
