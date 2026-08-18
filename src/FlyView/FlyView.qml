@@ -80,6 +80,7 @@ Item {
 
         FlyViewMap {
             id:                     mapControl
+            objectName:             "flyViewMap"
             planMasterController:   _planController
             rightPanelWidth:        ScreenTools.defaultFontPixelHeight * 9
             pipView:                _pipView
@@ -170,6 +171,7 @@ Item {
         //-- Guided value slider (e.g. altitude)
         GuidedValueSlider {
             id:                 guidedValueSlider
+            objectName:         "guidedValueSlider"
             anchors.right:      parent.right
             anchors.top:        parent.top
             anchors.bottom:     parent.bottom

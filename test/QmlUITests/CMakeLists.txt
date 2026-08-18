@@ -38,6 +38,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridPositionCorrectionUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewProximityRadarUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewProximityRadarUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewROIUITest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewROIUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewGeoUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewGeoUITest.h
         # Manual perf benchmark: standalone-registered, deliberately NOT added
@@ -74,6 +76,8 @@ add_qgc_test(FlyViewLocalGridUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(SetEstimatorOriginUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(LocalGridPositionCorrectionUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(FlyViewProximityRadarUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(FlyViewROIUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(FlyViewROIAPMUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(NTRIPSettingsUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(OnboardLogUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(ParameterDiffDialogUITest LABELS Integration NoSanitizer TIMEOUT 180)

@@ -244,6 +244,14 @@ Item {
                 _flyViewSettings.guidedMaximumAltitude.value,
                 _activeVehicle.altitudeRelative.value,
                 qsTr("Alt (rel)"))
+        } else if (actionCode === actionROI) {
+            // ROI targets a point on the ground by default, so start at 0 above home
+            guidedValueSlider.setupSlider(
+                GuidedValueSlider.SliderType.Altitude,
+                0,
+                _flyViewSettings.guidedMaximumAltitude.value,
+                0,
+                qsTr("Alt (rel)"))
         }
     }
 
@@ -526,6 +534,7 @@ Item {
             confirmDialog.title = roiTitle
             confirmDialog.message = roiMessage
             confirmDialog.hideTrigger = Qt.binding(function() { return !showROI })
+            guidedValueSlider.visible = true
             break;
         case actionChangeSpeed:
             confirmDialog.title = changeSpeedTitle
@@ -664,9 +673,13 @@ Item {
                 selectedVehicles.get(i).pauseVehicle()
             }
             break
-        case actionROI:
-            _activeVehicle.guidedModeROI(actionData)
+        case actionROI: {
+            const roiRelativeAltitudeMeters = _unitsConversion.appSettingsVerticalDistanceUnitsToMeters(sliderOutputValue)
+            if (!_activeVehicle.guidedModeROI(actionData, roiRelativeAltitudeMeters)) {
+                return false
+            }
             break
+        }
         case actionChangeSpeed:
             if (_activeVehicle) {
                 // We need to convert back to m/s as that is what mavlink standard uses for MAV_CMD_DO_CHANGE_SPEED

@@ -15,6 +15,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         FTPControllerTest.h
         FirmwareUpgradeControllerTest.cc
         FirmwareUpgradeControllerTest.h
+        GuidedModeROITest.cc
+        GuidedModeROITest.h
         InitialConnectTest.cc
         InitialConnectTest.h
         InitialConnectPeripheralStartupTest.cc
@@ -37,6 +39,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         SendMavCommandWithSignallingTest.h
         SetEstimatorOriginTest.cc
         SetEstimatorOriginTest.h
+        TrajectoryPointsTest.cc
+        TrajectoryPointsTest.h
         VehicleEstimatorStatusFactGroupTest.cc
         VehicleEstimatorStatusFactGroupTest.h
         OpticalFlowCalibratorTest.cc
@@ -64,6 +68,8 @@ add_qgc_test(ArmingRefusalReasonTestAPM LABELS Integration Vehicle)
 add_qgc_test(FTPControllerTest LABELS Integration Vehicle RESOURCE_LOCK TempFiles)
 add_qgc_test(FTPManagerTest LABELS Integration Vehicle)
 add_qgc_test(FirmwareUpgradeControllerTest LABELS Unit Vehicle)
+add_qgc_test(GuidedModeROITest LABELS Integration Vehicle)
+add_qgc_test(GuidedModeROIAPMTest LABELS Integration Vehicle)
 add_qgc_test(InitialConnectTest LABELS Integration Vehicle)
 add_qgc_test(InitialConnectPeripheralStartupTest LABELS Integration Vehicle)
 add_qgc_test(MAVLinkLogManagerTest LABELS Integration Vehicle)
@@ -76,6 +82,7 @@ add_qgc_test(RequestMessageTest LABELS Integration Vehicle TIMEOUT ${QGC_TEST_TI
 add_qgc_test(SendMavCommandWithHandlerTest LABELS Integration Vehicle)
 add_qgc_test(SendMavCommandWithSignallingTest LABELS Integration Vehicle)
 add_qgc_test(SetEstimatorOriginTest LABELS Integration Vehicle)
+add_qgc_test(TrajectoryPointsTest LABELS Unit Vehicle)
 add_qgc_test(VehicleEstimatorStatusFactGroupTest LABELS Unit Vehicle)
 add_qgc_test(OpticalFlowCalibratorTest LABELS Integration Vehicle)
 add_qgc_test(VehicleDistanceSensorFactGroupTest LABELS Integration Vehicle)
