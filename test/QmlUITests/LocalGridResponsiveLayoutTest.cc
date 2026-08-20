@@ -1,0 +1,331 @@
+#include "LocalGridResponsiveLayoutTest.h"
+
+#include <QtCore/QList>
+#include <QtCore/QPointF>
+#include <QtCore/QRectF>
+#include <QtCore/QSizeF>
+#include <QtGui/QRegion>
+#include <QtQuick/QQuickItem>
+#include <QtQuick/QQuickWindow>
+#include <QtTest/QTest>
+
+#include "FlyViewSettings.h"
+#include "LocalGridTestSupport.h"
+#include "MockLink.h"
+#include "SettingsManager.h"
+#include "Vehicle.h"
+
+UT_REGISTER_TEST(LocalGridResponsiveLayoutTest, TestLabel::Integration)
+
+namespace {
+
+using LocalGridTestSupport::giveTheVehicleAnOrigin;
+
+/// The panels that stay on screen for the life of the view -- everything anchored independently
+/// against the window's edges or against a neighbour's measured size. The click panel is left out on
+/// purpose: it is transient and drawn above everything else by design, so it is checked separately
+/// for staying inside the window and never for overlap with the others.
+const QStringList kStandingPanels = {
+    QStringLiteral("localGrid_readout"),
+    QStringLiteral("localGrid_airspeed"),
+    QStringLiteral("localGrid_missionList"),
+    QStringLiteral("localGrid_missionActions"),
+    QStringLiteral("localGrid_scaleBar"),
+};
+
+/// The tool strip is not one of the grid's own panels -- it belongs to the fly view as a whole, and
+/// stays on screen in map mode too. It is checked here anyway: it is anchored top-left, missionActions
+/// is anchored bottom-left with nothing capping how tall it grows, and the two sharing that edge is
+/// exactly the collision an operator meets, not a hypothetical one.
+const QStringList kOverlapCheckedPanels = kStandingPanels + QStringList{QStringLiteral("flyView_toolStrip")};
+
+struct WindowSize {
+    const char *name;
+    int width;
+    int height;
+
+    /// The most the standing panels may cover of this size, in _chromeStaysWithinBudgetAtAnySize_test.
+    /// Unused by the other tests here. 15% everywhere except phone landscape, which gets 18% -- of the
+    /// four sizes it has the least height to work with (400px, against 800/768/900 for the others),
+    /// and the readout panel is expected to be open there: it opens itself whenever live telemetry
+    /// arrives (see LocalGridReadout.qml's on_ValidChanged) and stays open independent of window
+    /// size, which is the correct behaviour for a panel whose job is showing where the aircraft is.
+    /// Folding it to chase one more size under the same flat number would mean hiding live position
+    /// data on exactly the size a phone is most likely to actually be held in.
+    double chromeBudgetPercent;
+};
+
+/// Four points on the shape the app actually has to run in, not just the desktop it was built on.
+const QList<WindowSize> kSizesToCheck = {
+    {.name = "phone portrait", .width = 400, .height = 800, .chromeBudgetPercent = 15.0},
+    {.name = "phone landscape", .width = 800, .height = 400, .chromeBudgetPercent = 18.0},
+    {.name = "tablet", .width = 1024, .height = 768, .chromeBudgetPercent = 15.0},
+    {.name = "desktop", .width = 1600, .height = 900, .chromeBudgetPercent = 15.0},
+};
+
+/// Waits until \a item's mapped rect stops moving between two samples, so a measurement taken right
+/// after a resize is not caught mid-relayout. There is no animation on any of these panels' anchors,
+/// so two consecutive equal samples means the polish pass that follows a resize has already run.
+bool waitForLayoutToSettle(QQuickItem *item)
+{
+    QRectF previous(-1, -1, -1, -1);  // Never equal to a real first sample
+    return QTest::qWaitFor([item, &previous]() {
+        const QRectF current(item->mapToScene(QPointF(0, 0)), QSizeF(item->width(), item->height()));
+        const bool stable = (current == previous);
+        previous = current;
+        return stable;
+    }, TestTimeout::shortMs());
+}
+
+/// A rect printed as plain numbers, for failure messages -- QRectF has no QString conversion of its
+/// own, and pulling in QDebug/QTest::toString machinery for four numbers is not worth it here.
+QString rectToString(const QRectF &rect)
+{
+    return QStringLiteral("(%1, %2, %3x%4)").arg(rect.x()).arg(rect.y()).arg(rect.width()).arg(rect.height());
+}
+
+} // namespace
+
+QRectF LocalGridResponsiveLayoutTest::_windowRectFor(const QString &objectName)
+{
+    QQuickItem *const item = findVisibleItem(_rootItem, objectName, 500);
+    if (item == nullptr) {
+        return {};
+    }
+    return {item->mapToScene(QPointF(0, 0)), QSizeF(item->width(), item->height())};
+}
+
+/// The most anchor-dependent panel is watched for settling -- missionActions, which is positioned off
+/// the scale bar's measured height as well as the window's edges -- because every panel here reflows
+/// in the same polish pass; there is nothing to gain from watching more than one.
+bool LocalGridResponsiveLayoutTest::_resizeAndSettle(int width, int height)
+{
+    _window->resize(width, height);
+    QQuickItem *const settleTarget = findVisibleItem(_rootItem, QStringLiteral("localGrid_missionActions"), 1000);
+    if (settleTarget == nullptr) {
+        return false;
+    }
+    return waitForLayoutToSettle(settleTarget);
+}
+
+/// MAV_CMD_EXTERNAL_POSITION_ESTIMATE and the grid's origin machinery are ArduPilot-specific, and the
+/// vehicle this boots is an ArduCopter. A build with no ArduPilot plugin registered has no vehicle to
+/// connect, which is a missing build option rather than a broken layout.
+void LocalGridResponsiveLayoutTest::init()
+{
+    if (!apmFirmwareSupported()) {
+        QSKIP("ArduPilot support not registered in this build");
+    }
+    QmlUITestBase::init();
+}
+
+void LocalGridResponsiveLayoutTest::cleanup()
+{
+    // Persisted, so leaving it on would put every later test's fly view on the grid
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(false);
+    QmlUITestBase::cleanup();
+}
+
+/// No panel is allowed to hang off the edge of the window it is drawn in, at any of the four sizes
+/// this is checked at -- a phone in portrait and in landscape, a tablet, and the desktop this view
+/// was built against. A panel that runs off the window is a control the operator cannot reach.
+///
+/// Checked against a freshly-connected vehicle with an empty plan: none of the panels' content grows
+/// large enough here to run off the window on its own. That is not this test's job -- growth that
+/// pushes a panel into another panel is _panelsDoNotOverlapAtAnySize_test's job, and growth that pushes
+/// a panel past the window edge outright has not been reproduced against any state this suite can
+/// reach. Kept as a standing regression guard: a panel large enough to overflow on its own, at any of
+/// these four sizes, is a real bug this exists to catch even though nothing here trips it today.
+void LocalGridResponsiveLayoutTest::_panelsStayInsideThePhoneWindow_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle *vehicle) {
+            QVERIFY(vehicle);
+            QVERIFY2(giveTheVehicleAnOrigin(vehicle, mockLink), "the vehicle never took an origin");
+
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            for (const WindowSize &size : kSizesToCheck) {
+                QVERIFY2(_resizeAndSettle(size.width, size.height),
+                         qPrintable(QStringLiteral("the layout never settled at %1 (%2x%3)")
+                                        .arg(size.name).arg(size.width).arg(size.height)));
+
+                const QRectF windowRect(0, 0, _window->width(), _window->height());
+
+                for (const QString &panelName : kStandingPanels) {
+                    const QRectF panelRect = _windowRectFor(panelName);
+                    if (panelRect.isEmpty()) {
+                        continue;  // Not currently shown -- nothing to run off the edge
+                    }
+                    QVERIFY2(windowRect.contains(panelRect),
+                             qPrintable(QStringLiteral("%1 runs off the %2 window (%3x%4): panel rect %5 vs window rect %6")
+                                            .arg(panelName, size.name)
+                                            .arg(size.width).arg(size.height)
+                                            .arg(rectToString(panelRect), rectToString(windowRect))));
+                }
+            }
+        });
+}
+
+/// No two of the checked panels are allowed to cover each other. A control hidden under another
+/// panel is indistinguishable, from the operator's seat, from a control that was never built.
+///
+/// Checked with the vehicle armed, not disarmed: missionActions carries no cap on how tall it grows,
+/// and armed is the state that makes it tallest -- the between-flights controls are locked while
+/// armed, and the reason given for that ("Only on the ground. A correction is a step change...") is
+/// the longest wrapped label the panel ever shows. Disarmed and empty, the panel is short enough that
+/// it does not yet collide with anything; armed is the realistic state this is checked against.
+void LocalGridResponsiveLayoutTest::_panelsDoNotOverlapAtAnySize_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle *vehicle) {
+            QVERIFY(vehicle);
+            QVERIFY2(giveTheVehicleAnOrigin(vehicle, mockLink), "the vehicle never took an origin");
+
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            vehicle->setArmedShowError(true);
+            QTRY_VERIFY_WITH_TIMEOUT(vehicle->armed(), TestTimeout::longMs());
+
+            for (const WindowSize &size : kSizesToCheck) {
+                QVERIFY2(_resizeAndSettle(size.width, size.height),
+                         qPrintable(QStringLiteral("the layout never settled at %1 (%2x%3)")
+                                        .arg(size.name).arg(size.width).arg(size.height)));
+
+                QList<QPair<QString, QRectF>> visiblePanels;
+                for (const QString &panelName : kOverlapCheckedPanels) {
+                    const QRectF panelRect = _windowRectFor(panelName);
+                    if (!panelRect.isEmpty()) {
+                        visiblePanels.append({panelName, panelRect});
+                    }
+                }
+
+                for (qsizetype i = 0; i < visiblePanels.size(); ++i) {
+                    for (qsizetype j = i + 1; j < visiblePanels.size(); ++j) {
+                        const QRectF overlap = visiblePanels[i].second.intersected(visiblePanels[j].second);
+                        QVERIFY2(overlap.isEmpty(),
+                                 qPrintable(QStringLiteral("%1 and %2 overlap at %3 (%4x%5): %6 vs %7")
+                                                .arg(visiblePanels[i].first, visiblePanels[j].first, size.name)
+                                                .arg(size.width).arg(size.height)
+                                                .arg(rectToString(visiblePanels[i].second),
+                                                     rectToString(visiblePanels[j].second))));
+                    }
+                }
+            }
+        });
+}
+
+/// The click panel is positioned at runtime from the point tapped, not anchored like the others --
+/// LocalGridClickPanel::showAt() clamps it into the view, but only against the view's own bounds, with
+/// no awareness of the insets the standing panels honour. Checked at the phone size and near the right
+/// edge, where a naive clamp is most likely to still leave it hanging off the window.
+///
+/// Driven by a real click on the grid rather than by calling showAt() directly: the panel starts
+/// invisible (LocalGridView.qml's dragArea.onClicked is what shows it), so a genuine click is also
+/// the only way to find it at all -- findVisibleItem() cannot see an item whose own visible property
+/// is still false.
+///
+/// Aimed at the right edge at mid-height rather than a corner: the bottom-right corner of the phone
+/// window is where the on-screen flight controls sit, and a click that lands on one of those is
+/// consumed there rather than reaching the grid -- correctly, since placing a waypoint under a flight
+/// control is not a thing this feature is meant to allow. Mid-height keeps clear of the readout column
+/// at the top and the mission actions panel at the bottom, so the click is unambiguously on the grid.
+void LocalGridResponsiveLayoutTest::_clickPanelStaysInsideTheWindowNearAnEdge_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle *vehicle) {
+            QVERIFY(vehicle);
+            QVERIFY2(giveTheVehicleAnOrigin(vehicle, mockLink), "the vehicle never took an origin");
+
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            QVERIFY2(_resizeAndSettle(400, 800), "the layout never settled at phone portrait (400x800)");
+
+            // Near the grid's right edge, where a click panel sized by its own two multi-line
+            // refusal labels is most likely to still be wider than the room a naive clamp leaves.
+            QVERIFY2(clickItemFraction(QStringLiteral("localGridView"), 0.98, 0.5),
+                     "the click near the grid's right edge never landed");
+
+            QQuickItem *const clickPanel = findVisibleItem(_rootItem, QStringLiteral("localGrid_clickPanel"), 1000);
+            QVERIFY2(clickPanel, "a click on the grid never opened the click panel");
+
+            const QRectF windowRect(0, 0, _window->width(), _window->height());
+            const QRectF panelRect(clickPanel->mapToScene(QPointF(0, 0)),
+                                   QSizeF(clickPanel->width(), clickPanel->height()));
+            QVERIFY2(windowRect.contains(panelRect),
+                     qPrintable(QStringLiteral("the click panel runs off the phone window near the right edge: "
+                                               "panel rect %1 vs window rect %2")
+                                    .arg(rectToString(panelRect), rectToString(windowRect))));
+        });
+}
+
+/// Panels are allowed to sit beside the grid; they are not allowed to become most of the view. This
+/// is the check the other three tests do not do: a panel can stay inside the window and never overlap
+/// another one while still covering so much of it that the grid -- the entire reason this view exists
+/// over the map -- is a sliver down one edge.
+///
+/// Checked in the default state (freshly connected, empty plan) at each of the four sizes, not armed:
+/// this is about how many panels are open at once, not about how tall any one of them can grow, so the
+/// leanest realistic state is the fairer one to hold every size to the same number against.
+///
+/// Budgets are 15% everywhere except phone landscape (18% -- see the comment on WindowSize for why).
+/// Measured before this test existed, a phone in portrait gave up 28.4% of the window to chrome and
+/// landscape gave up 17.9%, both comfortably above their budgets here, so an accidental one-panel
+/// regression has room to be caught before it reaches that scale again.
+void LocalGridResponsiveLayoutTest::_chromeStaysWithinBudgetAtAnySize_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle *vehicle) {
+            QVERIFY(vehicle);
+            QVERIFY2(giveTheVehicleAnOrigin(vehicle, mockLink), "the vehicle never took an origin");
+
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            for (const WindowSize &size : kSizesToCheck) {
+                QVERIFY2(_resizeAndSettle(size.width, size.height),
+                         qPrintable(QStringLiteral("the layout never settled at %1 (%2x%3)")
+                                        .arg(size.name).arg(size.width).arg(size.height)));
+
+                // Unioned rather than summed, so two panels that legitimately touch along an edge do
+                // not get counted twice and fail a budget they have not actually gone over.
+                QRegion covered;
+                for (const QString &panelName : kStandingPanels) {
+                    const QRectF panelRect = _windowRectFor(panelName);
+                    if (!panelRect.isEmpty()) {
+                        covered += panelRect.toAlignedRect();
+                    }
+                }
+
+                qint64 coveredArea = 0;
+                for (const QRect &piece : covered) {
+                    coveredArea += static_cast<qint64>(piece.width()) * piece.height();
+                }
+                const qint64 windowArea = static_cast<qint64>(_window->width()) * _window->height();
+                const double coveredPercent = (windowArea > 0)
+                                                ? (100.0 * static_cast<double>(coveredArea) / static_cast<double>(windowArea))
+                                                : 0.0;
+
+                QVERIFY2(coveredPercent <= size.chromeBudgetPercent,
+                         qPrintable(QStringLiteral("chrome covers %1 percent of the %2 window (%3x%4), over "
+                                                   "the %5 percent budget")
+                                        .arg(coveredPercent, 0, 'f', 1).arg(size.name)
+                                        .arg(size.width).arg(size.height).arg(size.chromeBudgetPercent, 0, 'f', 0)));
+            }
+        });
+}

@@ -133,6 +133,51 @@ void MissionControllerTest::_testInsertValidityHomePositionGating()
     QCOMPARE(boolProperty("flyThroughCommandsAllowed"), true);
 }
 
+/// The fly view builds missions in this fork, so the insert-validity flags derived alongside the
+/// plan view's current item are read there too -- and they have to describe the plan that exists
+/// now, not the one that was there before.
+///
+/// The failure this pins: nothing in the fly view selects an item, so the recompute ran against
+/// whatever sequence number the last insertion had left behind. Against a stale one the mission
+/// settings item -- which carries the planned home and counts as a coordinate-based command -- falls
+/// before the insertion point, and a takeoff is refused into a plan that plainly has none. From the
+/// operator's seat that was "Add takeoff at origin" going dead until QGC was restarted.
+void MissionControllerTest::_testFlyViewInsertValidityFollowsThePlan()
+{
+    _initForFirmwareType(MAV_AUTOPILOT_ARDUPILOTMEGA);
+
+    auto flyViewController = std::make_unique<PlanMasterController>();
+    flyViewController->setFlyView(true);
+    flyViewController->start();
+    MissionController *const flyMission = flyViewController->missionController();
+    QVERIFY(flyMission);
+
+    const auto insertTakeoffValid = [flyMission]() {
+        return flyMission->property("isInsertTakeoffValid").toBool();
+    };
+
+    // An empty plan with a home position is where a new pattern starts, and it has to accept a takeoff
+    flyMission->setHomePosition(Coord::zurich());
+    QVERIFY(flyMission->homePositionSet());
+    QVERIFY(insertTakeoffValid());
+
+    // Saved while empty, so loading it back rebuilds a plan around a home position and nothing else --
+    // the shape the fly view gets from a vehicle whose mission has been cleared
+    QTemporaryDir tmpDir;
+    QVERIFY(tmpDir.isValid());
+    const QString planPath = QStringLiteral("%1/empty.%2").arg(tmpDir.path(), flyViewController->fileExtension());
+    QVERIFY(flyViewController->saveToFile(planPath));
+
+    QVERIFY(flyMission->insertTakeoffItem(Coord::zurich(), 1, true /* makeCurrentItem */));
+    QVERIFY(flyMission->insertSimpleMissionItem(Coord::zurich(), 2, true /* makeCurrentItem */));
+    QVERIFY2(!insertTakeoffValid(), "a plan that already begins with a takeoff must not accept another");
+
+    flyViewController->loadFromFile(planPath);
+    QCOMPARE(flyMission->visualItems()->count(), 1); // home only
+    QVERIFY(flyMission->homePositionSet());
+    QVERIFY2(insertTakeoffValid(), "an emptied plan must accept a takeoff again");
+}
+
 void MissionControllerTest::_testGimbalRecalc()
 {
     _initForFirmwareType(MAV_AUTOPILOT_PX4);

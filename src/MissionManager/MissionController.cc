@@ -1511,7 +1511,22 @@ void MissionController::_initAllVisualItems(void)
     emit plannedHomePositionChanged(plannedHomePosition());
     emit homePositionSetChanged();
 
-    if (!_flyView) {
+    // The insert-validity flags are derived here along with the current item, so a plan rebuilt from
+    // the vehicle, loaded from a file or cleared has to recompute them. Skipping that in the fly view
+    // was safe while the fly view could only watch a mission: now that one can be built there, the
+    // flags were left holding whatever the last edit had computed, and a plan re-mirrored from the
+    // vehicle after a flight kept the previous plan's answers -- which showed as the fly view
+    // refusing to insert a takeoff until QGC was restarted.
+    //
+    // Asked against the end of the plan rather than its head, because that is where the fly view
+    // inserts: it has no selected item to insert at. The plan view keeps asking against the head,
+    // where its own insert strip works from the operator's selection.
+    if (_flyView) {
+        const VisualMissionItem *const lastItem = (_visualItems->count() > 0)
+                ? _visualItems->value<VisualMissionItem*>(_visualItems->count() - 1)
+                : nullptr;
+        setCurrentPlanViewSeqNum(lastItem ? lastItem->lastSequenceNumber() : 0, true);
+    } else {
         setCurrentPlanViewSeqNum(0, true);
     }
 

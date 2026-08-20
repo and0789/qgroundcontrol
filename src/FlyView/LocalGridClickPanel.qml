@@ -12,6 +12,8 @@ import QGroundControl.Controls
 Rectangle {
     id: _root
 
+    objectName: "localGrid_clickPanel"
+
     property var gridView: null
 
     /// Raised when the operator asks to set an origin from here, so the view that owns this panel
@@ -40,10 +42,48 @@ Rectangle {
     // Compared against true rather than taken as-is: a controller that does not carry these answers
     // undefined, which is not a bool and would be refused with a warning on every rebuild
     readonly property bool _takeoffValid:  _missionController ? (_missionController.isInsertTakeoffValid === true) : false
-    readonly property bool _landValid:     _missionController ? (_missionController.isInsertLandValid === true) : false
     readonly property bool _isMultiRotor:  (gridView && gridView.vehicle) ? gridView.vehicle.multiRotor : false
 
+    readonly property bool _planIsEmpty:    gridView ? gridView.planIsEmpty : false
+    readonly property bool _planHasTakeoff: gridView ? gridView.planHasTakeoff : false
+
+    /// MissionController answers this against the end of the plan, which is where the grid inserts.
+    /// On an empty plan it says no, because a mission has to begin with a takeoff -- but the grid
+    /// puts one on the front of an empty plan itself, so the landing asked for here is not the
+    /// mission-without-a-takeoff that is being refused.
+    readonly property bool _landValid: _missionController
+                                        ? ((_missionController.isInsertLandValid === true) || _planIsEmpty)
+                                        : false
+
     readonly property bool _syncing: gridView ? gridView.planSyncInProgress : false
+
+    /// On a multirotor the button below inserts a return to launch, and a return climbs to RTL_ALT
+    /// before it starts home. That altitude is a parameter, not part of the plan, so the ceiling the
+    /// grid holds every waypoint under cannot reach it: this is the one item an operator can add
+    /// that leaves the rangefinder's range with nothing able to clamp it. Refused rather than
+    /// warned about, because above that range the estimator has no height source and optical flow
+    /// has no height to scale a velocity with -- the aircraft loses both at once, out of reach.
+    ///
+    /// Multirotor only. On a fixed wing the same button inserts a real landing pattern, which flies
+    /// its own altitudes and has nothing to do with RTL_ALT.
+    readonly property bool _returnAboveCeiling: _isMultiRotor && gridView
+                                                    ? (gridView.returnAltitudeAboveCeiling === true)
+                                                    : false
+
+    /// Why a takeoff cannot be added, or empty while one can be.
+    ///
+    /// The button went dead with nothing said, and an operator cannot tell a refusal from a stuck
+    /// click. That is the state that had them closing QGC to get the option back, when the plan
+    /// mirrored from the vehicle was simply still carrying the takeoff of the flight before.
+    function _cannotAddTakeoffReason() {
+        if (_takeoffValid) {
+            return ""
+        }
+        if (_planHasTakeoff) {
+            return qsTr("This plan already begins with a takeoff.")
+        }
+        return qsTr("A takeoff can only be the first item, and this plan already holds others. Clear the plan to start a new pattern.")
+    }
 
     function _add(kind) {
         if (gridView) {
@@ -78,9 +118,17 @@ Rectangle {
         _north = _transform.northForPixelY(pixelY)
         _east = _transform.eastForPixelX(pixelX)
 
-        // Kept inside the view, so a click near an edge does not put the panel half off screen
-        x = Math.max(0, Math.min(pixelX, parent.width - width))
-        y = Math.max(0, Math.min(pixelY, parent.height - height))
+        // Kept inside the view, and clear of whatever chrome is anchored to its edges -- the tool
+        // strip in the top-left corner, the flight controls that share the bottom on a phone -- so a
+        // click near a corner does not open a panel under a button it then covers, or that cannot be
+        // reached past to dismiss it.
+        const left   = gridView ? gridView.safeAreaLeft   : 0
+        const top    = gridView ? gridView.safeAreaTop    : 0
+        const right  = parent.width  - (gridView ? gridView.safeAreaRight  : 0)
+        const bottom = parent.height - (gridView ? gridView.safeAreaBottom : 0)
+
+        x = Math.max(left, Math.min(pixelX, right - width))
+        y = Math.max(top, Math.min(pixelY, bottom - height))
         visible = true
     }
 
@@ -140,23 +188,53 @@ Rectangle {
             onClicked:          _root._add("takeoff")
         }
 
+        // Which of the two reasons it is, rather than a grey button and no way to find out
+        QGCLabel {
+            objectName:             "localGrid_takeoffRefusedReason"
+            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 24
+            visible:                _root._canPlace && !_root._takeoffValid
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorGrey
+            text:                   _root._cannotAddTakeoffReason()
+        }
+
         QGCButton {
             Layout.fillWidth:   true
             // A multirotor's landing item is a return to launch, which is what the Plan view
             // inserts here and what it calls it
             text:               _root._isMultiRotor ? qsTr("Add return") : qsTr("Add landing")
-            enabled:            _root._canPlace && _root._landValid
+            enabled:            _root._canPlace && _root._landValid && !_root._returnAboveCeiling
             onClicked:          _root._add("land")
+        }
+
+        // Says which two numbers disagree and which one to change, because the operator cannot see
+        // either of them from here and the button would otherwise just be dead
+        QGCLabel {
+            objectName:             "localGrid_returnRefusedReason"
+            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 24
+            visible:                _root._canPlace && _root._returnAboveCeiling
+            wrapMode:               Text.WordWrap
+            font.pointSize:         ScreenTools.smallFontPointSize
+            color:                  qgcPal.colorOrange
+            text:                   qsTr("A return climbs to %1 first, and the rangefinder only reaches %2. Lower RTL_ALT below that, or finish the plan with 'Land here'.")
+                                        .arg(_root._distanceText(_root.gridView ? _root.gridView.returnAltitudeMetres : NaN))
+                                        .arg(_root._distanceText(_root.gridView ? _root.gridView.altitudeLimitMetres : NaN))
         }
 
         // Only where the button above does not already mean this. On a multirotor that button
         // returns the aircraft to launch, which is the wrong ending for a pattern meant to finish at
         // its far corner -- and QGC offers no other way to say it.
+        //
+        // Gated on canInsertLandHere rather than _canPlace alone: this button builds its landing by
+        // hand rather than through insertLandItem, so it never picks up isInsertLandValid's own
+        // refusal on its own -- and without one, it would happily insert a landing in the middle of
+        // a pattern with legs after it that the aircraft would never fly.
         QGCButton {
             Layout.fillWidth:   true
             visible:            _root._isMultiRotor
             text:               qsTr("Land here")
-            enabled:            _root._canPlace
+            enabled:            _root.gridView ? _root.gridView.canInsertLandHere : false
             onClicked:          _root._add("landHere")
         }
 

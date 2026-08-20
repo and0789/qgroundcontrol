@@ -14,6 +14,7 @@ ToolStripActionList {
         Viewer3DShowAction { },
         PreFlightCheckListShowAction { onTriggered: displayPreFlightChecklist() },
         LocalGridShowAction { },
+        LocalGridPlanAction { gridView: globals.localGridViewFlyView },
         NonGpsStatusShowAction { },
         OpticalFlowCalibrationShowAction { onTriggered: displayOpticalFlowCalibration() },
         GuidedActionTakeoff { },

@@ -147,6 +147,26 @@ Item {
     property real _headingDegrees:  vehicle ? vehicle.heading.rawValue : NaN
 
     property real _margins:         ScreenTools.defaultFontPixelHeight / 2
+
+    /// The most the readout/mission-list column on the right is allowed to widen to.
+    ///
+    /// A floor with no ceiling -- the shape this used to be -- gives every panel in the column room
+    /// to grow but nothing that ever asks it to stop, so a warning sentence or a long plan could take
+    /// half a phone screen. Matched to the Plan view's own right panel (PlanView.qml's
+    /// _rightPanelWidth): a third of the view, or 30 characters, whichever is narrower. On a desktop
+    /// that is 30 characters, close enough to the 28 this column used to float at that nothing here
+    /// should look different; on a phone it is a third of a much smaller number.
+    readonly property real _rightColumnMaximumWidth: Math.min(width / 3, ScreenTools.defaultFontPixelWidth * 30)
+
+    /// True while this view is too small to carry every panel open at once.
+    ///
+    /// Derived from this view's own size, never from ScreenTools.isMobile: --fake-mobile flips that
+    /// flag without changing the window, and a real phone can still report a large Screen through it.
+    /// Sizing off the view's own width and height is also the only form a test can drive, since a
+    /// test resizes the window rather than the platform it thinks it is running on.
+    readonly property bool compact: (width < ScreenTools.defaultFontPixelWidth * 110)
+                                        || (height < ScreenTools.defaultFontPixelHeight * 32)
+
     /// Roughly how far apart grid lines should sit before the spacing is rounded to a countable one
     property real _targetGridPixels: ScreenTools.defaultFontPixelHeight * 4
 
@@ -200,6 +220,10 @@ Item {
     readonly property alias heightNearCeiling:  altitudeLimit.nearCeiling
     readonly property alias heightAboveCeiling: altitudeLimit.aboveCeiling
     readonly property alias currentHeightMetres: altitudeLimit.currentHeightMetres
+
+    /// How high a return to launch would climb, and whether that leaves the height reference behind
+    readonly property alias returnAltitudeMetres:       altitudeLimit.returnAltitudeMetres
+    readonly property alias returnAltitudeAboveCeiling: altitudeLimit.returnAltitudeAboveCeiling
 
     /// The numbers of every item in the plan whose altitude climbs past that ceiling.
     ///
@@ -301,6 +325,14 @@ Item {
                 /// False for an item the grid has nowhere to put: it is listed, but no marker is
                 /// drawn for it and it cannot be dragged or moved with the rest of the plan
                 onGrid:     onGrid,
+                /// True for an item the vehicle actually flies through -- a waypoint, a landing --
+                /// and false for one that carries a coordinate without flying to it, such as an ROI
+                /// or a return to launch. Separate from onGrid: an ROI is still drawn as a marker
+                /// (it is a real, useful place on the grid), but a leg is not measured through it
+                /// and the polyline does not run through it either. Same test MissionController
+                /// itself uses everywhere it needs this distinction (MissionController.cc:2011 among
+                /// others), so an item this grid does not yet know about still classifies correctly.
+                flyThrough: item.specifiesCoordinate && !item.isStandaloneCoordinate,
                 /// Where this item comes in the plan, counting from one. This is what the row and
                 /// the marker show, and it is deliberately not the mission sequence number: those
                 /// count the home position and the DO_CHANGE_SPEED items QGC folds into a waypoint,
@@ -325,8 +357,11 @@ Item {
     }
 
     /// The plan's items that have somewhere on the grid to be drawn, in plan order
+    /// The plan's items that are actually flown through, in plan order. Used for the polyline and
+    /// for measuring legs -- an ROI is drawn on the grid but the aircraft is never routed to it, so
+    /// a leg measured through one would describe a turn that is never flown.
     function _drawnMissionPoints() {
-        return missionPoints.filter(point => point.onGrid)
+        return missionPoints.filter(point => point.flyThrough)
     }
 
     /// Whether the estimator's frame has slid away from the ground while the aircraft sat on it
@@ -410,8 +445,20 @@ Item {
     /// waypoint invented from a guessed origin uploads cleanly and flies somewhere else.
     readonly property bool canPlaceWaypoints: originKnown && (missionController !== null) && !planSyncInProgress
 
+    /// Where a new item goes: straight after the item currently selected, or after the end of the
+    /// plan when nothing is. The rule the Plan view's own insert strip uses (PlanView.qml's
+    /// insertSimpleItemAfterCurrent and its siblings), and the same point every insert-validity flag
+    /// on the controller -- isInsertTakeoffValid, isInsertLandValid, isInsertROIValid,
+    /// flyThroughCommandsAllowed -- is computed against. Read off the controller rather than off
+    /// selectedWaypointIndex on purpose: the two are kept in step by selectWaypoint and
+    /// clearWaypointSelection below, but the controller is the one place those flags actually come
+    /// from, so asking it directly cannot go out of step with what it just answered.
+    function _insertIndex() {
+        return missionController ? (missionController.currentPlanViewVIIndex + 1) : -1
+    }
+
     /// Adds a mission item at a point on the grid, in metres from the origin.
-    ///     @param kind one of "waypoint", "takeoff", "land"
+    ///     @param kind one of "waypoint", "takeoff", "land", "landHere"
     ///     @return true if it was added
     ///
     /// The same three calls the Plan view's insert strip makes, so an item added here is the same
@@ -425,7 +472,7 @@ Item {
         // A plan started from nothing is a new pattern, laid out from the origin like every other
         // one. Wherever the last plan had been moved to describes that plan, not this one, and left
         // standing it would take the first move of this one short by that distance.
-        if (_planIsEmpty()) {
+        if (planIsEmpty) {
             resetPlanAnchor()
         }
 
@@ -443,27 +490,33 @@ Item {
         // the operator to remember that on every new plan is asking them to remember it on the one
         // flight they forget. The takeoff goes on the origin rather than swallowing the point that
         // was clicked, so the operator still gets the item they asked for where they asked for it.
-        // The plan being empty is the only case, so nothing already built is reinterpreted.
-        if (_planIsEmpty()) {
+        // The plan being empty is the only case, so nothing already built is reinterpreted. This
+        // also advances the controller's current item to the takeoff just added, which is exactly
+        // where the item below still needs to land: right after it.
+        if (planIsEmpty) {
             insertTakeoffAtOrigin()
         }
 
-        // -1 appends, which is what clicking past the end of a route means
         switch (kind) {
         case "land":
-            _applyDefaultAltitude(missionController.insertLandItem(coordinate, -1, true /* makeCurrentItem */))
+            _applyDefaultAltitude(missionController.insertLandItem(coordinate, _insertIndex(), true /* makeCurrentItem */))
             break
         case "landHere":
             return _insertLandHere(coordinate)
         default: {
-            const item = missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
+            const item = missionController.insertSimpleMissionItem(coordinate, _insertIndex(), true /* makeCurrentItem */)
             _applyDefaultAltitude(item)
             _applyDefaultSpeed(item)
             break
         }
         }
 
-        _selectNewestItem()
+        // Nothing selects the new item here on purpose: makeCurrentItem above already moved the
+        // controller's current item to it, and the onPlanViewStateChanged handler further down
+        // follows that to keep selectedWaypointIndex in step. Selecting it again from this end used
+        // to be done by picking the newest item off the end of the plan (_selectNewestItem), which
+        // was correct only while every insert landed at the end -- it is gone along with that
+        // assumption.
         return true
     }
 
@@ -479,7 +532,7 @@ Item {
             return false
         }
 
-        const item = missionController.insertTakeoffItem(coordinate, -1, true /* makeCurrentItem */)
+        const item = missionController.insertTakeoffItem(coordinate, _insertIndex(), true /* makeCurrentItem */)
         if (!item) {
             return false
         }
@@ -491,7 +544,6 @@ Item {
         item.coordinate = coordinate
 
         _applyDefaultAltitude(item)
-        _selectNewestItem()
         return true
     }
 
@@ -510,6 +562,16 @@ Item {
         }
     }
 
+    /// True when a landing may be placed at the point clicked, rather than only appended past the
+    /// end of the plan. "Land here" builds a plain waypoint and swaps its command afterward, so it
+    /// never goes through insertLandItem and never picks up isInsertLandValid's own refusal --
+    /// without this it would happily insert a landing in the middle of a pattern the aircraft was
+    /// never going to stop flying, with nothing after it ever reached.
+    readonly property bool canInsertLandHere: canPlaceWaypoints
+                                                && (missionController
+                                                    ? (missionController.isInsertLandValid || planIsEmpty)
+                                                    : false)
+
     /// Lands the vehicle where it is standing on the grid, rather than flying it home first.
     ///
     /// QGC's own insert strip has no way to say this on a multirotor: its landing button produces a
@@ -517,14 +579,19 @@ Item {
     /// place, and the wrong one for a pattern meant to finish at its far corner.
     ///     @return true if it was added
     function _insertLandHere(coordinate) {
-        const item = missionController.insertSimpleMissionItem(coordinate, -1, true /* makeCurrentItem */)
+        if (!canInsertLandHere) {
+            return false
+        }
+
+        const item = missionController.insertSimpleMissionItem(coordinate, _insertIndex(), true /* makeCurrentItem */)
         if (!item) {
             return false
         }
 
         item.command = commandLand
-        _applyDefaultAltitude(item)
-        _selectNewestItem()
+        // Not given the default altitude the waypoints get: a landing is flown at the height of the
+        // leg that reaches it, whatever that is, so it takes the altitude of the item before it
+        syncLandingAltitudes()
         return true
     }
 
@@ -537,26 +604,190 @@ Item {
     /// neither is an item the vehicle's copy of the plan has not produced yet, but everything the
     /// aircraft would fly counts -- including a takeoff, which carries no coordinate on ArduPilot
     /// and so is nowhere on the grid.
-    function _planIsEmpty() {
-        return missionPoints.length === 0
+    readonly property bool planIsEmpty: missionPoints.length === 0
+
+    /// True when the plan already begins with a takeoff.
+    ///
+    /// Exposed so a refused takeoff can be explained rather than shown as a button that does
+    /// nothing. "Already has one" and "a takeoff can only go first" are different problems with
+    /// different ways out, and the operator cannot tell them apart from a grey button.
+    readonly property bool planHasTakeoff: _planHasTakeoff()
+
+    function _planHasTakeoff() {
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            // isPinned is set for exactly the takeoff -- it is pinned because it belongs on the
+            // origin -- so it is the same answer without walking the items a second time
+            if (points[i].isPinned) {
+                return true
+            }
+        }
+        return false
     }
 
     function _takeoffAllowed() {
         return missionController.isInsertTakeoffValid === true
     }
 
-    /// Selects whatever the plan just gained, so its altitude can be set straight away rather than
-    /// found afterwards. The item is appended, so it is the last one drawn.
-    function _selectNewestItem() {
-        const points = missionPoints
-        if (points.length > 0) {
-            selectWaypoint(points[points.length - 1].index)
-        }
-    }
-
     /// Adds a waypoint under a point on screen, which is what a click on the grid means
     function addWaypointAtPixel(x, y) {
         return addWaypointAt(transform.northForPixelY(y), transform.eastForPixelX(x))
+    }
+
+    /// Which insert tool the next click on bare grid places, or "" for none. Set from the fly
+    /// view's own tool strip (LocalGridPlanAction's drop panel), which is the only entry point that
+    /// can arm one: the strip has no map of its own to click on to summon a drop panel the way the
+    /// Plan view's does, so arming here and placing on this grid is how the same "tap the type, tap
+    /// the spot" workflow reaches a view with no map under it.
+    property string armedTool: ""
+
+    /// Arms an insert tool, or disarms it if it is the one already armed -- the same toggle the Plan
+    /// view's own Waypoint and ROI buttons use.
+    function toggleArmedTool(tool) {
+        armedTool = (armedTool === tool) ? "" : tool
+    }
+
+    /// @return true if the armed tool placed something at this point on screen
+    function placeArmedToolAtPixel(pixelX, pixelY) {
+        return placeArmedTool(transform.northForPixelY(pixelY), transform.eastForPixelX(pixelX))
+    }
+
+    /// @return true if the armed tool placed something at this point on the grid, in metres from
+    /// the origin
+    function placeArmedTool(north, east) {
+        switch (armedTool) {
+        case "waypoint":
+            return addWaypointAt(north, east)
+        case "roi":
+            return _insertROIAt(north, east)
+        default:
+            return false
+        }
+    }
+
+    /// Inserts a return, or a landing on a fixed wing, using the origin as its coordinate -- the
+    /// same reason a takeoff always lands on the origin regardless of what was asked for. Used from
+    /// the tool strip's drop panel, which triggers this without a click to read a point from.
+    ///     @return true if it was added
+    function insertReturnOrLandItem() {
+        return addMissionItemAt("land", 0, 0)
+    }
+
+    /// Marks where the vehicle should point its yaw and, on a supporting firmware, its camera --
+    /// the one absolute reference this grid has that is not itself estimated. A pattern flown with
+    /// an ROI and one flown without are two different experiments: the ROI turns the airframe, and
+    /// the optical flow sensor turns with it.
+    ///     @return true if it was added
+    function _insertROIAt(north, east) {
+        if (!canPlaceWaypoints || !missionController || (missionController.isInsertROIValid !== true)) {
+            return false
+        }
+
+        const coordinate = projection.coordinateAt(originCoordinate, north, east)
+        if (!coordinate.isValid) {
+            return false
+        }
+
+        if (planIsEmpty) {
+            resetPlanAnchor()
+            insertTakeoffAtOrigin()
+        }
+
+        missionController.insertROIMissionItem(coordinate, _insertIndex(), true /* makeCurrentItem */)
+        return true
+    }
+
+    /// Cancels whatever ROI is active, returning the vehicle and its camera to flying the plan
+    /// itself. Inserted directly rather than armed: unlike an ROI location, a cancel carries no
+    /// coordinate to place, so there is nothing for a click on the grid to supply.
+    ///     @return true if it was added
+    function insertCancelROIItem() {
+        if (!canPlaceWaypoints || !missionController) {
+            return false
+        }
+        missionController.insertCancelROIMissionItem(_insertIndex(), true /* makeCurrentItem */)
+        return true
+    }
+
+    /// Adds a copy of an item right after it: same command, position, altitude and, when the item
+    /// carries one, the same per-leg speed. Not offered for the takeoff, which only a plan's first
+    /// item may be, and not for an item with no real coordinate to copy -- a cancelled ROI, which
+    /// carries none at all.
+    ///     @return true if it was added
+    function duplicateItem(index) {
+        const item = _visualItemAt(index)
+        if (!item || !canPlaceWaypoints || _isPinnedItem(item) || !item.coordinate || !item.coordinate.isValid) {
+            return false
+        }
+
+        const command = (item.command !== undefined) ? item.command : commandWaypoint
+        var newItem
+        if (command === commandLand) {
+            newItem = missionController.insertLandItem(item.coordinate, index + 1, true /* makeCurrentItem */)
+        } else {
+            newItem = missionController.insertSimpleMissionItem(item.coordinate, index + 1, true /* makeCurrentItem */)
+            if (newItem) {
+                newItem.command = command
+            }
+        }
+        if (!newItem) {
+            return false
+        }
+
+        if (item.altitude && newItem.altitude) {
+            newItem.altitude.rawValue = item.altitude.rawValue
+            newItem.altitudeFrame = item.altitudeFrame
+        }
+
+        const sourceSpeed = waypointSpeedSection(index)
+        const newSpeed = newItem.speedSection
+        if (sourceSpeed && newSpeed && newSpeed.available && sourceSpeed.specifyFlightSpeed) {
+            newSpeed.flightSpeed.rawValue = sourceSpeed.flightSpeed.rawValue
+            newSpeed.specifyFlightSpeed = true
+        }
+
+        syncLandingAltitudes()
+        return true
+    }
+
+    /// Splits the leg leaving this item: adds a waypoint at its midpoint, in grid metres. Building a
+    /// pattern one leg at a time means the common edit is turning one side of it into two, and a
+    /// waypoint invented at the midpoint of the leg it splits is the only version of that which does
+    /// not ask the operator to work out a position for it by hand.
+    ///     @return true if it was added
+    function insertWaypointBetween(index) {
+        if (!canPlaceWaypoints) {
+            return false
+        }
+
+        const drawn = _drawnMissionPoints()
+        for (var i = 0; i < drawn.length; i++) {
+            if (drawn[i].index !== index) {
+                continue
+            }
+            // The plan's last flown-through item has no leg after it to split
+            if ((i + 1) >= drawn.length) {
+                return false
+            }
+            const next = drawn[i + 1]
+            selectWaypoint(index)
+            return addWaypointAt((drawn[i].north + next.north) / 2, (drawn[i].east + next.east) / 2)
+        }
+        return false
+    }
+
+    /// @return true when this item has a leg after it for insertWaypointBetween to split. Read by
+    /// the row's own footer to decide whether "insert after" is worth offering: the plan's last
+    /// flown-through item has nothing past it to split, and a button that fails every time it is
+    /// pressed teaches the operator to stop trusting the row.
+    function hasLegAfter(index) {
+        const drawn = _drawnMissionPoints()
+        for (var i = 0; i < drawn.length; i++) {
+            if (drawn[i].index === index) {
+                return (i + 1) < drawn.length
+            }
+        }
+        return false
     }
 
     /// Index into the mission's visual items of the waypoint being worked on, or -1 for none
@@ -576,16 +807,83 @@ Item {
         return items.get(index)
     }
 
+    /// @return true when an index names an item this grid actually lists -- every item but the
+    /// mission settings item at index 0, which _buildMissionPoints steps over. Guards the
+    /// controller-follow handler below against ever opening a row for the one item that has none.
+    function _isDrawnListIndex(index) {
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            if (points[i].index === index) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Set while clearWaypointSelection is putting the controller's current item back at the end of
+    /// the plan on purpose. Without this guard the onPlanViewStateChanged handler below would read
+    /// that as a fresh selection and re-open the last row's editor immediately after this function
+    /// told it to close -- undoing the very click that asked for the plan to stop being edited.
+    property bool _revertingSelectionToEndOfPlan: false
+
     function selectWaypoint(index) {
-        if (!_visualItemAt(index)) {
+        const item = _visualItemAt(index)
+        if (!item) {
             return
         }
         selectedWaypointIndex = index
         clickPanel.visible = false
+        // Tells the controller where an insert should land: right after whatever the operator is
+        // looking at. force is false so an insert's own makeCurrentItem call (which lands on the
+        // very item this selects) does not trigger a second, redundant recompute.
+        if (missionController) {
+            missionController.setCurrentPlanViewSeqNum(item.sequenceNumber, false)
+        }
     }
 
+    /// Deselects, and puts the controller back at the end of the plan -- which is where an insert
+    /// belongs once nothing in particular is being worked on. This mirrors exactly what
+    /// MissionController computes for itself when the fly view first takes a plan
+    /// (MissionController.cc:1524-1531): the last item's own last sequence number, or 0 for an empty
+    /// plan.
     function clearWaypointSelection() {
         selectedWaypointIndex = -1
+        if (!missionController) {
+            return
+        }
+        const items = missionController.visualItems
+        const lastItem = (items && (items.count > 0)) ? items.get(items.count - 1) : null
+        _revertingSelectionToEndOfPlan = true
+        missionController.setCurrentPlanViewSeqNum(lastItem ? lastItem.lastSequenceNumber : 0, true)
+        _revertingSelectionToEndOfPlan = false
+    }
+
+    /// Keeps selectedWaypointIndex following whichever item the controller just made current --
+    /// which is how an insert's makeCurrentItem lands on the item just added. This replaces
+    /// _selectNewestItem, which picked the newest item off the end of the plan and so opened the
+    /// wrong editor the moment an insert could land anywhere else.
+    Connections {
+        target:  missionController
+        enabled: missionController !== null
+
+        function onPlanViewStateChanged() {
+            if (_root._revertingSelectionToEndOfPlan) {
+                return
+            }
+            const viIndex = missionController.currentPlanViewVIIndex
+            if ((viIndex === _root.selectedWaypointIndex) || !_root._isDrawnListIndex(viIndex)) {
+                return
+            }
+            _root.selectedWaypointIndex = viIndex
+        }
+
+        // A plan that just arrived whole -- downloaded, cleared, loaded from the vehicle -- is not
+        // the plan whatever was selected belonged to. Left alone, the same index could now name a
+        // completely different item and silently reopen its editor without anything having been
+        // clicked.
+        function onVisualItemsReset() {
+            _root.clearWaypointSelection()
+        }
     }
 
     /// @return true if a waypoint was removed
@@ -615,8 +913,11 @@ Item {
             if ((points[i].index !== index) || !points[i].onGrid) {
                 continue
             }
+            // Walking backward for the nearest item the aircraft actually flies through, not merely
+            // the nearest one drawn: an ROI sits on the grid with a real position but is never
+            // routed to, and a leg measured from one would describe a turn that is not flown.
             for (var previous = i - 1; previous >= 0; previous--) {
-                if (points[previous].onGrid) {
+                if (points[previous].flyThrough) {
                     return { north: points[previous].north, east: points[previous].east }
                 }
             }
@@ -727,6 +1028,11 @@ Item {
         return (item && (item.command !== undefined)) ? item.command : -1
     }
 
+    /// @return true when the item at this index puts the aircraft on the ground where it is drawn
+    function waypointIsLanding(index) {
+        return waypointCommand(index) === commandLand
+    }
+
     /// What to call a mission item in a list of them.
     ///
     /// QGC's own name for the command rather than one built here from the three the type selector
@@ -765,6 +1071,43 @@ Item {
         return changed
     }
 
+    /// Gives every landing the altitude of the item flown before it.
+    ///
+    /// A landing's altitude is never flown. ArduPilot's do_land() zeroes the one it is given and
+    /// refills it from the vehicle's current altitude, so the aircraft arrives over the landing
+    /// point at whatever height the leg before it was flown at and descends from there. Left
+    /// carrying its own number the item is a field that changes nothing -- and the plan's profile is
+    /// drawn from that number, so the last leg shows a climb or a dive the aircraft will not fly.
+    ///
+    /// Landings do not pass their altitude on: the one before a landing is what the leg into it is
+    /// flown at, so a second item after one is measured from the last waypoint rather than from the
+    /// ground.
+    ///     @return how many landings were changed
+    function syncLandingAltitudes() {
+        var changed = 0
+        var previousAltitude = NaN
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            const index = points[i].index
+            const fact = waypointAltitudeFact(index)
+            if (!fact) {
+                continue
+            }
+            if (!waypointIsLanding(index)) {
+                previousAltitude = fact.rawValue
+                continue
+            }
+            // A landing with nothing before it has no altitude to follow. Left as it is rather than
+            // zeroed: the aircraft is on the ground there either way, and rewriting it would be a
+            // change the operator did not ask for and cannot see the reason for.
+            if (!isNaN(previousAltitude) && (fact.rawValue !== previousAltitude)) {
+                fact.rawValue = previousAltitude
+                changed++
+            }
+        }
+        return changed
+    }
+
     /// Turns a placed item into a takeoff, a landing or a plain waypoint without deleting and
     /// replacing it -- so the position already typed or dragged into place is kept.
     ///     @return true if the command was changed
@@ -774,6 +1117,9 @@ Item {
             return false
         }
         item.command = command
+        // Changing the command resets the item's altitude to whatever the new command defaults to,
+        // and a landing's is not the operator's to set in the first place
+        syncLandingAltitudes()
         return true
     }
 
@@ -1326,6 +1672,14 @@ Item {
             if (_hasDragged) {
                 return
             }
+            // Checked before the selection is touched at all. An armed tool places at the point
+            // just selected -- that is the whole reason for arming one instead of opening the click
+            // panel every time -- and clearing the selection first would turn every placement back
+            // into an append, silently, on every click after the first.
+            if (_root.armedTool !== "") {
+                _root.placeArmedToolAtPixel(mouse.x, mouse.y)
+                return
+            }
             // A click on bare grid is a click away from whatever waypoint was being worked on
             _root.clearWaypointSelection()
             clickPanel.showAt(mouse.x, mouse.y)
@@ -1433,8 +1787,11 @@ Item {
         anchors.rightMargin:    _root._margins
         anchors.topMargin:      _root._margins
         // Matched to the readout above rather than fixed, so the right edge of the view stays one
-        // column of two panels whatever the readout's own contents make it
-        width:                  Math.max(ScreenTools.defaultFontPixelWidth * 28, readout.width)
+        // column of two panels whatever the readout's own contents make it. Held to the same ceiling
+        // as the readout on top of that floor, so neither panel alone can widen the column past what
+        // the view actually has room for.
+        width:                  Math.min(Math.max(ScreenTools.defaultFontPixelWidth * 28, readout.width),
+                                         _root._rightColumnMaximumWidth)
         // Anchored at the top and sized to its contents, so a plan of two waypoints gets a panel two
         // rows tall. The limit is what is left down to the bottom edge: past that the rows scroll
         // inside the panel rather than the panel running off the view.
@@ -1521,25 +1878,55 @@ Item {
         return toolInsets ? toolInsets[name] : 0
     }
 
-    // Bottom left, the corner the waypoint panel gave up when it moved under the readout. It sits
-    // above the scale bar, which owns the very corner.
-    LocalGridMissionActions {
-        objectName:             "localGrid_missionActions"
-        anchors.left:           parent.left
-        anchors.bottom:         parent.bottom
-        anchors.leftMargin:     _root._margins + _root._inset("leftEdgeBottomInset")
-        anchors.bottomMargin:   _root._margins + (ScreenTools.defaultFontPixelHeight * 2.5)
-        z:                      2
-        planMasterController:   _root.planMasterController
-        gridView:               _root
-    }
+    /// The margins nothing on this view should be placed inside of: the tool strip in the top-left,
+    /// and whatever the fly view has anchored to the other three edges -- the virtual joystick or the
+    /// guided-action buttons, depending on what is on screen. Exposed so the click panel can keep
+    /// itself, and what it opens under a tap near a corner, out from under a button it would then
+    /// cover or could not be reached past. The same inset names the standing panels already trust
+    /// (leftEdgeBottomInset, bottomEdgeLeftInset) and the same top correction missionActions needed
+    /// (topEdgeOffset alongside topEdgeLeftInset -- see the comment there for why).
+    readonly property real safeAreaLeft:   _inset("leftEdgeBottomInset")
+    readonly property real safeAreaTop:    topEdgeOffset + _inset("topEdgeLeftInset")
+    readonly property real safeAreaRight:  _inset("rightEdgeBottomInset")
+    readonly property real safeAreaBottom: _inset("bottomEdgeLeftInset")
 
+    // Bottom left, the corner the waypoint panel gave up when it moved under the readout. Declared
+    // first so missionActions below can sit its bottom margin on this panel's actual measured height
+    // rather than on a number guessed to be tall enough -- which stopped being tall enough the moment
+    // this panel gained a second row of controls.
     LocalGridScaleBar {
+        id:                     scaleBar
         anchors.left:           parent.left
         anchors.bottom:         parent.bottom
         anchors.leftMargin:     _root._margins + _root._inset("leftEdgeBottomInset")
         anchors.bottomMargin:   _root._margins + _root._inset("bottomEdgeLeftInset")
         gridTransform:          transform
+    }
+
+    // Sits above the scale bar it is measured from. Its own height is capped rather than left to grow
+    // as tall as its content wants: this is the one panel on the grid anchored to the bottom that
+    // grows upward, and the tool strip -- anchored to the top of this same left edge -- is what it
+    // grows into. topEdgeLeftInset is the tool strip's own bottom edge, published for exactly this: a
+    // panel on the same edge knowing where the other one ends.
+    //
+    // topEdgeOffset is added on top of it for the same reason the readout's topMargin adds it to
+    // topEdgeRightInset: the inset is measured in the fly view's own frame, which starts below the
+    // toolbar, while this view's frame -- and so this panel's own y -- starts above it. Left out, the
+    // tool strip's edge reads a whole toolbar's height higher than it actually sits, and the cap
+    // this exists to enforce comes out too generous by exactly that much.
+    LocalGridMissionActions {
+        objectName:             "localGrid_missionActions"
+        anchors.left:           parent.left
+        anchors.bottom:         parent.bottom
+        anchors.leftMargin:     _root._margins + _root._inset("leftEdgeBottomInset")
+        anchors.bottomMargin:   scaleBar.anchors.bottomMargin + scaleBar.height + _root._margins
+        height:                 implicitHeight
+        maximumHeight:          Math.max(0, (_root.height - anchors.bottomMargin)
+                                                - _root.topEdgeOffset - _root._inset("topEdgeLeftInset")
+                                                - _root._margins)
+        z:                      2
+        planMasterController:   _root.planMasterController
+        gridView:               _root
     }
 
     // Pinned to the top right corner, and deliberately not set back by the right edge inset. That
@@ -1558,6 +1945,8 @@ Item {
         // left the readout floating in the middle of the grid.
         anchors.rightMargin:    _root._margins
         anchors.topMargin:      _root.topEdgeOffset + _root._margins + _root._inset("topEdgeRightInset")
+        maximumWidth:           _root._rightColumnMaximumWidth
+        compactColumns:         _root.compact
         gridView:               _root
         onSetOriginRequested:   _root.showSetOriginDialog()
     }
@@ -1574,7 +1963,7 @@ Item {
         anchors.top:            readout.bottom
         anchors.rightMargin:    _root._margins
         anchors.topMargin:      visible ? _root._margins : 0
-        width:                  Math.max(implicitWidth, readout.width)
+        width:                  Math.min(Math.max(implicitWidth, readout.width), _root._rightColumnMaximumWidth)
         vehicle:                _root.vehicle
         z:                      2
     }

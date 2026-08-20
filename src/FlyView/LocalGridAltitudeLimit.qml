@@ -117,6 +117,32 @@ QtObject {
     readonly property bool aboveCeiling: currentHeightKnown && limitKnown
                                             && (currentHeightMetres > limitMetres)
 
+    /// How high a return to launch would climb before flying home.
+    ///
+    /// ArduPilot 4.7 renamed this to RTL_ALT_M in metres; before that it was RTL_ALT in centimetres,
+    /// and the rename carries no alias -- so both names are looked for and the older one converted.
+    property string returnAltitudeParameterName:       "RTL_ALT_M"
+    property string legacyReturnAltitudeParameterName: "RTL_ALT"
+
+    readonly property real returnAltitudeMetres: {
+        if (_returnAltitudeFact) {
+            return _returnAltitudeFact.rawValue
+        }
+        return _legacyReturnAltitudeFact ? (_legacyReturnAltitudeFact.rawValue / 100) : NaN
+    }
+
+    readonly property bool returnAltitudeKnown: !isNaN(returnAltitudeMetres)
+
+    /// True when a return to launch would climb the vehicle past the height reference it navigates
+    /// on.
+    ///
+    /// RTL_ALT is a floor, not a target: the vehicle climbs to at least that height before it starts
+    /// home. And it lives in a parameter rather than in the plan, so the ceiling this object puts on
+    /// waypoint altitudes cannot reach it -- a return is the one item an operator can add to a plan
+    /// that leaves the rangefinder's range with nothing in QGC able to clamp it.
+    readonly property bool returnAltitudeAboveCeiling: limitKnown && returnAltitudeKnown
+                                                            && (returnAltitudeMetres > limitMetres)
+
     /// @return true when this altitude would take the vehicle past the rangefinder's range. False
     /// whenever the answer is not known, so an unrecognised setup warns about nothing rather than
     /// warning about everything.
@@ -132,6 +158,9 @@ QtObject {
     property var _sourceFact:   _factOrNull(altitudeSourceParameterName)
     property var _velocityFact: _factOrNull(velocitySourceParameterName)
     property var _maxFact:      _factOrNull(rangefinderMaxParameterName)
+
+    property var _returnAltitudeFact:       _factOrNull(returnAltitudeParameterName)
+    property var _legacyReturnAltitudeFact: _factOrNull(legacyReturnAltitudeParameterName)
 
     function _factOrNull(parameterName) {
         return (_controller && _parametersReady && _controller.parameterExists(-1, parameterName))

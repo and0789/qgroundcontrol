@@ -151,6 +151,7 @@ Item {
 
     FlyViewToolStrip {
         id:                     toolStrip
+        objectName:             "flyView_toolStrip"
         anchors.left:           parent.left
         anchors.top:            parent.top
         z:                      QGroundControl.zOrderWidgets

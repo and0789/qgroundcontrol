@@ -41,6 +41,20 @@ Rectangle {
 
     property real _margins: ScreenTools.defaultFontPixelHeight / 3
 
+    /// The most this panel is allowed to widen to, set from outside. Zero for no limit.
+    ///
+    /// Kept as a cap on the warning text below rather than as an explicit width on this panel: this
+    /// item sizes itself from its content (see implicitWidth above), and a Layout that is handed a
+    /// width narrower than what its children ask for does not shrink them to fit -- it lets them
+    /// overflow. Narrowing the sentence that drives the width is what actually narrows the panel.
+    property real maximumWidth: 0
+
+    /// Set from outside when the view is too narrow to give this panel's numbers four columns and
+    /// still meet maximumWidth. The trade the comment on localGrid_readoutNumbers already documents --
+    /// two pairs to a row instead of six rows of one, half the width for double the height -- taken
+    /// the other way: full width, half the columns.
+    property bool compactColumns: false
+
     /// How wide a warning is allowed to make this panel.
     ///
     /// Everything else here is a number in a column, and the columns are narrow. The warnings are
@@ -49,7 +63,14 @@ Rectangle {
     /// follows its width, across half the grid, and spread the six numbers out over the gap. Capped,
     /// a sentence wraps into roughly the column the numbers had already asked for, and a warning
     /// changes the panel's height rather than the shape of the view.
-    readonly property real _warningWidth: ScreenTools.defaultFontPixelWidth * 34
+    ///
+    /// Held to maximumWidth as well when one is given, so a phone-width column stays a phone-width
+    /// column even while a warning is showing.
+    readonly property real _warningWidth: (maximumWidth > 0)
+                                            ? Math.max(ScreenTools.defaultFontPixelWidth * 10,
+                                                       Math.min(ScreenTools.defaultFontPixelWidth * 34,
+                                                                maximumWidth - (_margins * 2)))
+                                            : ScreenTools.defaultFontPixelWidth * 34
 
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
@@ -185,8 +206,13 @@ Rectangle {
             // range and bearing a return leg is flown on. The third pairs the two that are left over
             // and means nothing by being together -- which is the price of the halved height, and
             // cheap at six numbers.
+            //
+            // compactColumns takes the same trade the other way: one pair to a row, full width for
+            // each label, half again the height. maximumWidth alone cannot narrow this panel -- a
+            // Layout does not shrink its children to fit -- so on a narrow view the column count
+            // itself has to be what changes.
             Layout.fillWidth: true
-            columns:        4
+            columns:        _root.compactColumns ? 2 : 4
             columnSpacing:  ScreenTools.defaultFontPixelWidth
             rowSpacing:     0
 
@@ -374,11 +400,18 @@ Rectangle {
         // them. They stay here rather than joining the mission strip in the far corner: that panel
         // already carries a Clear that wipes the flight plan, and a Clear trail beside it would be two
         // buttons a glance apart with very different consequences.
-        RowLayout {
+        // A row of three buttons was the one thing in this panel that maximumWidth and compactColumns
+        // above could not touch: none of the three wraps or shrinks, so the row's width was always
+        // three buttons wide regardless of how narrow the numbers above it had been made to fit. Given
+        // the same trade as those numbers -- two to a row instead of three, the odd one on a row of
+        // its own -- rather than left as the one thing this panel could not actually be narrowed past.
+        GridLayout {
             objectName:         "localGrid_readoutViewButtons"
             visible:            !_root.collapsed
             Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
-            spacing:            ScreenTools.defaultFontPixelWidth
+            columns:            _root.compactColumns ? 2 : 3
+            columnSpacing:      ScreenTools.defaultFontPixelWidth
+            rowSpacing:         ScreenTools.defaultFontPixelHeight / 4
 
             QGCButton {
                 text:       qsTr("Vehicle")

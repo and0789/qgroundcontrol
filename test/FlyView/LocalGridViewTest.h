@@ -46,6 +46,8 @@ private slots:
     void _takeoffIsHeldOnTheOrigin_test();
     void _itemTypeChangesInPlace_test();
     void _altitudeCanBeAppliedToEveryItem_test();
+    void _landingTakesTheAltitudeOfTheItemBeforeIt_test();
+    void _gridSaysWhetherThePlanAlreadyHasATakeoff_test();
     void _everyItemAboveTheCeilingIsFound_test();
     void _missionItemRowOpensOnlyWhenCurrent_test();
     void _missionItemRowNamesTheItemItHolds_test();
@@ -76,6 +78,18 @@ private slots:
     void _planSaysWhereTheVehicleWouldPickItUp_test();
     void _uploadIsRefusedWhenThePreCheckSaysSo_test();
     void _planAnchorOutlivesTheView_test();
+
+    // Bagian 3: mission-creation parity (Lampiran D)
+    void _insertAfterSelectedItem_landsInTheMiddleOfThePlan_test();
+    void _insertAfterSelectedItem_selectsTheNewItemNotTheLastOne_test();
+    void _nothingCanBeInsertedBeforeTheTakeoff_test();
+    void _landHere_refusesAMidPlanSpot_test();
+    void _armedTool_placesAfterTheSelectionWithoutClearingIt_test();
+    void _armedTool_chainsSeveralPlacementsInARow_test();
+    void _roiIsDrawnButNotFlownThrough_test();
+    void _selectionIsClearedWhenThePlanArrivesWhole_test();
+    void _duplicateItem_copiesPositionAltitudeAndSpeed_test();
+    void _insertBetween_splitsTheLegAtItsMidpoint_test();
 
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);

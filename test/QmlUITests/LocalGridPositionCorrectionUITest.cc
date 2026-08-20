@@ -2,12 +2,11 @@
 
 #include <cmath>
 
-#include <QtPositioning/QGeoCoordinate>
 #include <QtQuick/QQuickItem>
 #include <QtTest/QTest>
 
-#include "FirmwarePlugin.h"
 #include "FlyViewSettings.h"
+#include "LocalGridTestSupport.h"
 #include "MockLink.h"
 #include "SettingsManager.h"
 #include "Vehicle.h"
@@ -16,34 +15,9 @@ UT_REGISTER_TEST(LocalGridPositionCorrectionUITest, TestLabel::Integration)
 
 namespace {
 
-// Somewhere real and away from the equator, so a latitude and longitude mix-up cannot pass
-constexpr double kOriginLatitude = 47.3977419;
-constexpr double kOriginLongitude = 8.5455938;
-
-/// Gives the vehicle an estimator origin, which is the frame a correction is measured inside of.
-///
-/// Caching the COMMAND_INT form as unsupported drives the legacy message straight away: MockLink
-/// refuses every COMMAND_INT, and waiting out that probe on each test is time spent proving something
-/// this test is not about.
-bool giveTheVehicleAnOrigin(Vehicle *vehicle, MockLink *mockLink)
-{
-    FirmwarePluginInstanceData *const instanceData = vehicle->firmwarePluginInstanceData();
-    if (!instanceData) {
-        return false;
-    }
-
-    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN,
-                                      FirmwarePluginInstanceData::CommandSupportedResult::UNSUPPORTED);
-    vehicle->setEstimatorOrigin(QGeoCoordinate(kOriginLatitude, kOriginLongitude, 0));
-    if (!QTest::qWaitFor([mockLink]() {
-            return mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) >= 1;
-        }, TestTimeout::longMs())) {
-        return false;
-    }
-
-    vehicle->requestEstimatorOrigin();
-    return QTest::qWaitFor([vehicle]() { return vehicle->estimatorOrigin().isValid(); }, TestTimeout::longMs());
-}
+using LocalGridTestSupport::OriginLatitude;
+using LocalGridTestSupport::OriginLongitude;
+using LocalGridTestSupport::giveTheVehicleAnOrigin;
 
 /// Puts the origin marker on screen. The grid follows the aircraft, and MockLink flies its own sweep,
 /// so by the time the UI has booted the origin can be anywhere -- including off the view entirely.
@@ -121,8 +95,8 @@ void LocalGridPositionCorrectionUITest::_originMarkerCorrectsThePositionToTheOri
 
             QCOMPARE(command.command, static_cast<uint16_t>(MAV_CMD_EXTERNAL_POSITION_ESTIMATE));
             QCOMPARE(command.frame, static_cast<uint8_t>(MAV_FRAME_GLOBAL));
-            QCOMPARE(command.x, static_cast<int32_t>(std::lround(kOriginLatitude * 1e7)));
-            QCOMPARE(command.y, static_cast<int32_t>(std::lround(kOriginLongitude * 1e7)));
+            QCOMPARE(command.x, static_cast<int32_t>(std::lround(OriginLatitude * 1e7)));
+            QCOMPARE(command.y, static_cast<int32_t>(std::lround(OriginLongitude * 1e7)));
             // Refused outright by the vehicle if this is anything but NaN: the command carries no
             // height, because what drifts is the horizontal frame
             QVERIFY2(std::isnan(command.z), "the altitude must be NaN or the vehicle refuses the command");
@@ -140,6 +114,68 @@ void LocalGridPositionCorrectionUITest::_originMarkerCorrectsThePositionToTheOri
                      qPrintable(QStringLiteral("the reason has to be readable, not an enum name, got: %1").arg(reason)));
 
             QVERIFY(rejectDialog());
+        });
+}
+
+/// Standing the aircraft back on the origin is one press, and it is not the dialog.
+///
+/// The dialog exists to let an operator check a claim they judged by eye off a grid with nothing on
+/// it to judge against -- the offsets, the coordinate, the fallback, the last resort. None of that
+/// applies to the origin: it is a mark on the ground the aircraft was carried back to, and every
+/// field in that dialog reads 0.00 for it. A page of confirmation for a claim with nothing in it to
+/// confirm is a page the operator learns to click through.
+///
+/// It lives with the between-flights controls rather than on the click panel, because it is not
+/// about the point that was clicked. It is the first of the two remedies for a drifted frame, and
+/// it sits directly above the other one.
+void LocalGridPositionCorrectionUITest::_standingOnTheOriginIsOnePressNotADialog_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle *vehicle) {
+            QVERIFY(vehicle);
+            QVERIFY2(giveTheVehicleAnOrigin(vehicle, mockLink), "the vehicle never took an origin");
+
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            mockLink->clearReceivedMavlinkMessageCounts();
+
+            QVERIFY2(clickButton(QStringLiteral("localGrid_standOnOriginButton")),
+                     "the between-flights controls offer no way to stand the aircraft on the origin");
+
+            // No dialog. The send button is the one thing only that dialog has, so its absence is
+            // what says the press went straight out.
+            QVERIFY2(!findVisibleItem(_rootItem, QStringLiteral("correctPosition_sendButton"), 500),
+                     "the press opened the correction dialog instead of sending the correction");
+
+            QTRY_VERIFY_WITH_TIMEOUT(mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_COMMAND_INT) >= 1,
+                                     TestTimeout::longMs());
+
+            mavlink_message_t message{};
+            QVERIFY(mockLink->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_COMMAND_INT, message));
+            mavlink_command_int_t command{};
+            mavlink_msg_command_int_decode(&message, &command);
+
+            QCOMPARE(command.command, static_cast<uint16_t>(MAV_CMD_EXTERNAL_POSITION_ESTIMATE));
+            QCOMPARE(command.x, static_cast<int32_t>(std::lround(OriginLatitude * 1e7)));
+            QCOMPARE(command.y, static_cast<int32_t>(std::lround(OriginLongitude * 1e7)));
+
+            // MockLink does not implement the command, so what comes back is a refusal -- and the
+            // operator has to be told, or they walk to the aircraft believing a position that never
+            // moved. The same label carries the drift figure when the vehicle takes it.
+            QQuickItem *const result =
+                findVisibleItem(_rootItem, QStringLiteral("localGrid_standOnOriginResult"), 3000);
+            QVERIFY2(result, "nothing said whether the correction was taken");
+            QVERIFY2(!result->property("text").toString().isEmpty(),
+                     "the result line is visible but says nothing");
+
+            // Not asserted here: the wording this same label carries when a vehicle *takes* the
+            // correction, which names how far the estimator had drifted. MockLink has no
+            // implementation of the command to accept it with, and answering for it from the test
+            // races the refusal that is already on its way back from the press above.
         });
 }
 

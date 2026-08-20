@@ -84,6 +84,16 @@ ColumnLayout {
     /// position fields would take a number and move nothing, so they are dropped rather than shown.
     readonly property bool _placedOnGrid: !isNaN(north) && !isNaN(east)
 
+    /// True for a landing, whose altitude is not the operator's to set. ArduPilot zeroes the one it
+    /// is given and refills it from the vehicle's current altitude, so the number in the field would
+    /// take an edit and change nothing about the flight.
+    readonly property bool _isLanding: (gridView && (visualItemIndex >= 0))
+                                        ? gridView.waypointIsLanding(visualItemIndex)
+                                        : false
+
+    /// Whether this item's altitude is worth showing, and worth taking an edit
+    readonly property bool _altitudeIsOwn: (_altitudeFact !== null) && !_isLanding
+
     /// Whether the fields that move this item are any use on it
     readonly property bool _movable: _placedOnGrid && !_isPinned
 
@@ -104,13 +114,19 @@ ColumnLayout {
                 return
             }
             const capped = _root.gridView.clampAltitude(value)
-            if (capped === value) {
+            if (capped !== value) {
+                _root._altitudeFact.rawValue = capped
+                _root._clampedNote = qsTr("Held to %1 — the rangefinder only reaches %2.")
+                                        .arg(_root._altitudeText(capped))
+                                        .arg(_root._limitText)
+                // That write raises this handler again with the capped value, which is where the
+                // landings are brought into step. Doing it here as well would walk the plan twice
+                // and move them to a height that is about to be corrected.
                 return
             }
-            _root._altitudeFact.rawValue = capped
-            _root._clampedNote = qsTr("Held to %1 — the rangefinder only reaches %2.")
-                                    .arg(_root._altitudeText(capped))
-                                    .arg(_root._limitText)
+            // A landing is flown at the height of the leg reaching it, so retyping a waypoint's
+            // altitude moves the landing after it too
+            _root.gridView.syncLandingAltitudes()
         }
     }
 
@@ -353,11 +369,25 @@ ColumnLayout {
         onApplied:  _root._applyLeg()
     }
 
-    // Only for items carrying an altitude of their own. A complex item may not, and the row is
-    // dropped rather than shown holding nothing.
+    // What happens at a landing instead of an altitude field. Said out loud because the field was
+    // there until now: an operator who set a number in it and watched the aircraft ignore it is
+    // owed the reason, and one who goes looking for the field needs to know it did not fail to load.
+    QGCLabel {
+        objectName:             "localGrid_landingAltitudeFollows"
+        Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 3
+        Layout.maximumWidth:    _root._textWidth
+        visible:                _root._isLanding
+        wrapMode:               Text.WordWrap
+        font.pointSize:         ScreenTools.smallFontPointSize
+        color:                  qgcPal.colorGrey
+        text:                   qsTr("Lands from the height of the leg that reaches it — the aircraft flies here at whatever altitude it arrives at and descends from there, so this item carries no altitude of its own.")
+    }
+
+    // Only for items carrying an altitude of their own. A complex item may not, and a landing's is
+    // never flown, so the row is dropped rather than shown holding a number that does nothing.
     RowLayout {
         Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
-        visible:            _root._altitudeFact !== null
+        visible:            _root._altitudeIsOwn
         spacing:            ScreenTools.defaultFontPixelWidth
 
         QGCLabel {
@@ -381,7 +411,7 @@ ColumnLayout {
     // did not take what was typed into it.
     QGCLabel {
         Layout.maximumWidth:    _root._textWidth
-        visible:                _root._clampedNote !== ""
+        visible:                _root._altitudeIsOwn && (_root._clampedNote !== "")
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
         color:                  qgcPal.colorOrange
@@ -394,7 +424,7 @@ ColumnLayout {
     // file or from the vehicle is not quietly rewritten under the operator.
     QGCLabel {
         Layout.maximumWidth:    _root._textWidth
-        visible:                _root._altitudeAboveLimit
+        visible:                _root._altitudeIsOwn && _root._altitudeAboveLimit
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
         color:                  qgcPal.colorOrange
@@ -405,7 +435,7 @@ ColumnLayout {
     QGCButton {
         objectName:         "localGrid_applyAltitudeToAllButton"
         Layout.fillWidth:   true
-        visible:            _root._altitudeFact !== null
+        visible:            _root._altitudeIsOwn
         text:               qsTr("Set this altitude on all")
         onClicked:          _root._applyAltitudeToAll()
     }

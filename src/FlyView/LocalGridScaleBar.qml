@@ -11,6 +11,8 @@ import QGroundControl.Controls
 Item {
     id: _root
 
+    objectName: "localGrid_scaleBar"
+
     property var gridTransform: null
 
     /// Longest the bar is allowed to get before the length it represents is rounded down

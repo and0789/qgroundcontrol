@@ -231,6 +231,40 @@ Rectangle {
             Layout.margins:         _root._margins
             visible:                _root.isCurrentItem
         }
+
+        // Building a pattern one leg at a time means the common edit is splitting a leg or repeating
+        // a point, and both belong at the item's own foot rather than in the header (already full:
+        // the number disc, the type combo, the delete icon) or in LocalGridWaypointEditor, whose own
+        // opening comment restricts it to measurements alone. Only on the open row, the same rule
+        // the delete icon already follows -- a second row of controls on every collapsed line is a
+        // gloved finger's mis-tap waiting to happen.
+        RowLayout {
+            id:                 actionRow
+            Layout.fillWidth:   true
+            Layout.margins:     _root._margins
+            Layout.topMargin:   0
+            visible:            _root.isCurrentItem
+            spacing:            ScreenTools.defaultFontPixelWidth / 2
+
+            QGCButton {
+                objectName:         "localGrid_rowInsertAfterButton"
+                Layout.fillWidth:   true
+                text:               qsTr("Insert after")
+                // The plan's last flown-through item has no leg after it to split
+                visible:            _root.gridView && _root.gridView.hasLegAfter(_root.visualItemIndex)
+                onClicked:          _root.gridView.insertWaypointBetween(_root.visualItemIndex)
+            }
+
+            QGCButton {
+                objectName:         "localGrid_rowDuplicateButton"
+                Layout.fillWidth:   true
+                text:               qsTr("Duplicate")
+                // Not offered for the takeoff: only a plan's first item may be one, and a duplicate
+                // of it is refused by the same rule that stops a second one being added anywhere
+                visible:            _root.gridView && !_root.gridView.waypointIsPinned(_root.visualItemIndex)
+                onClicked:          _root.gridView.duplicateItem(_root.visualItemIndex)
+            }
+        }
     }
 
     function _loadEditor() {
