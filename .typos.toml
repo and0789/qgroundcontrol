@@ -74,6 +74,7 @@ extend-exclude = [
     "*.FactMetaData.json",
     "*.SettingsGroup.json",
     # Foreign language documentation (avoid false positives)
+    "docs/nongps/",
     "docs/ko/",
     "docs/tr/",
     "docs/zh/",
