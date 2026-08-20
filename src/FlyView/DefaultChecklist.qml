@@ -36,6 +36,9 @@ Item {
             PreFlightEstimatorOriginCheck {
             }
 
+            PreFlightPositionConfirmedCheck {
+            }
+
             PreFlightOpticalFlowCheck {
             }
 

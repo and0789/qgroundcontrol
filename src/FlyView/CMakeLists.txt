@@ -88,6 +88,7 @@ qt_add_qml_module(FlyViewModule
         PreFlightEstimatorOriginCheck.qml
         PreFlightGPSCheck.qml
         PreFlightOpticalFlowCheck.qml
+        PreFlightPositionConfirmedCheck.qml
         PreFlightRangefinderCheck.qml
         PreFlightRCCheck.qml
         PreFlightSensorsHealthCheck.qml
