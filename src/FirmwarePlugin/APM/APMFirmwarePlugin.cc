@@ -1104,6 +1104,26 @@ void APMFirmwarePlugin::startMission(Vehicle *vehicle) const
         return;
     }
 
+    // Rewind the vehicle's mission to its first item before starting it.
+    //
+    // MAV_CMD_MISSION_START only starts a mission that is not already running -- one that is gets
+    // resumed instead, from whatever internal state the run before it left behind. On ArduPilot that
+    // state outlives the flight: on landing the mission rewinds to the takeoff and stays active
+    // while the vehicle sits disarmed on the ground, so the next run is a resume rather than a
+    // start. A resumed run climbs to the takeoff altitude and then never advances past it: the
+    // takeoff completes internally, the vehicle holds the height it was told to, and the mission
+    // sits on item 1 until the operator takes it back by hand. Twenty flights of telemetry showed
+    // it on the second and later run of a mission and never on the first.
+    //
+    // DO_SET_MISSION_CURRENT with item 0 clears what the previous run left: the last nav and do
+    // commands, the jump counters and the waypoint history all go, which is the state a mission has
+    // when it has just been uploaded -- the state that flew.
+    //
+    // Sent before the mode change and the arm so it is ahead of them in the command queue, and only
+    // on the ground: for a vehicle already flying, starting a mission means carrying on with it
+    // rather than flying its takeoff a second time.
+    vehicle->setCurrentMissionSequence(0);
+
     if (!vehicle->armed()) {
         // First switch to flight mode we can arm from
         // In Ardupilot for vtols and airplanes we need to set the mode to auto and then arm, otherwise if arming in guided
