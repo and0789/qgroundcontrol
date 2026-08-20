@@ -378,6 +378,27 @@ constexpr const char *kMissionControllerStub = R"(
             list.splice(index, 1)
             items = list
         }
+
+        property int movedFrom: -99
+        property int movedTo: -99
+        property int moveCount: 0
+
+        /// QList::move semantics, which is what QmlObjectListModel::move gives: take the item out at
+        /// `from` and put it back in at `to`. The real one also renumbers the plan afterwards; the
+        /// grid does not read sequence numbers to decide a move, so the order alone is modelled.
+        function moveVisualItem(from, to) {
+            if ((from <= 0) || (from >= items.length) || (to <= 0) || (to >= items.length) || (from === to)) {
+                return
+            }
+            movedFrom = from
+            movedTo = to
+            moveCount++
+            var list = items.slice()
+            const moved = list.splice(from, 1)[0]
+            list.splice(to, 0, moved)
+            items = list
+            setCurrentPlanViewSeqNum(moved.sequenceNumber, true)
+        }
     }
 )";
 
@@ -4819,4 +4840,235 @@ void LocalGridViewTest::_undoRemembersOnlyTheLastAction_test()
     QCOMPARE(gridView->property("missionPoints").value<QJSValue>().property(QStringLiteral("length")).toInt(), 2);
     QVERIFY2(!gridView->property("canUndo").toBool(),
              "one level means the first placement is not offered up after the second is taken back");
+}
+
+// ============================================================================
+// Bagian 7: reordering (Lampiran I)
+// ============================================================================
+
+namespace {
+
+/// Builds takeoff + three waypoints at 10, 20 and 30 m north, and returns their list positions'
+/// north offsets so a reorder can be read off by value rather than by index.
+QList<double> northOffsetsOf(QObject *gridView)
+{
+    QList<double> result;
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int count = points.property(QStringLiteral("length")).toInt();
+    for (int i = 0; i < count; i++) {
+        result.append(points.property(i).property(QStringLiteral("north")).toNumber());
+    }
+    return result;
+}
+
+} // namespace
+
+/// Reordering is the one capability the Plan view does not have either, so there is nothing to copy:
+/// the check is that an item lands where it was sent and the rest close up behind it.
+void LocalGridViewTest::_reorderMovesAnItemUpAndDownThePlan_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    for (int i = 1; i <= 3; i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, 10.0 * i), Q_ARG(QVariant, 0.0)));
+        QVERIFY(placed.toBool());
+    }
+
+    // takeoff on the origin, then 10, 20, 30 north
+    QList<double> offsets = northOffsetsOf(gridView.get());
+    QCOMPARE(offsets.count(), 4);
+    QVERIFY(qAbs(offsets.at(1) - 10.0) < 0.05);
+    QVERIFY(qAbs(offsets.at(3) - 30.0) < 0.05);
+
+    // The last waypoint one row up: 10, 30, 20
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int lastIndex = points.property(3).property(QStringLiteral("index")).toInt();
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointByRows", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, lastIndex), Q_ARG(QVariant, -1)));
+    QVERIFY2(moved.toBool(), "the last waypoint never moved up");
+
+    offsets = northOffsetsOf(gridView.get());
+    QCOMPARE(offsets.count(), 4);
+    QVERIFY(qAbs(offsets.at(1) - 10.0) < 0.05);
+    QVERIFY2(qAbs(offsets.at(2) - 30.0) < 0.05, "the moved item must sit where it was sent");
+    QVERIFY2(qAbs(offsets.at(3) - 20.0) < 0.05, "the item it passed must close up behind it");
+
+    // And back down again
+    points = gridView->property("missionPoints").value<QJSValue>();
+    const int movedIndex = points.property(2).property(QStringLiteral("index")).toInt();
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointByRows", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, movedIndex), Q_ARG(QVariant, 1)));
+    QVERIFY(moved.toBool());
+
+    offsets = northOffsetsOf(gridView.get());
+    QVERIFY(qAbs(offsets.at(2) - 20.0) < 0.05);
+    QVERIFY(qAbs(offsets.at(3) - 30.0) < 0.05);
+}
+
+/// Two items in a plan have a position that is part of what makes it flyable. ArduPilot runs a
+/// mission from its first item, so a plan that does not begin with the takeoff does not climb; and
+/// nothing after the item that finishes the mission is ever reached.
+void LocalGridViewTest::_takeoffAndMissionEndAreNotReorderable_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, QStringLiteral("land")),
+                                      Q_ARG(QVariant, 0.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    const int takeoffIndex  = points.property(0).property(QStringLiteral("index")).toInt();
+    const int waypointIndex = points.property(1).property(QStringLiteral("index")).toInt();
+    const int endingIndex   = points.property(2).property(QStringLiteral("index")).toInt();
+
+    const auto reorderable = [&gridView](int index) {
+        QVariant value;
+        QMetaObject::invokeMethod(gridView.get(), "waypointIsReorderable", Qt::DirectConnection,
+                                  Q_RETURN_ARG(QVariant, value), Q_ARG(QVariant, index));
+        return value.toBool();
+    };
+
+    QVERIFY2(!reorderable(takeoffIndex), "the takeoff has to stay first, so it does not move");
+    QVERIFY2(!reorderable(endingIndex), "the item that finishes the mission has to stay last");
+    QVERIFY2(reorderable(waypointIndex), "an ordinary waypoint between them must be movable");
+
+    // The grid's Return button inserts an RTL rather than a NAV_LAND, and an RTL ends the mission
+    // just as surely -- the rule has to recognise both
+    QVariant endsMission;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointEndsTheMission", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, endsMission), Q_ARG(QVariant, endingIndex)));
+    QVERIFY(endsMission.toBool());
+}
+
+/// The rules are a range, not a per-target answer, so the buttons can grey out at the ends. The
+/// range has to stop short of the takeoff above and the ending below.
+void LocalGridViewTest::_reorderCannotCrossTheTakeoffOrTheEnding_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    for (int i = 1; i <= 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, added),
+                                          Q_ARG(QVariant, 10.0 * i), Q_ARG(QVariant, 0.0)));
+        QVERIFY(added.toBool());
+    }
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, QStringLiteral("land")),
+                                      Q_ARG(QVariant, 0.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    // takeoff at 0, waypoints at 1 and 2, ending at 3 -- so only 1..2 may move
+    QVariant rangeValue;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "reorderRangeForPoints", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, rangeValue)));
+    const QVariantMap range = rangeValue.toMap();
+    QCOMPARE(range.value(QStringLiteral("first")).toInt(), 1);
+    QCOMPARE(range.value(QStringLiteral("last")).toInt(), 2);
+
+    // The first waypoint cannot go above the takeoff
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int firstWaypoint = points.property(1).property(QStringLiteral("index")).toInt();
+    const int lastWaypoint  = points.property(2).property(QStringLiteral("index")).toInt();
+
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointByRows", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, firstWaypoint), Q_ARG(QVariant, -1)));
+    QVERIFY2(!moved.toBool(), "nothing may be moved above the takeoff");
+
+    // And the last cannot go below the ending
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointByRows", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, lastWaypoint), Q_ARG(QVariant, 1)));
+    QVERIFY2(!moved.toBool(), "nothing may be moved past the item that finishes the mission");
+
+    QCOMPARE(stub->property("moveCount").toInt(), 0);
+}
+
+/// A reorder is a one-gesture change like every other one in Lampiran H, so it is takeable back.
+void LocalGridViewTest::_undoPutsAReorderedItemBack_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    for (int i = 1; i <= 3; i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, 10.0 * i), Q_ARG(QVariant, 0.0)));
+        QVERIFY(placed.toBool());
+    }
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int lastIndex = points.property(3).property(QStringLiteral("index")).toInt();
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointByRows", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, lastIndex), Q_ARG(QVariant, -1)));
+    QVERIFY(moved.toBool());
+    QVERIFY2(gridView->property("canUndo").toBool(), "a reorder must be takeable back");
+
+    QList<double> offsets = northOffsetsOf(gridView.get());
+    QVERIFY(qAbs(offsets.at(2) - 30.0) < 0.05);
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    offsets = northOffsetsOf(gridView.get());
+    QCOMPARE(offsets.count(), 4);
+    QVERIFY2(qAbs(offsets.at(2) - 20.0) < 0.05, "the plan must come back to the order it was in");
+    QVERIFY(qAbs(offsets.at(3) - 30.0) < 0.05);
 }

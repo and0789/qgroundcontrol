@@ -98,6 +98,25 @@ public:
 
     Q_INVOKABLE void removeVisualItem(int viIndex);
 
+    /// Moves one visual item to another position in the plan and renumbers everything the move
+    /// affected.
+    ///
+    /// QmlObjectListModel has carried a correct move() for a long time -- including the workaround
+    /// beginMoveRows() needs to move an item to the bottom -- but nothing has ever called it, and it
+    /// was not reachable from QML at all. Reordering also cannot be done by the model alone: the
+    /// sequence numbers, the flight path segments and the current item are all derived from the
+    /// order, so a bare move would leave a plan whose items are in the new order and whose numbering
+    /// still describes the old one.
+    ///
+    /// Index 0 is the mission settings item, which is not part of the route: it is neither movable
+    /// nor a place anything can be moved to, and both are refused here rather than left to callers.
+    /// What this does NOT enforce is which orders make a flyable mission -- that a takeoff comes
+    /// first and nothing follows a landing. Those are firmware-shaped rules and they belong with the
+    /// view that knows which items it is showing.
+    ///     @param fromVIIndex index of the item to move
+    ///     @param toVIIndex   index it should end up at
+    Q_INVOKABLE void moveVisualItem(int fromVIIndex, int toVIIndex);
+
     /// Returns the visual item index for the given VisualMissionItem object, or -1 if not found
     Q_INVOKABLE int visualItemIndexForObject(QObject* object) const;
 

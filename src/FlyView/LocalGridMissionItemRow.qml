@@ -59,6 +59,31 @@ Rectangle {
     readonly property real _margins:    ScreenTools.defaultFontPixelHeight / 4
     readonly property real _iconSize:   ScreenTools.defaultFontPixelHeight
 
+    /// Whether this item may move at all: the takeoff has to stay first and the item that finishes
+    /// the mission has to stay last, so neither offers the controls.
+    readonly property bool _canReorder: (gridView !== null) && (visualItemIndex >= 0)
+                                            && gridView.waypointIsReorderable(visualItemIndex)
+
+    /// Where this item sits among the ones that may move, so the buttons can grey themselves out at
+    /// the ends rather than offering a move that would be refused
+    readonly property var  _reorderRange: (gridView && _canReorder) ? gridView.reorderRangeForPoints() : null
+    readonly property int  _reorderPosition: {
+        if (!gridView || !_canReorder) {
+            return -1
+        }
+        const points = gridView.missionPoints
+        for (var i = 0; i < points.length; i++) {
+            if (points[i].index === visualItemIndex) {
+                return i
+            }
+        }
+        return -1
+    }
+
+    readonly property bool _canMoveUp:   _reorderRange && (_reorderPosition > _reorderRange.first)
+    readonly property bool _canMoveDown: _reorderRange && (_reorderPosition >= 0)
+                                            && (_reorderPosition < _reorderRange.last)
+
     /// Which row is open is said by the header strip alone, not by colouring the whole row.
     ///
     /// The editor is seven fields tall, so highlighting the row flooded a third of the panel with
@@ -268,6 +293,41 @@ Rectangle {
                 // of it is refused by the same rule that stops a second one being added anywhere
                 visible:            _root.gridView && !_root.gridView.waypointIsPinned(_root.visualItemIndex)
                 onClicked:          _root.gridView.duplicateItem(_root.visualItemIndex)
+            }
+        }
+
+        // Reordering, as two buttons rather than as a drag.
+        //
+        // The plan called for drag-to-reorder. Measured against what this list actually is, buttons
+        // win: the rows live inside a QGCFlickable that scrolls vertically, and a vertical drag on a
+        // row is the same gesture as a scroll of the list holding it. Resolving that means a
+        // press-and-hold before the drag takes -- which is the gesture 6a just gave to placing a
+        // waypoint on the grid, so it would mean two different things one finger apart. Two buttons
+        // have no gesture to lose, size themselves to a touch target through QGCButton, grey out at
+        // the ends of the range instead of failing silently, and can be tested by pressing them.
+        //
+        // Only on the open row, the same rule the delete icon and the two buttons above follow.
+        RowLayout {
+            Layout.fillWidth:   true
+            Layout.margins:     _root._margins
+            Layout.topMargin:   0
+            visible:            _root.isCurrentItem && _root._canReorder
+            spacing:            ScreenTools.defaultFontPixelWidth / 2
+
+            QGCButton {
+                objectName:         "localGrid_rowMoveUpButton"
+                Layout.fillWidth:   true
+                text:               qsTr("Move up")
+                enabled:            _root._canMoveUp
+                onClicked:          _root.gridView.moveWaypointByRows(_root.visualItemIndex, -1)
+            }
+
+            QGCButton {
+                objectName:         "localGrid_rowMoveDownButton"
+                Layout.fillWidth:   true
+                text:               qsTr("Move down")
+                enabled:            _root._canMoveDown
+                onClicked:          _root.gridView.moveWaypointByRows(_root.visualItemIndex, 1)
             }
         }
     }

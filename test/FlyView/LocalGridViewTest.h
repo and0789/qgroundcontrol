@@ -112,6 +112,12 @@ private slots:
     void _undoIsDroppedWhenThePlanArrivesFromTheVehicle_test();
     void _undoRemembersOnlyTheLastAction_test();
 
+    // Bagian 7: reordering (Lampiran I)
+    void _reorderMovesAnItemUpAndDownThePlan_test();
+    void _takeoffAndMissionEndAreNotReorderable_test();
+    void _reorderCannotCrossTheTakeoffOrTheEnding_test();
+    void _undoPutsAReorderedItemBack_test();
+
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);
 };

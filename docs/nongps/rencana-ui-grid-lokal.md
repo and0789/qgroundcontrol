@@ -1,6 +1,6 @@
 # Rencana Pembenahan UI Local Grid: Responsif, Sentuh, dan Paritas Pembuatan Misi
 
-Status: Bagian 0–5a dan 6 selesai; 7 berikutnya; 5b/5c ditunda dan terhalang • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
+Status: Bagian 0–7 selesai kecuali 5b/5c, yang ditunda dan terhalang • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
 
 Dokumen ini menjawab tiga keluhan konkret: panel-panel di Local Grid saling bertabrakan dan tertutup
 fitur lain di layar mobile, pembuatan waypoint di mode grid jauh lebih miskin dibanding halaman Plan,
@@ -247,13 +247,17 @@ penuh (sisa 237 MB), bukan karena perubahan ini — hijau lagi begitu ruang dibe
 disentuh — kontrol undo tidak ada pada keadaan bawaan yang diukur tes anggaran, karena pada keadaan
 itu memang tidak ada yang bisa diurungkan.
 
-### Bagian 7 — Urut ulang item (opsional, paling akhir)
+### Bagian 7 — Urut ulang item ✅ SELESAI (20 Agustus 2026)
 
 | | |
 |---|---|
-| **Isi** | Ekspos pemindahan di model + hitung ulang nomor urut, lalu drag-untuk-urut-ulang di daftar. Butuh C++ karena `QmlObjectListModel::move` belum `Q_INVOKABLE`. |
-| **Selesai bila** | — |
-| **Model** | **Opus 5** — menyentuh model bersama yang juga dipakai halaman Plan; salah di sini merusak Plan view |
+| **Isi** | `MissionController::moveVisualItem` baru yang memindah lalu menghitung ulang semua yang diturunkan dari urutan; aturan urutan di sisi grid; dua tombol Move up / Move down di kaki baris terbuka; terintegrasi ke undo. |
+| **Keluaran** | `MissionController.{h,cc}`, `LocalGridView.qml`, `LocalGridMissionItemRow.qml`, `LocalGridViewTest.{h,cc}` |
+| **Model** | **Opus 5** / **high** |
+
+**Dua penyimpangan dari rencana, keduanya diukur** — lihat Lampiran I: risiko model bersama ternyata
+lebih kecil (`QmlObjectListModel::move` punya nol pemanggil), dan drag diganti dua tombol karena
+seretan vertikal pada baris adalah gestur yang sama dengan gulir daftarnya.
 
 ---
 
@@ -291,7 +295,7 @@ perintah tersendiri yang ditagih terpisah.
 | 5c — Survey lokal | `opus` | **xhigh** | Terhalang: item kompleks tidak dibangun ulang saat plan datang dari kendaraan, jadi survey tidak selamat satu round-trip |
 | 6a — Poles layar sentuh | `sonnet` | **low** — **✅ selesai** | Perkiraan tepat, dan G0 memangkasnya lebih kecil lagi: `QGCMouseArea` sudah menangani ambang sentuh, jadi hanya satu kontrol yang meleset |
 | 6b — Urungkan | `opus` | **high** — **✅ selesai** | Yang perlu diputuskan ternyata bukan kedalaman tapi **batasnya**: aksi yang sudah punya dialog konfirmasi tidak masuk riwayat. Penerapannya sesudah itu memang sepele |
-| 7 — Urut ulang (opsional) | `opus` | **high** | Menyentuh `QmlObjectListModel` yang juga dipakai halaman Plan; salah di sini merusak Plan view |
+| 7 — Urut ulang | `opus` | **high** — **✅ selesai** | Perkiraan tepat, tapi alasannya bergeser: `move()` ternyata nol pemanggil, jadi risikonya bukan di model bersama melainkan pada apa yang diturunkan dari urutan — nomor urut, hierarki anak, segmen lintasan |
 
 ### Dari mana penghematan sebenarnya datang
 
@@ -1594,5 +1598,94 @@ ketukan setelah sebuah kecelakaan, operator belum tentu tahu aksi mana yang terc
 - `LocalGridResponsiveLayoutTest` lulus tanpa anggaran chrome disentuh
 - Ikon hapus baris naik ke ambang sentuh (G1) di bagian yang sama
 - `ctest -R "LocalGrid|SetEstimatorOrigin|NonGps|FlyViewLocalGrid|MissionController"` hijau
+
+---
+
+---
+
+## Lampiran I — Briefing Eksekusi Bagian 7 (Urut ulang)
+
+### I0 — Risikonya lebih kecil dari yang tertulis
+
+Rencana menandai bagian ini "menyentuh model bersama yang juga dipakai halaman Plan; salah di sini
+merusak Plan view". Diukur, itu terlalu keras: `QmlObjectListModel::move()` punya **nol pemanggil di
+seluruh basis kode**. Ia sudah ditulis lengkap dengan workaround yang `beginMoveRows()` butuhkan
+untuk memindahkan item ke posisi terbawah, dan tidak pernah dipakai siapa pun. Mengeksposnya karena
+itu tidak bisa meregresi Plan view — tidak ada apa pun di Plan yang memanggilnya.
+
+Risiko yang tersisa bukan di model, melainkan pada apa yang **diturunkan dari urutan**: nomor urut,
+hierarki item anak, dan segmen lintasan yang digambar antar pasangan item. Pemindahan telanjang
+meninggalkan plan yang itemnya sudah berpindah sementara penomorannya masih menjelaskan urutan lama —
+dan itu terunggah, lalu diterbangkan menurut nomornya.
+
+### I1 — Pembagian tanggung jawab
+
+`MissionController::moveVisualItem(from, to)` memindahkan dan memanggil `_recalcAll()`, lalu menjaga
+item yang dipindah tetap jadi item terpilih. Ia menolak indeks 0 di kedua sisi — itu item mission
+settings, yang bukan bagian rute.
+
+Yang **tidak** dilakukannya: memutuskan urutan mana yang membuat misi bisa diterbangkan. Aturan itu
+berbentuk firmware, dan tempatnya di view yang tahu item apa yang sedang ditampilkannya. Ini
+mengikuti garis yang sama dengan D2.1 dari arah sebaliknya: di sana MissionController yang jadi
+otoritas karena aturannya memang sudah ada di sana; di sini tidak ada, jadi tidak dikarang di sana.
+
+### I2 — Aturan urutan, dan kenapa dua item tidak bergerak
+
+- **Takeoff tetap pertama.** ArduPilot menjalankan misi dari item pertamanya; plan yang tidak diawali
+  takeoff tidak memanjat.
+- **Item yang mengakhiri misi tetap terakhir.** Tidak ada apa pun sesudahnya yang pernah dijalankan,
+  jadi menaikkannya diam-diam memotong plan jadi sebatas yang ada di atasnya — sisanya tetap
+  terdaftar dan tidak pernah diterbangkan.
+
+Sisanya bebas bergerak di antara keduanya, dinyatakan sebagai **rentang** (`reorderRangeForPoints`)
+dan bukan sebagai jawaban ya/tidak per tujuan, supaya tombol di baris bisa mematikan dirinya di ujung
+alih-alih menawarkan pemindahan yang akan ditolak.
+
+**Satu predikat baru, bukan perluasan yang lama.** `waypointIsLanding` hanya mengenali `NAV_LAND`,
+dan itu **benar** untuk pertanyaan yang ia jawab ("apakah altitude item ini bukan urusan operator") —
+sebuah RTL tidak membawa parameter sama sekali, jadi tidak ada altitude untuk disinkronkan dan tidak
+ada field hiasan di sana. Tapi tombol Return grid ini menyisipkan RTL, dan RTL mengakhiri misi persis
+seperti NAV_LAND. Pertanyaannya berbeda, jadi predikatnya berbeda: `waypointEndsTheMission` mencakup
+keduanya.
+
+### I3 — Dua tombol, bukan drag
+
+Rencana menyebut drag-untuk-urut-ulang. Diukur terhadap daftar yang sebenarnya, tombol menang:
+
+- Baris-baris itu hidup di dalam `QGCFlickable` yang menggulir vertikal. Seretan vertikal pada sebuah
+  baris **adalah gestur yang sama** dengan gulir daftar yang memuatnya.
+- Menyelesaikan bentrokan itu berarti tekan-lama sebelum seretan berlaku — dan tekan-lama baru saja
+  diberikan ke penempatan waypoint di 6a. Dua arti berbeda, sejari jaraknya.
+- Tombol tidak punya gestur untuk diperebutkan, mengambil ukuran sasaran sentuh dari `QGCButton`,
+  bisa mematikan diri di ujung rentang alih-alih gagal diam-diam, dan bisa diuji dengan menekannya.
+
+Ini penyimpangan yang disengaja dari kata "drag" di rencana, dengan alasan yang sama bentuknya dengan
+C2 menolak lembar-bawah: bukan karena lebih sulit, tapi karena diukur terhadap keadaan yang
+sebenarnya ia bukan yang lebih baik. Catatan 1.3 rencana sendiri sudah mencatat bahwa Plan view pun
+tidak punya drag-untuk-urut-ulang, jadi tidak ada paritas yang hilang.
+
+### I4 — Verifikasi
+
+Empat tes baru. Dua yang menjaga aturan urutan **dibuktikan merah dulu** dengan melumpuhkan
+`waypointIsReorderable` dan melebarkan rentangnya ke seluruh daftar — keduanya menangkapnya.
+
+Halaman Plan tidak berubah: `PlanViewUITest`, `MissionControllerTest` dan `MissionControllerTreeTest`
+hijau, dan satu-satunya perubahan C++ bersifat aditif pada metode yang sebelumnya tidak dipanggil
+siapa pun.
+
+### I5 — Catatan kerapuhan tes (bukan bagian ini)
+
+Tiga flake muncul di sesi ini, semuanya saat mesin sibuk, dan semuanya lolos konsisten saat
+dijalankan sendiri:
+
+- `giveTheVehicleAnOrigin` gagal dua kali — sekali saat disk mesin penuh (sisa 237 MB), sekali saat
+  build paralel berjalan.
+- `_chromeStaysWithinBudgetAtAnySize_test` sekali melaporkan 15,7 % di portrait terhadap anggaran
+  15 %, lalu lolos pada pengulangan dengan kombinasi suite yang sama. Tata letak yang diukur sebelum
+  benar-benar tenang adalah dugaan yang paling sesuai; `_resizeAndSettle` tampaknya tidak selalu cukup
+  di bawah beban.
+
+Sesi berikutnya yang bertemu salah satunya sebaiknya mengulang tesnya sendirian sebelum mencurigai
+perubahannya sendiri. Menambal `_resizeAndSettle` layak jadi pekerjaan tersendiri.
 
 ---
