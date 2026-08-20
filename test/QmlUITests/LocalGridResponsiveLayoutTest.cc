@@ -271,6 +271,68 @@ void LocalGridResponsiveLayoutTest::_clickPanelStaysInsideTheWindowNearAnEdge_te
         });
 }
 
+/// The two numbers at the top of the click panel -- how far north and east the point is -- are the
+/// entire reason the panel opens before anything is placed. Opening it with its own top-left corner
+/// exactly on the point that summoned it put those numbers under the fingertip still resting there,
+/// on the one device where the operator cannot simply move the pointer away to read them.
+///
+/// Asserted as the property rather than as the offset: the point that was touched must not be
+/// underneath the panel describing it. That survives the clamping near the edges, where the panel is
+/// pushed back inside the view and ends up above or left of the touch instead of below and right of
+/// it -- a different position, same requirement.
+///
+/// Driven at the tablet size and well away from every edge, so this measures the offset itself
+/// rather than the edge clamp that _clickPanelStaysInsideTheWindowNearAnEdge_test already covers.
+void LocalGridResponsiveLayoutTest::_clickPanelDoesNotCoverThePointItDescribes_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle *vehicle) {
+            QVERIFY(vehicle);
+            QVERIFY2(giveTheVehicleAnOrigin(vehicle, mockLink), "the vehicle never took an origin");
+
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            QVERIFY2(_resizeAndSettle(1024, 768), "the layout never settled at tablet (1024x768)");
+
+            const QRectF gridRect = _windowRectFor(QStringLiteral("localGridView"));
+            QVERIFY2(!gridRect.isEmpty(), "the grid reported no rect to click inside");
+
+            // Left of centre and above it: clear of the right-hand panel column, clear of the tool
+            // strip in the top-left, and far enough from every edge that nothing is clamped.
+            constexpr qreal fractionX = 0.4;
+            constexpr qreal fractionY = 0.4;
+            const QPointF clickPoint(gridRect.x() + (gridRect.width() * fractionX),
+                                     gridRect.y() + (gridRect.height() * fractionY));
+
+            QVERIFY2(clickItemFraction(QStringLiteral("localGridView"), fractionX, fractionY),
+                     "the click on the middle of the grid never landed");
+
+            QQuickItem *const clickPanel = findVisibleItem(_rootItem, QStringLiteral("localGrid_clickPanel"), 1000);
+            QVERIFY2(clickPanel, "a click on the grid never opened the click panel");
+
+            const QRectF panelRect(clickPanel->mapToScene(QPointF(0, 0)),
+                                   QSizeF(clickPanel->width(), clickPanel->height()));
+            QVERIFY2(!panelRect.contains(clickPoint),
+                     qPrintable(QStringLiteral("the click panel opened on top of the point it describes: "
+                                               "panel rect %1 covers the touch at (%2, %3)")
+                                    .arg(rectToString(panelRect))
+                                    .arg(clickPoint.x())
+                                    .arg(clickPoint.y())));
+
+            // Still inside the window: an offset that pushes the panel off the view trades one
+            // failure for another
+            const QRectF windowRect(0, 0, _window->width(), _window->height());
+            QVERIFY2(windowRect.contains(panelRect),
+                     qPrintable(QStringLiteral("the offset pushed the click panel out of the window: "
+                                               "panel rect %1 vs window rect %2")
+                                    .arg(rectToString(panelRect), rectToString(windowRect))));
+        });
+}
+
 /// Panels are allowed to sit beside the grid; they are not allowed to become most of the view. This
 /// is the check the other three tests do not do: a panel can stay inside the window and never overlap
 /// another one while still covering so much of it that the grid -- the entire reason this view exists

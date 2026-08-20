@@ -127,8 +127,19 @@ Rectangle {
         const right  = parent.width  - (gridView ? gridView.safeAreaRight  : 0)
         const bottom = parent.height - (gridView ? gridView.safeAreaBottom : 0)
 
-        x = Math.max(left, Math.min(pixelX, right - width))
-        y = Math.max(top, Math.min(pixelY, bottom - height))
+        // Set clear of the point that was touched rather than starting at it. The panel used to open
+        // with its top-left corner exactly under the finger that summoned it, which on a phone means
+        // it opens underneath the hand still resting there -- and the two numbers at the top of it,
+        // the whole reason this panel exists, are the part the fingertip covers. Offset by a touch
+        // target down and to the right, so the point stays visible beside the panel describing it.
+        //
+        // The clamps below still win at the edges: pushed past the right or bottom margin the panel
+        // comes back inside, which puts it above or left of the touch instead. Either way it is not
+        // under the finger.
+        const offset = ScreenTools.minTouchPixels
+
+        x = Math.max(left, Math.min(pixelX + offset, right - width))
+        y = Math.max(top, Math.min(pixelY + offset, bottom - height))
         visible = true
     }
 

@@ -1937,15 +1937,32 @@ Item {
         property bool _hasDragged:  false
 
         /// Slop before a press counts as a drag rather than a click, so a click that moves a pixel
-        /// still places a waypoint and a pan never does
-        readonly property real _dragThreshold: ScreenTools.defaultFontPixelWidth
+        /// still places a waypoint and a pan never does.
+        ///
+        /// Measured against a finger rather than a letter, the same correction the waypoint marker's
+        /// own threshold got: a font width is about a millimetre and a half, and a hand holding a
+        /// controller at the flight line does not hold still to within that -- so a tap meant to
+        /// open the click panel became a pan of the whole grid instead.
+        readonly property real _dragThreshold: ScreenTools.minTouchPixels / 2
+
+        /// Where the press that might become a long press went down, and whether it already fired
+        property real _pressX:          0
+        property real _pressY:          0
+        property bool _longPressFired:  false
 
         onPressed: (mouse) => {
             _lastX = mouse.x
             _lastY = mouse.y
+            _pressX = mouse.x
+            _pressY = mouse.y
             _hasDragged = false
+            _longPressFired = false
             clickPanel.visible = false
+            longPressTimer.restart()
         }
+
+        onReleased: longPressTimer.stop()
+        onCanceled: longPressTimer.stop()
 
         onPositionChanged: (mouse) => {
             if (!pressed) {
@@ -1957,6 +1974,9 @@ Item {
                 return
             }
 
+            // A press that has started travelling is a pan, not a hold. Stopped rather than left to
+            // fire, or panning across the grid would drop a waypoint wherever the finger paused.
+            longPressTimer.stop()
             _hasDragged = true
             transform.panByPixels(deltaX, deltaY)
             _lastX = mouse.x
@@ -1965,7 +1985,7 @@ Item {
         }
 
         onClicked: (mouse) => {
-            if (_hasDragged) {
+            if (_hasDragged || _longPressFired) {
                 return
             }
             // Checked before the selection is touched at all. An armed tool places at the point
@@ -1979,6 +1999,27 @@ Item {
             // A click on bare grid is a click away from whatever waypoint was being worked on
             _root.clearWaypointSelection()
             clickPanel.showAt(mouse.x, mouse.y)
+        }
+
+        /// Press and hold to drop a waypoint where the finger is, without going through the panel.
+        ///
+        /// The gesture a phone offers for "put one here", and the one an operator building a pattern
+        /// at the flight line reaches for. It does not replace the click panel: a tap still opens it
+        /// and still shows the offsets before anything is committed, which is the careful path. This
+        /// is the quick one, and the marker it leaves is selected, so the row that opens carries the
+        /// numbers to correct it by.
+        Timer {
+            id:         longPressTimer
+            // Qt's own press-and-hold interval, so the gesture feels like every other one on the
+            // platform rather than like a control with its own idea of how long a hold is
+            interval:   Application.styleHints.mousePressAndHoldInterval
+            onTriggered: {
+                if (dragArea._hasDragged || !dragArea.pressed) {
+                    return
+                }
+                dragArea._longPressFired = true
+                _root.addWaypointAtPixel(dragArea._pressX, dragArea._pressY)
+            }
         }
 
         onWheel: (wheel) => {

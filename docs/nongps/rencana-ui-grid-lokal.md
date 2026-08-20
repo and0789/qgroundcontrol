@@ -1,6 +1,6 @@
 # Rencana Pembenahan UI Local Grid: Responsif, Sentuh, dan Paritas Pembuatan Misi
 
-Status: Bagian 0–5 selesai (5b ditunda); Bagian 6 berikutnya • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
+Status: Bagian 0–5a dan 6a selesai; 6b lalu 7 berikutnya; 5b/5c ditunda dan terhalang • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
 
 Dokumen ini menjawab tiga keluhan konkret: panel-panel di Local Grid saling bertabrakan dan tertutup
 fitur lain di layar mobile, pembuatan waypoint di mode grid jauh lebih miskin dibanding halaman Plan,
@@ -178,23 +178,69 @@ menulis kodenya dan hasil pengujian lengkap.
 
 **Verifikasi:** lihat "Bagian 5 — Catatan Implementasi" di bawah.
 
-### Bagian 5b — Survey di atas poligon (ditunda)
+### Bagian 5b — Editor poligon (ditunda)
 
 | | |
 |---|---|
-| **Isi** | Editor poligon di grid (tambah/geser/hapus verteks, ramah sentuh), lalu `SurveyComplexItem` di atasnya. |
-| **Kenapa ditunda** | Tiga alasan terukur di F2: tidak ada editor poligon di grid dan membuatnya sebesar Bagian 3; item kompleks tidak pernah dibangun ulang saat plan datang dari kendaraan (`MissionController.cc:1782-1783`), jadi sekali round-trip ia berhenti jadi survey; dan pola di ruang uji belasan meter sudah murah dibuat manual sejak Bagian 3–4. |
-| **Urutan bila dikerjakan** | Editor poligon dulu sebagai bagian tersendiri, survey menyusul |
-| **Model** | **Opus 5** |
+| **Isi** | Menggambar poligon di grid: tambah, geser, dan hapus verteks, ramah sentuh. |
+| **Kenapa ditunda** | Sebesar Bagian 3 dan tidak punya pemakai sendiri — lihat catatan ketergantungan di bawah. |
+| **Model** | **Opus 5** / **xhigh** — desain baru di frame lokal, bukan peniruan halaman Plan |
 
-### Bagian 6 — Poles layar sentuh
+### Bagian 5c — Survey di atas poligon (ditunda, terhalang)
 
 | | |
 |---|---|
-| **Isi** | Semua sasaran sentuh ≥ `ScreenTools.minTouchPixels`. Ambang geser dari ukuran sentuh, bukan ukuran huruf. Panel klik menjauh dari jari. Tekan-lama untuk menempatkan. **Urungkan** untuk penempatan/geser terakhir. |
-| **Keluaran** | `LocalGridWaypoint.qml`, `LocalGridMissionItemRow.qml`, `LocalGridClickPanel.qml`, `LocalGridView.qml` |
-| **Selesai bila** | Tes menegaskan setiap kontrol interaktif memenuhi ambang sentuh minimum |
-| **Model** | **Sonnet 5** — kecuali perilaku urungkan, yang perlu keputusan tentang apa saja yang masuk riwayat |
+| **Isi** | `SurveyComplexItem` di atas poligon yang digambar 5b. |
+| **Kenapa terhalang** | Item kompleks tidak pernah dibangun ulang saat plan datang dari kendaraan — `_scanForAdditionalSettings` (`MissionController.cc:1782`) hanya memindai pola pendaratan, tidak ada Survey di sana. Jadi sekali *upload → terbang → download*, survey berhenti jadi survey dan tinggal deretan waypoint. Itu persis alur kerja proyek ini. |
+| **Model** | **Opus 5** / **xhigh** |
+
+**Ketergantungan yang menentukan urutan ketiganya.** 5c butuh 5b; tapi 5c juga terhalang lubang
+round-trip di atas. Artinya nilai 5b **bergantung pada 5c dibuka lebih dulu** — editor poligon tanpa
+survey adalah alat yang tidak dipakai apa pun. Jadi prasyarat sesungguhnya untuk seluruh jalur ini
+bukan 5b, melainkan menambal pemindaian item kompleks itu (atau memutuskan survey lokal disimpan
+sebagai item non-kompleks yang selamat di round-trip). Selama itu belum diputuskan, mengerjakan 5b
+lebih dulu berarti membayar bagian termahal rencana untuk sesuatu yang belum tentu terpakai.
+
+Alasan ketiga yang masih berlaku dari F2: pola di ruang uji belasan meter sudah murah dibuat manual
+sejak Bagian 3–4.
+
+### Bagian 6a — Poles layar sentuh ✅ SELESAI (20 Agustus 2026)
+
+| | |
+|---|---|
+| **Isi** | Sasaran sentuh penanda waypoint; ambang geser dari ukuran sentuh, bukan ukuran huruf; panel klik menjauh dari jari; tekan-lama untuk menempatkan. |
+| **Keluaran** | `LocalGridWaypoint.qml`, `LocalGridClickPanel.qml`, `LocalGridView.qml`, `LocalGridResponsiveLayoutTest.{h,cc}` |
+| **Model** | **Sonnet 5** / **low** — sesuai perkiraan; temuan G0 justru memangkasnya lebih kecil lagi |
+
+**G0 — "Semua sasaran sentuh" ternyata satu sasaran.** Rencana 1.4 menyiratkan tak ada kontrol grid
+yang terikat `minTouchPixels`. Yang benar: `QGCMouseArea` **sudah** menumbuhkan area tekannya sendiri
+ke `minTouchPixels` bila diberi `fillItem`, di build sentuh (`QGCMouseArea.qml:22-24`). Header panel
+dan ikon hapus baris memakainya, jadi ketiganya sudah patuh sejak sebelum bagian ini. Yang meleset
+hanya `LocalGridWaypoint` — satu-satunya yang memakai `MouseArea` polos, dan justru yang paling
+sering dibidik. Perbaikannya jadi "pakai idiom yang sudah ada", bukan "tulis penyesuaian ukuran
+sendiri".
+
+**G1 — Ikon hapus sengaja tidak diperbesar, dan itu ditunda ke 6b.** Memperbesar sasaran kontrol yang
+merusak sebelum ada urungkan membuat penghapusan tak sengaja lebih mudah tanpa jalan kembali —
+kebalikan dari tujuan bagian ini. Ia naik bersama undo di 6b, bukan sebelumnya.
+
+**G2 — Ambang geser tidak digerbangi mobile.** `QGCMouseArea` hanya menumbuhkan area tekan saat
+`isMobile`, tapi ambang geser diturunkan dari `minTouchPixels / 2` di semua platform. Kegagalan yang
+dicegahnya — memilih waypoint lalu tanpa sengaja menggesernya — sama buruknya dengan tetikus, dan
+zona mati 2,5 mm tak terasa oleh orang yang sedang mengklik, bukan menyeret.
+
+**Verifikasi:** tes baru `_clickPanelDoesNotCoverThePointItDescribes_test` **dibuktikan merah dulu**
+dengan mengembalikan offsetnya sementara, lalu hijau setelah dikembalikan. Suite terkait 13/13 lulus.
+Catatan lingkungan: sapuan sebelumnya sempat gagal di `giveTheVehicleAnOrigin` karena disk mesin
+penuh (sisa 237 MB), bukan karena perubahan ini — hijau lagi begitu ruang dibebaskan.
+
+### Bagian 6b — Urungkan
+
+| | |
+|---|---|
+| **Isi** | Urungkan untuk penempatan, geser, dan penghapusan terakhir. Ikon hapus baris naik ke ambang sentuh bersamanya (G1). |
+| **Selesai bila** | Tes menegaskan tiap aksi yang masuk riwayat bisa dikembalikan, dan yang tidak masuk memang sengaja |
+| **Model** | **Opus 5** lalu **Sonnet 5** — yang perlu diputuskan: apa saja yang masuk riwayat dan sedalam apa |
 
 ### Bagian 7 — Urut ulang item (opsional, paling akhir)
 
@@ -236,8 +282,9 @@ perintah tersendiri yang ditagih terpisah.
 | 3 — Paritas inti | ~~`opus`~~ **lalu** `sonnet` — **✅ selesai** | ~~high~~ **spesifikasi**, **medium** **penerapan** | Semantik urutan misi (takeoff harus pertama, land terakhir, indeks sisip vs nomor urut) adalah tempat kesalahan jadi mahal saat terbang. Opus merumuskannya di Lampiran D; Sonnet menerapkan dan menulis 9 tes baru di sesi yang sama |
 | 4 — Detail item + statistik | `sonnet` | **medium** | Sebagian besar penyambungan field. Naikkan ke `opus` + **high** hanya bila pemilih perintah MAV_CMD jadi dikerjakan |
 | 5a — Putar / geser misi | `opus` | **high** | Kesalahan tanda dan urutan rotasi-lalu-geser tidak kelihatan di layar, hanya kelihatan saat terbang |
-| 5b — Survey lokal | `opus` | **xhigh** | Editor poligon di frame lokal: desain baru, bukan peniruan. Bagian termahal di seluruh rencana |
-| 6a — Ukuran sasaran sentuh | `sonnet` | **low** | Penggantian konstanta yang benar-benar mekanis. Inilah satu-satunya bagian yang pantas `low` |
+| 5b — Editor poligon | `opus` | **xhigh** | Desain baru di frame lokal, bukan peniruan. Ditunda: nilainya bergantung pada 5c dibuka lebih dulu |
+| 5c — Survey lokal | `opus` | **xhigh** | Terhalang: item kompleks tidak dibangun ulang saat plan datang dari kendaraan, jadi survey tidak selamat satu round-trip |
+| 6a — Poles layar sentuh | `sonnet` | **low** — **✅ selesai** | Perkiraan tepat, dan G0 memangkasnya lebih kecil lagi: `QGCMouseArea` sudah menangani ambang sentuh, jadi hanya satu kontrol yang meleset |
 | 6b — Urungkan | `opus` **lalu** `sonnet` | **high** lalu **medium** | Yang perlu diputuskan: apa saja yang masuk riwayat dan berapa dalam. Penerapannya sesudah itu sepele |
 | 7 — Urut ulang (opsional) | `opus` | **high** | Menyentuh `QmlObjectListModel` yang juga dipakai halaman Plan; salah di sini merusak Plan view |
 
