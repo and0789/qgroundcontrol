@@ -279,6 +279,7 @@ Rectangle {
             QGCButton {
                 objectName:         "localGrid_rowInsertAfterButton"
                 Layout.fillWidth:   true
+                pointSize:          ScreenTools.smallFontPointSize
                 text:               qsTr("Insert after")
                 // The plan's last flown-through item has no leg after it to split
                 visible:            _root.gridView && _root.gridView.hasLegAfter(_root.visualItemIndex)
@@ -288,6 +289,7 @@ Rectangle {
             QGCButton {
                 objectName:         "localGrid_rowDuplicateButton"
                 Layout.fillWidth:   true
+                pointSize:          ScreenTools.smallFontPointSize
                 text:               qsTr("Duplicate")
                 // Not offered for the takeoff: only a plan's first item may be one, and a duplicate
                 // of it is refused by the same rule that stops a second one being added anywhere
@@ -317,6 +319,7 @@ Rectangle {
             QGCButton {
                 objectName:         "localGrid_rowMoveUpButton"
                 Layout.fillWidth:   true
+                pointSize:          ScreenTools.smallFontPointSize
                 text:               qsTr("Move up")
                 enabled:            _root._canMoveUp
                 onClicked:          _root.gridView.moveWaypointByRows(_root.visualItemIndex, -1)
@@ -325,6 +328,7 @@ Rectangle {
             QGCButton {
                 objectName:         "localGrid_rowMoveDownButton"
                 Layout.fillWidth:   true
+                pointSize:          ScreenTools.smallFontPointSize
                 text:               qsTr("Move down")
                 enabled:            _root._canMoveDown
                 onClicked:          _root.gridView.moveWaypointByRows(_root.visualItemIndex, 1)

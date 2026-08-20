@@ -397,6 +397,57 @@ Item {
     /// being flown to".
     readonly property int vehicleTargetSequence: missionController ? missionController.currentMissionIndex : -1
 
+    /// Whether the list opens the item the aircraft is flying to as the mission advances.
+    ///
+    /// The green disc says which item that is, which is the right amount while a plan is being
+    /// built and not enough while one is being flown: the numbers that matter in the air -- the
+    /// altitude of the leg being flown, the speed it is being flown at -- are inside the row, and
+    /// reaching them meant finding the green disc and tapping it on every leg.
+    ///
+    /// Suspended the moment the operator opens something themselves, and handed back when they close
+    /// it again -- but only from the next item on. Reopening the row the moment it was closed would
+    /// make it unclosable while the aircraft is flying, which is the one time an operator most wants
+    /// the panel out of the way.
+    property bool followVehicleTarget: true
+
+    /// Set while the follow is doing the selecting, so selectWaypoint can tell its own call apart
+    /// from the operator's and not switch itself off
+    property bool _followingVehicleTarget: false
+
+    onVehicleTargetSequenceChanged: _openVehicleTargetRow()
+
+    /// Opens the row for the item the vehicle is flying to.
+    ///
+    /// Only while it is actually flying one. currentMissionIndex holds a number for a plan sitting
+    /// on a disarmed aircraft too, and opening a row over a plan being built -- pulling the panel
+    /// away from the item the operator was editing -- is the behaviour this is meant to avoid.
+    function _openVehicleTargetRow() {
+        if (!followVehicleTarget || (vehicleTargetSequence < 0) || !vehicle || !vehicle.armed) {
+            return
+        }
+
+        // Matched on the sequence range rather than by reading each point's isVehicleTarget.
+        //
+        // That flag is computed inside missionPoints, which is a binding on this same
+        // vehicleTargetSequence -- and a change signal reaches this handler without any promise that
+        // the binding has run yet. Read here it still described the previous target, so the list
+        // followed the aircraft one item behind: it opened the leg just finished rather than the one
+        // being flown. The sequence numbers on each point do not depend on the target and are the
+        // same either way, so comparing against them is the same answer whenever this runs.
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            if ((vehicleTargetSequence < points[i].sequence) || (vehicleTargetSequence > points[i].lastSequence)) {
+                continue
+            }
+            if (selectedWaypointIndex !== points[i].index) {
+                _followingVehicleTarget = true
+                selectWaypoint(points[i].index)
+                _followingVehicleTarget = false
+            }
+            return
+        }
+    }
+
     /// True for an item that belongs where it is and may not be moved from the grid.
     ///
     /// The takeoff is the only one. It sits on the origin because that is where the aircraft is
@@ -1216,6 +1267,13 @@ Item {
         if (!item) {
             return
         }
+        // Anything the operator opens for themselves takes the list off the aircraft's heels. Set
+        // here rather than in the row that was clicked, because a marker on the grid, an insert and
+        // a row all arrive through this one function and all three mean the same thing: someone is
+        // working on a particular item and does not want it swapped out from under them.
+        if (!_followingVehicleTarget) {
+            followVehicleTarget = false
+        }
         selectedWaypointIndex = index
         clickPanel.visible = false
         // Tells the controller where an insert should land: right after whatever the operator is
@@ -1232,6 +1290,10 @@ Item {
     /// (MissionController.cc:1524-1531): the last item's own last sequence number, or 0 for an empty
     /// plan.
     function clearWaypointSelection() {
+        // Closing the row that was being worked on gives the list back to the aircraft. The way in
+        // and the way out are the same gesture -- a tap on the open row -- so following is resumed
+        // by exactly what suspended it, with nothing new to learn and nothing left switched off.
+        followVehicleTarget = true
         selectedWaypointIndex = -1
         if (!missionController) {
             return

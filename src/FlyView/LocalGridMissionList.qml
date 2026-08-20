@@ -57,6 +57,8 @@ Rectangle {
 
     readonly property real _margins: ScreenTools.defaultFontPixelHeight / 3
 
+    readonly property var _helpSetting: QGroundControl.settingsManager.flyViewSettings.showLocalGridPlanHelp
+
     /// What is left for the rows once the header and the margins have had theirs
     readonly property real _listMaximumHeight: (maximumHeight > 0)
                                                 ? Math.max(0, maximumHeight - collapsedHeight - _margins)
@@ -82,7 +84,14 @@ Rectangle {
     /// Only ever moves a row that is not fully visible. Anything more would take the panel away from
     /// under an operator who has scrolled it somewhere on purpose.
     function _scrollToSelected() {
-        if (collapsed || (_selected < 0)) {
+        if (collapsed) {
+            return
+        }
+        if (_openAtTopPending) {
+            itemList.contentY = 0
+            return
+        }
+        if (_selected < 0) {
             return
         }
 
@@ -111,7 +120,30 @@ Rectangle {
         onTriggered:    _root._scrollToSelected()
     }
 
-    on_SelectedChanged: _scrollTimer.restart()
+    // A fresh selection is a fresh reason to scroll, and it releases the hold below
+    on_SelectedChanged: {
+        _openAtTopPending = false
+        _scrollTimer.restart()
+    }
+
+    /// Held at the top from the moment the panel is unfolded until something asks otherwise.
+    ///
+    /// A plan is read from its first item down, and the list was reopening wherever the last edit
+    /// had left it -- on any plan longer than the panel is tall, that meant coming back showing the
+    /// last item with everything before it above the fold.
+    ///
+    /// A flag rather than one assignment, because unfolding is not one moment. The rows appear, then
+    /// the open row's editor loads and grows, and each of those settles into a height that asks to
+    /// be scrolled to. The hold outlasts all of them and is let go by the operator selecting a row
+    /// or flicking the list -- either of which means they have somewhere else they want to be.
+    property bool _openAtTopPending: false
+
+    onCollapsedChanged: {
+        _openAtTopPending = !collapsed
+        if (!collapsed) {
+            itemList.contentY = 0
+        }
+    }
 
     // The open row growing its editor can push itself out of view on its own
     Connections {
@@ -168,6 +200,33 @@ Rectangle {
                     color:              qgcPal.colorGrey
                     text:               qsTr("%1 items").arg(_root.rowCount)
                 }
+
+                // The way back to everything the editor stops saying by default.
+                //
+                // One switch for the whole panel rather than one per note: the notes explain the
+                // firmware and the panel, not this item, so wanting one of them is wanting all of
+                // them. It lives in the header because that is the part of the panel that is on
+                // screen whether or not a row is open, and it is an outline until it is on, so an
+                // operator who has never needed it is never looking at a lit control.
+                QGCColoredImage {
+                    objectName:             "localGrid_missionListHelpToggle"
+                    Layout.preferredWidth:  ScreenTools.defaultFontPixelHeight
+                    Layout.preferredHeight: Layout.preferredWidth
+                    Layout.alignment:       Qt.AlignVCenter
+                    sourceSize.height:      Layout.preferredHeight
+                    fillMode:               Image.PreserveAspectFit
+                    mipmap:                 true
+                    smooth:                 true
+                    visible:                !_root.collapsed
+                    source:                 "/InstrumentValueIcons/question.svg"
+                    color:                  _root._helpSetting.rawValue ? qgcPal.buttonHighlight : qgcPal.colorGrey
+
+                    QGCMouseArea {
+                        objectName: "localGrid_missionListHelpTouchArea"
+                        fillItem:   parent
+                        onClicked:  _root._helpSetting.rawValue = !_root._helpSetting.rawValue
+                    }
+                }
             }
 
             QGCMouseArea {
@@ -209,6 +268,9 @@ Rectangle {
             visible:            !_root.collapsed && (_root.rowCount > 0)
             contentWidth:       width
             contentHeight:      rowColumn.height
+
+            // Scrolled by hand is somewhere chosen on purpose, so the hold at the top lets go
+            onMovementStarted:  _root._openAtTopPending = false
 
             Column {
                 id:         rowColumn

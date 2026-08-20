@@ -269,6 +269,23 @@ ColumnLayout {
         gridView.moveWaypointToLeg(visualItemIndex, bearing, _transform.fromDisplay(distance))
     }
 
+    /// Whether the background notes are being shown. Off by default: the editor is a column of
+    /// numbers being read at a flight line, and a paragraph between every two of them is a paragraph
+    /// nobody reads twice. What it explains does not stop being true while it is hidden -- the
+    /// Mission Items header carries the toggle that brings it all back.
+    readonly property bool _showHelp: QGroundControl.settingsManager.flyViewSettings.showLocalGridPlanHelp.rawValue
+
+    /// Background: how the firmware behaves, and how this panel is worked. True whether or not the
+    /// operator is looking at this particular item, which is exactly what makes it worth folding
+    /// away -- unlike the notes below that report what has happened to the item in hand, and stay.
+    component HelpNote: QGCLabel {
+        Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 3
+        Layout.maximumWidth:    _root._textWidth
+        wrapMode:               Text.WordWrap
+        font.pointSize:         ScreenTools.smallFontPointSize
+        color:                  qgcPal.colorGrey
+    }
+
     component SectionHeader: QGCLabel {
         Layout.fillWidth:   true
         Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
@@ -314,7 +331,7 @@ ColumnLayout {
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
         color:                  qgcPal.colorGrey
-        text:                   qsTr("Held on the origin, where the aircraft is standing. Set its altitude below.")
+        text:                   qsTr("Held on the origin, where the aircraft is standing.")
     }
 
     // An item that flies to a point the plan does not carry -- a return to launch goes to the
@@ -399,7 +416,14 @@ ColumnLayout {
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
         color:                  qgcPal.colorGrey
-        text:                   qsTr("Lands from the height of the leg that reaches it — the aircraft flies here at whatever altitude it arrives at and descends from there, so this item carries no altitude of its own.")
+        // Stays whether or not help is on. An altitude field that is simply absent reads as a panel
+        // that failed to load, and this is the one line that says otherwise.
+        text:                   qsTr("No altitude of its own.")
+    }
+
+    HelpNote {
+        visible:    _root._isLanding && _root._showHelp
+        text:       qsTr("A landing is flown from the height of the leg that reaches it: the aircraft arrives at whatever altitude that leg holds and descends from there.")
     }
 
     // Only for items carrying an altitude of their own. A complex item may not, and a landing's is
@@ -453,8 +477,9 @@ ColumnLayout {
 
     QGCButton {
         objectName:         "localGrid_applyAltitudeToAllButton"
-        Layout.fillWidth:   true
+        Layout.leftMargin:  _root._labelWidth + ScreenTools.defaultFontPixelWidth
         visible:            _root._altitudeIsOwn
+        pointSize:          ScreenTools.smallFontPointSize
         text:               qsTr("Set this altitude on all")
         onClicked:          _root._applyAltitudeToAll()
     }
@@ -496,14 +521,23 @@ ColumnLayout {
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
         color:                  qgcPal.colorOrange
-        text:                   qsTr("This waypoint carries no speed of its own — it will be flown at the vehicle's WP_SPD. Type a speed, or set one on all below.")
+        // A statement about this waypoint rather than about the firmware, so it is not folded away
+        // with the background notes -- a blank field with nothing said beside it is the state an
+        // operator reads as broken.
+        text:                   qsTr("No speed of its own — flown at the vehicle's WP_SPD.")
+    }
+
+    HelpNote {
+        visible:    (_root._speedSection !== null) && !_root._speedSpecified && _root._showHelp
+        text:       qsTr("Type a speed here to give this waypoint one, or set one on every waypoint at once below.")
     }
 
     // The button the comparison flights are actually flown from: one pattern at two speeds means
     // retyping every waypoint otherwise, and the speed is the thing being varied.
     QGCButton {
         objectName:         "localGrid_applySpeedToAllButton"
-        Layout.fillWidth:   true
+        Layout.leftMargin:  _root._labelWidth + ScreenTools.defaultFontPixelWidth
+        pointSize:          ScreenTools.smallFontPointSize
         visible:            _root._speedSection !== null
         text:               qsTr("Set this speed on all")
         onClicked:          _root._applySpeedToAll()
@@ -536,14 +570,10 @@ ColumnLayout {
     // operator who has planned in the Plan view has seen that field and will look for it; left
     // unsaid, its absence reads as something this panel failed to load rather than as a number the
     // aircraft was never going to read.
-    QGCLabel {
-        objectName:             "localGrid_acceptanceRadiusNote"
-        Layout.maximumWidth:    _root._textWidth
-        visible:                _root._holdTimeFact !== null
-        wrapMode:               Text.WordWrap
-        font.pointSize:         ScreenTools.smallFontPointSize
-        color:                  qgcPal.colorGrey
-        text:                   qsTr("A wait of 0 flies straight through. There is no acceptance radius here: ArduPilot's mission records have no room for one beside the wait, so the firmware drops it and uses the WP_RADIUS_M parameter for every waypoint alike.")
+    HelpNote {
+        objectName: "localGrid_acceptanceRadiusNote"
+        visible:    (_root._holdTimeFact !== null) && _root._showHelp
+        text:       qsTr("A wait of 0 flies straight through. There is no acceptance radius here: ArduPilot's mission records have no room for one beside the wait, so the firmware drops it and uses the WP_RADIUS_M parameter for every waypoint alike.")
     }
 
     // The only field a yaw item has, and the reason it exists. Its own row rather than the generic
@@ -565,22 +595,14 @@ ColumnLayout {
         }
     }
 
-    QGCLabel {
-        Layout.maximumWidth:    _root._textWidth
-        visible:                _root._isYawCommand
-        wrapMode:               Text.WordWrap
-        font.pointSize:         ScreenTools.smallFontPointSize
-        color:                  qgcPal.colorGrey
-        text:                   qsTr("Clockwise from north, held from here until another yaw item changes it. Which way the nose points is part of what a leg measures: the flow sensor reads movement in the airframe's own frame.")
+    HelpNote {
+        visible:    _root._isYawCommand && _root._showHelp
+        text:       qsTr("Clockwise from north, held from here until another yaw item changes it. Which way the nose points is part of what a leg measures: the flow sensor reads movement in the airframe's own frame.")
     }
 
-    QGCLabel {
-        Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 3
-        Layout.maximumWidth:    _root._textWidth
-        wrapMode:               Text.WordWrap
-        font.pointSize:         ScreenTools.smallFontPointSize
-        visible:                _root._movable
-        color:                  qgcPal.colorGrey
-        text:                   qsTr("Drag the marker, or type into any field.")
+    HelpNote {
+        objectName: "localGrid_dragHint"
+        visible:    _root._movable && _root._showHelp
+        text:       qsTr("Drag the marker, or type into any field.")
     }
 }

@@ -3746,6 +3746,157 @@ void LocalGridViewTest::_armedTool_chainsSeveralPlacementsInARow_test()
     }
 }
 
+/// The editor is a column of numbers read at a flight line, and it used to carry a paragraph of
+/// background between every two of them. Those notes are still true and still reachable -- the
+/// header carries one switch for all of them -- but they are not what the panel opens saying.
+///
+/// The switch governs background only. A note that reports what has happened to the item in hand,
+/// like an altitude the ceiling has just pulled down, is not the operator's to switch off.
+void LocalGridViewTest::_backgroundNotesWaitToBeAskedFor_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    Fact *const helpSetting = SettingsManager::instance()->flyViewSettings()->showLocalGridPlanHelp();
+    QVERIFY(helpSetting);
+    helpSetting->setRawValue(false);
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QQmlComponent listComponent(&gridViewEngine);
+    listComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridMissionList { width: 300; height: 600 }
+    )", QUrl());
+    QVERIFY2(listComponent.isReady(), qPrintable(listComponent.errorString()));
+
+    const QScopedPointer<QObject> list(listComponent.create());
+    QVERIFY2(list, qPrintable(listComponent.errorString()));
+    list->setProperty("gridView", QVariant::fromValue(gridView.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, list.get()));
+
+    // The waypoint, opened, which is the only state any of these notes appear in
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, points.property(1).property(QStringLiteral("index")).toInt())));
+
+    // Walked as items rather than as QObjects: the rows come out of a Repeater, which gives its
+    // delegates a parent item and no QObject parent at all
+    auto *const listItem = qobject_cast<QQuickItem *>(list.get());
+    QVERIFY(listItem);
+    const auto hintVisible = [listItem]() {
+        const QList<QQuickItem *> found = collectItemsNamed(listItem, QStringLiteral("localGrid_dragHint"));
+        return !found.isEmpty() && found.first()->isVisible();
+    };
+    const auto hintBuilt = [listItem]() {
+        return !collectItemsNamed(listItem, QStringLiteral("localGrid_dragHint")).isEmpty();
+    };
+
+    QTRY_VERIFY_WITH_TIMEOUT(hintBuilt(), TestTimeout::mediumMs());
+    QVERIFY2(!hintVisible(), "the editor opened carrying background nobody asked for");
+
+    helpSetting->setRawValue(true);
+    QTRY_VERIFY_WITH_TIMEOUT(hintVisible(), TestTimeout::mediumMs());
+
+    // And the switch is in the header, where it is on screen whether or not a row is open
+    QVERIFY2(!collectItemsNamed(listItem, QStringLiteral("localGrid_missionListHelpToggle")).isEmpty(),
+             "there is no way back to the notes the editor stopped showing");
+
+    helpSetting->setRawValue(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!hintVisible(), TestTimeout::mediumMs());
+}
+
+/// The green disc says which item the aircraft is flying to; it does not say what altitude that leg
+/// holds or what speed it is being flown at, and those are inside the row. Following opens it, so
+/// the numbers that matter in the air arrive without the operator hunting for the disc on every leg.
+///
+/// It has to lose every argument with the operator. Opening any item by hand suspends it, and only
+/// closing that item hands the panel back -- from the next item on, never by reopening the row that
+/// was just closed.
+void LocalGridViewTest::_theListFollowsTheItemBeingFlownTo_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    for (const double north : {10.0, 20.0}) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, added),
+                                          Q_ARG(QVariant, north), Q_ARG(QVariant, 0.0)));
+        QVERIFY(added.toBool());
+    }
+
+    // takeoff, then the two waypoints
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    const auto sequenceOf = [&points](int row) {
+        return points.property(row).property(QStringLiteral("sequence")).toInt();
+    };
+    const auto indexOf = [&points](int row) {
+        return points.property(row).property(QStringLiteral("index")).toInt();
+    };
+
+    const auto selected = [&gridView]() { return gridView->property("selectedWaypointIndex").toInt(); };
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearWaypointSelection", Qt::DirectConnection));
+    QCOMPARE(selected(), -1);
+
+    // Nothing opens while the aircraft is on the ground. A plan being built carries a mission index
+    // too, and pulling the panel onto it would take it away from the item being edited.
+    stub->setProperty("currentMissionIndex", sequenceOf(1));
+    QCOMPARE(selected(), -1);
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+
+    // The item being flown to, not the one just finished. missionPoints computes its own
+    // isVehicleTarget flag from this same sequence, and the follow must not depend on that binding
+    // having run first -- read that way it opened the previous leg on every advance.
+    stub->setProperty("currentMissionIndex", sequenceOf(2));
+    QVERIFY2(selected() == indexOf(2), "the list opened an item other than the one being flown to");
+
+    // The operator opens the takeoff to check the height it climbs to. The aircraft moving on must
+    // not take that away from them.
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, indexOf(0))));
+    QCOMPARE(selected(), indexOf(0));
+    stub->setProperty("currentMissionIndex", sequenceOf(1));
+    QVERIFY2(selected() == indexOf(0), "the aircraft advancing pulled the panel off the item being read");
+
+    // Closing it gives the list back -- at the next item, not by reopening what was just closed
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearWaypointSelection", Qt::DirectConnection));
+    QCOMPARE(selected(), -1);
+    stub->setProperty("currentMissionIndex", sequenceOf(2));
+    QCOMPARE(selected(), indexOf(2));
+
+    vehicle()->setArmedShowError(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
+}
+
 /// Every tool the strip can arm has to place something. "landHere" armed cleanly, lit its button and
 /// then had every tap on the grid fall through placeArmedTool's default case -- which from the
 /// operator's side is a button that does nothing and a grid that has stopped responding.
