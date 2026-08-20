@@ -255,7 +255,13 @@ Urut dari yang paling besar:
 
 - Bangun lewat `cmake-build-debug`, target `QGroundControl` (lihat memori proyek — `just` menunjuk
   `build/` yang kosong).
-- `pre-commit` dan `clang-format` belum terpasang di mesin ini, jadi format C++ baru terbukti di CI.
+- `pre-commit` dan `clang-format` **sudah** terpasang (Homebrew, clang-format 22.1.8 — hook mem-pin
+  v22.1.5). Jangan jalankan `--fix`: versi lokal berbeda dari yang di-pin, dan hook yang di-pin pun
+  menandai berkas upstream yang tidak pernah disentuh siapa pun di cabang ini
+  (`MissionSettingsItem.cc`, `VehicleSupports.cc`) — jadi basis repo memang belum format-clean, dan
+  memformat ulang massal akan menghasilkan diff besar yang bukan milik pekerjaan ini. Job
+  `pre-commit` di CI memakai `continue-on-error: true` dan hanya melaporkan lewat komentar PR, bukan
+  menggagalkan build.
 - Tiap bagian ditutup dengan: `ctest -R LocalGrid` hijau, lalu `-L Unit` penuh pada sapuan terakhir.
 - Tiga kegagalan yang sudah ada sebelum pekerjaan ini dan **bukan** disebabkan olehnya:
   `BluetoothConfigurationTest`, `BluetoothWorkerTest` (izin Bluetooth macOS), dan
