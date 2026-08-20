@@ -58,6 +58,11 @@ ToolStripActionList {
         GuidedActionRTL { },
         LocalGridPlanLandAction { id: planLandButton; gridView: _root._gridView },
 
+        // Below the group that builds the pattern, because it acts on the whole of one rather than
+        // adding to it -- and so it has no flying button to stand in for, which is why the strip is
+        // one row longer in plan mode than out of it.
+        LocalGridPlanShapeAction { gridView: _root._gridView },
+
         GuidedActionPause { },
         FlyViewAdditionalActionsButton { },
         FlyViewGripperButton { }

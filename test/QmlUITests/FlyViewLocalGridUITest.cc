@@ -288,3 +288,47 @@ void FlyViewLocalGridUITest::_planModeSwapsTheStripWithoutLosingTheMode_test()
                 TestTimeout::longMs());
         });
 }
+
+/// Shaping the pattern lives behind a drop panel, which is the one place a plan control can go and
+/// leave no trace of having gone missing. Turning the pattern and pinning the nose are reached from
+/// nowhere else -- rotatePlan and insertConditionYaw have no other caller in the app -- and their own
+/// tests drive those functions directly, so both stayed green through a spell where nothing on screen
+/// could reach either.
+///
+/// Opening the panel must also leave the mode alone. A drop panel checks its button, and the strip
+/// unchecks every other button when one goes down.
+void FlyViewLocalGridUITest::_shapingThePatternIsReachableInPlanMode_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> & /*mockLink*/, Vehicle * /*vehicle*/) {
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_planShapeButton"), 0) == nullptr,
+                     "the Shape button was on the strip outside plan mode");
+
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_planButton")), "the Plan button could not be clicked");
+            QVERIFY_TRUE_WAIT(gridView->property("planEditMode").toBool(), TestTimeout::longMs());
+
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_planShapeButton")),
+                     "the Shape button never reached the strip in plan mode");
+
+            // The three controls that have no other way in
+            for (const QString &control : {QStringLiteral("localGrid_planRotateButton"),
+                                           QStringLiteral("localGrid_planMoveButton"),
+                                           QStringLiteral("localGrid_planYawButton")}) {
+                QVERIFY2(findVisibleItem(_rootItem, control, TestTimeout::longMs()),
+                         qPrintable(QStringLiteral("%1 is reachable from nowhere in the app").arg(control)));
+            }
+
+            // Opening a panel is not picking up a tool, so the mode underneath it stands
+            QVERIFY2(gridView->property("planEditMode").toBool(), "opening the Shape panel switched plan mode off");
+            QVERIFY2(verifyChecked(QStringLiteral("flyToolStrip_planButton"), true,
+                                   QStringLiteral("with the Shape panel open")),
+                     "opening the Shape panel unchecked the Plan button");
+        });
+}
+

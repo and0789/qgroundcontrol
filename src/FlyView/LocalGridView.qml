@@ -2821,25 +2821,46 @@ Item {
         onClicked:              _root.undoLastAction()
     }
 
-    /// The one instruction plan mode ever gives, and only while it is the only thing left to do.
+    /// Why a plan button on the tool strip is dead, in the two states where it is dead for a reason
+    /// the operator can act on.
     ///
-    /// Every plan insert but Take off is refused until the plan has a takeoff, and a dead button
-    /// cannot say why. This grid has already paid for that lesson: the click panel grew refusal
-    /// reasons of its own because an operator who met a grey button concluded the feature was broken
-    /// and restarted QGC to get the option back. One line, in the state it explains and nowhere
-    /// else, gone the moment the takeoff is placed -- the same nothing-when-idle the undo control
-    /// above is built on, so the chrome the responsive tests measure is untouched by default.
+    /// A grey button cannot say why, and this grid has already paid for that lesson: the panel this
+    /// mode replaced grew refusal reasons of its own because an operator who met a dead button
+    /// concluded the feature was broken and restarted QGC to get the option back. One line, in the
+    /// state it explains and nowhere else, gone the moment that state is -- the same
+    /// nothing-when-idle the undo control above is built on, so the chrome the responsive tests
+    /// measure is untouched by default.
     ///
     /// Silent when there is no origin: with nothing to measure from, the plan cannot be started at
     /// all, and pointing at Take off would be pointing at a button just as dead as the rest.
+    readonly property string planBlockedReason: _planBlockedReason()
+
+    function _planBlockedReason() {
+        if (!planEditMode || !canPlaceWaypoints) {
+            return ""
+        }
+        if (planNeedsTakeoffFirst) {
+            return qsTr("Start the plan with Take off — a mission is flown from its first item.")
+        }
+        // The one item an operator can add that the grid's altitude ceiling cannot reach and cannot
+        // clamp: a return climbs to RTL_ALT first, and that is a vehicle parameter rather than part
+        // of the plan. Above the rangefinder's range the estimator loses its height source and
+        // optical flow loses the height it scales velocity by, both at once and out of reach -- so
+        // Return is refused rather than warned about, and this is the way out of the refusal.
+        if (returnAltitudeAboveCeiling && vehicle && vehicle.multiRotor) {
+            return qsTr("A return would climb above the rangefinder's range. Lower RTL_ALT, or end the plan with Land instead.")
+        }
+        return ""
+    }
+
     Rectangle {
-        id:                         planTakeoffHint
-        objectName:                 "localGrid_planTakeoffHint"
+        id:                         planHint
+        objectName:                 "localGrid_planHint"
         anchors.horizontalCenter:   parent.horizontalCenter
         anchors.top:                parent.top
         anchors.topMargin:          _root._margins + _root.topEdgeOffset + _root._inset("topEdgeCenterInset")
         z:                          3
-        visible:                    _root.planNeedsTakeoffFirst && _root.canPlaceWaypoints
+        visible:                    _root.planBlockedReason !== ""
         width:                      hintLabel.implicitWidth + (_root._margins * 2)
         height:                     hintLabel.implicitHeight + _root._margins
         color:                      qgcPal.window
@@ -2851,7 +2872,7 @@ Item {
             id:                 hintLabel
             anchors.centerIn:   parent
             font.pointSize:     ScreenTools.smallFontPointSize
-            text:               qsTr("Start the plan with Take off — a mission is flown from its first item.")
+            text:               _root.planBlockedReason
         }
     }
 
