@@ -4,8 +4,9 @@
 > **Firmware**: ArduCopter 4.7.0.
 > **Basis verifikasi**: setiap nilai di dokumen ini dicek ke source pada tag `Copter-4.7.0`
 > di checkout lokal `/Users/mc/CLionProjects/ardupilot`, bukan ke dokumentasi umum atau tutorial.
-> Dokumen pendamping: `konfigurasi-parameter-non-gps.html` (jalur pesan/telemetri),
-> `prosedur-terbang-non-gps-sitl.md` (prosedur terbang).
+> Dokumen pendamping, di folder yang sama: [konfigurasi-parameter-non-gps.html](konfigurasi-parameter-non-gps.html)
+> (jalur pesan/telemetri), [prosedur-terbang-non-gps-sitl.md](prosedur-terbang-non-gps-sitl.md)
+> (prosedur terbang SITL).
 
 ## 0. Cara memakai panduan ini
 
