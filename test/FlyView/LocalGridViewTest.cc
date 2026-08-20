@@ -3746,6 +3746,47 @@ void LocalGridViewTest::_armedTool_chainsSeveralPlacementsInARow_test()
     }
 }
 
+/// Every tool the strip can arm has to place something. "landHere" armed cleanly, lit its button and
+/// then had every tap on the grid fall through placeArmedTool's default case -- which from the
+/// operator's side is a button that does nothing and a grid that has stopped responding.
+///
+/// The landing is also the one tool that puts itself down: a plan has a single ending, so leaving it
+/// armed would leave the button lit over a tool the plan refuses every further use of.
+void LocalGridViewTest::_everyArmableToolPlacesSomething_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // Each of the three the tool strip arms, placed in turn onto the plan the one before it left
+    const QStringList tools = {QStringLiteral("waypoint"), QStringLiteral("roi"), QStringLiteral("landHere")};
+    for (const QString &tool : tools) {
+        gridView->setProperty("armedTool", tool);
+        QCOMPARE(gridView->property("armedTool").toString(), tool);
+
+        QVariant placed;
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "placeArmedTool", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 10.0)));
+        QVERIFY2(placed.toBool(), qPrintable(QStringLiteral("the %1 tool armed but placed nothing").arg(tool)));
+    }
+
+    // The landing put itself down; the two before it stayed in hand, which is what building a
+    // pattern out of several of each depends on
+    QCOMPARE(gridView->property("armedTool").toString(), QString());
+
+    // takeoff, waypoint, ROI, landing -- the ROI carries a coordinate, so all four are on the grid
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 4);
+}
+
 /// Plan mode is what puts an insert tool in the operator's hand, so leaving it has to take the tool
 /// back. A tool that outlived the mode would turn the next tap on the grid -- a tap meant to read a
 /// point, now that the click panel offers nothing else -- into an edit of the plan.

@@ -86,6 +86,7 @@ private slots:
     void _landHere_refusesAMidPlanSpot_test();
     void _armedTool_placesAfterTheSelectionWithoutClearingIt_test();
     void _armedTool_chainsSeveralPlacementsInARow_test();
+    void _everyArmableToolPlacesSomething_test();
     void _planEditMode_dropsTheArmedToolWhenItEnds_test();
     void _planEditMode_endsWhenTheGridIsHidden_test();
     void _planNeedsTakeoffFirst_clearsOnceTheTakeoffIsPlaced_test();

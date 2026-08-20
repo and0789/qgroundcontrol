@@ -716,9 +716,13 @@ Item {
     /// a plan that breaks it and one who is protected from it cannot.
     readonly property bool planNeedsTakeoffFirst: planEditMode && !planHasTakeoff
 
-    /// Which insert tool the next click on bare grid places, or "" for none. Armed from the tool
-    /// strip while planEditMode is on: this view has no map to summon a menu over, so "tap the type,
-    /// then tap the spot" is how the workflow reaches it.
+    /// Which insert tool the next click on bare grid places, or "" for none: "waypoint", "roi" or
+    /// "landHere". Armed from the tool strip while planEditMode is on -- this view has no map to
+    /// summon a menu over, so "tap the type, then tap the spot" is how the workflow reaches it.
+    ///
+    /// placeArmedTool below has to carry a case for every one of them. A tool the strip can arm and
+    /// that switch does not know about arms cleanly, lights its button and then swallows every tap
+    /// on the grid, which is indistinguishable from the grid being broken.
     property string armedTool: ""
 
     /// Arms an insert tool, or disarms it if it is the one already armed -- the same toggle the Plan
@@ -740,9 +744,26 @@ Item {
             return addWaypointAt(north, east)
         case "roi":
             return _insertROIAt(north, east)
+        case "landHere":
+            return _placeLandHereAt(north, east)
         default:
             return false
         }
+    }
+
+    /// Lands the plan where the operator tapped, and puts the tool down afterwards.
+    ///
+    /// The one armed tool that disarms itself. Waypoint and ROI stay in hand because a pattern is
+    /// built out of several of each, and a control that let go after every one would put a tap
+    /// between every corner. A plan has exactly one ending, so leaving this armed would leave the
+    /// button lit over a tool whose every remaining use the plan itself refuses.
+    ///     @return true if it was added
+    function _placeLandHereAt(north, east) {
+        if (!addMissionItemAt("landHere", north, east)) {
+            return false
+        }
+        armedTool = ""
+        return true
     }
 
     /// Inserts a return, or a landing on a fixed wing, using the origin as its coordinate -- the
