@@ -498,13 +498,6 @@ Item {
         const insertAt = _insertIndex()
         const countBefore = _visualItemCount()
 
-        // A plan started from nothing is a new pattern, laid out from the origin like every other
-        // one. Wherever the last plan had been moved to describes that plan, not this one, and left
-        // standing it would take the first move of this one short by that distance.
-        if (planIsEmpty) {
-            resetPlanAnchor()
-        }
-
         // Wherever on the grid it was asked for, a takeoff belongs on the origin
         if (kind === "takeoff") {
             return insertTakeoffAtOrigin()
@@ -559,6 +552,16 @@ Item {
 
         const insertAt = _insertIndex()
         const countBefore = _visualItemCount()
+
+        // A plan started from nothing is a new pattern, laid out from the origin like every other
+        // one. Wherever the last plan had been moved to describes that plan, not this one, and left
+        // standing it would take the first move of this one short by that distance. Reset here
+        // rather than in addMissionItemAt, which is where it used to sit: the takeoff is the only
+        // item that can begin a plan, and the tool strip's Take off button reaches it through this
+        // function without passing through that one.
+        if (planIsEmpty) {
+            resetPlanAnchor()
+        }
 
         const coordinate = projection.coordinateAt(originCoordinate, 0, 0)
         if (!coordinate.isValid) {
@@ -672,11 +675,50 @@ Item {
         return addWaypointAt(transform.northForPixelY(y), transform.eastForPixelX(x))
     }
 
-    /// Which insert tool the next click on bare grid places, or "" for none. Set from the fly
-    /// view's own tool strip (LocalGridPlanAction's drop panel), which is the only entry point that
-    /// can arm one: the strip has no map of its own to click on to summon a drop panel the way the
-    /// Plan view's does, so arming here and placing on this grid is how the same "tap the type, tap
-    /// the spot" workflow reaches a view with no map under it.
+    /// True while the tool strip is showing the plan-building controls instead of the flying ones.
+    ///
+    /// A mode rather than a menu. The strip's own slots change meaning while this is on: Non-GPS,
+    /// flow calibration and the guided takeoff, land and return -- which command the aircraft right
+    /// now -- all give their places to the plan's inserts. Only one meaning is ever on screen, which
+    /// is what keeps that safe; FlyViewToolStripActionList lays out which stands in for which, and
+    /// why no plan button takes the place of the flying button it shares a name with.
+    ///
+    /// Replaces a drop panel that hung off the strip. Placing a waypoint and marking an ROI are done
+    /// over and over while a pattern is built, and a panel that had to be reopened for each one put
+    /// a tap and a moving target between the operator and every single item.
+    property bool planEditMode: false
+
+    onPlanEditModeChanged: {
+        // Leaving the mode puts down whatever was in hand. An armed tool that outlived the mode
+        // would turn the next tap on the grid -- a tap meant to inspect a point -- into an edit.
+        if (!planEditMode) {
+            armedTool = ""
+        }
+    }
+
+    // Hiding the grid leaves the mode too. This view is not destroyed when it is switched off, only
+    // hidden, so the mode would otherwise sit there switched on -- and come back with five plan
+    // buttons on the strip and nothing under them to tap.
+    onVisibleChanged: {
+        if (!visible) {
+            planEditMode = false
+        }
+    }
+
+    /// True while a plan being built has no takeoff yet, which is the state the tool strip offers
+    /// Take off in and nothing else.
+    ///
+    /// A mission is flown from its first item, and on this airframe that item has to be the takeoff:
+    /// a plan that begins with a waypoint does not climb, the aircraft simply sits there. The grid
+    /// still refuses to build one without a takeoff -- addMissionItemAt puts one on the origin
+    /// underneath a first waypoint rather than let that plan exist -- but the tool strip asks for it
+    /// outright instead of arranging it silently, because an operator who is shown the rule can see
+    /// a plan that breaks it and one who is protected from it cannot.
+    readonly property bool planNeedsTakeoffFirst: planEditMode && !planHasTakeoff
+
+    /// Which insert tool the next click on bare grid places, or "" for none. Armed from the tool
+    /// strip while planEditMode is on: this view has no map to summon a menu over, so "tap the type,
+    /// then tap the spot" is how the workflow reaches it.
     property string armedTool: ""
 
     /// Arms an insert tool, or disarms it if it is the one already armed -- the same toggle the Plan
@@ -730,7 +772,6 @@ Item {
         const countBefore = _visualItemCount()
 
         if (planIsEmpty) {
-            resetPlanAnchor()
             insertTakeoffAtOrigin()
         }
 
@@ -2438,7 +2479,13 @@ Item {
             _hasDragged = false
             _longPressFired = false
             clickPanel.visible = false
-            longPressTimer.restart()
+            // Only while the strip is building a plan, and only once that plan can take a waypoint.
+            // Outside plan mode a hold on the grid is not an editing gesture at all, and while the
+            // plan is still waiting for its takeoff this would be the one way round a refusal every
+            // other control on screen is stating plainly.
+            if (_root.planEditMode && !_root.planNeedsTakeoffFirst) {
+                longPressTimer.restart()
+            }
         }
 
         onReleased: longPressTimer.stop()
@@ -2481,13 +2528,12 @@ Item {
             clickPanel.showAt(mouse.x, mouse.y)
         }
 
-        /// Press and hold to drop a waypoint where the finger is, without going through the panel.
+        /// Press and hold to drop a waypoint where the finger is, without arming anything first.
         ///
         /// The gesture a phone offers for "put one here", and the one an operator building a pattern
-        /// at the flight line reaches for. It does not replace the click panel: a tap still opens it
-        /// and still shows the offsets before anything is committed, which is the careful path. This
-        /// is the quick one, and the marker it leaves is selected, so the row that opens carries the
-        /// numbers to correct it by.
+        /// at the flight line reaches for. It does not replace arming the Waypoint tool: that is the
+        /// deliberate path, and it stays armed across a whole pattern. This is the one-off, and the
+        /// marker it leaves is selected, so the row that opens carries the numbers to correct it by.
         Timer {
             id:         longPressTimer
             // Qt's own press-and-hold interval, so the gesture feels like every other one on the
@@ -2752,6 +2798,40 @@ Item {
         visible:                _root.canUndo
         text:                   _root.undoLabel
         onClicked:              _root.undoLastAction()
+    }
+
+    /// The one instruction plan mode ever gives, and only while it is the only thing left to do.
+    ///
+    /// Every plan insert but Take off is refused until the plan has a takeoff, and a dead button
+    /// cannot say why. This grid has already paid for that lesson: the click panel grew refusal
+    /// reasons of its own because an operator who met a grey button concluded the feature was broken
+    /// and restarted QGC to get the option back. One line, in the state it explains and nowhere
+    /// else, gone the moment the takeoff is placed -- the same nothing-when-idle the undo control
+    /// above is built on, so the chrome the responsive tests measure is untouched by default.
+    ///
+    /// Silent when there is no origin: with nothing to measure from, the plan cannot be started at
+    /// all, and pointing at Take off would be pointing at a button just as dead as the rest.
+    Rectangle {
+        id:                         planTakeoffHint
+        objectName:                 "localGrid_planTakeoffHint"
+        anchors.horizontalCenter:   parent.horizontalCenter
+        anchors.top:                parent.top
+        anchors.topMargin:          _root._margins + _root.topEdgeOffset + _root._inset("topEdgeCenterInset")
+        z:                          3
+        visible:                    _root.planNeedsTakeoffFirst && _root.canPlaceWaypoints
+        width:                      hintLabel.implicitWidth + (_root._margins * 2)
+        height:                     hintLabel.implicitHeight + _root._margins
+        color:                      qgcPal.window
+        radius:                     ScreenTools.defaultFontPixelHeight / 4
+        border.color:               qgcPal.text
+        border.width:               1
+
+        QGCLabel {
+            id:                 hintLabel
+            anchors.centerIn:   parent
+            font.pointSize:     ScreenTools.smallFontPointSize
+            text:               qsTr("Start the plan with Take off — a mission is flown from its first item.")
+        }
     }
 
     // Bottom left, the corner the waypoint panel gave up when it moved under the readout. Declared

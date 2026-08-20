@@ -22,4 +22,5 @@ private slots:
     void _theReasonTheVehicleWillNotArmIsOnThePanel_test();
     void _aSilentRefusalMakesTheVehicleAskWhy_test();
     void _theAirspeedPanelFollowsTheSensor_test();
+    void _planModeSwapsTheStripWithoutLosingTheMode_test();
 };

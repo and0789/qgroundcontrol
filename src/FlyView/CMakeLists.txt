@@ -60,6 +60,11 @@ qt_add_qml_module(FlyViewModule
         LocalGridOriginDrift.qml
         LocalGridOriginMarker.qml
         LocalGridPlanAction.qml
+        LocalGridPlanLandAction.qml
+        LocalGridPlanReturnAction.qml
+        LocalGridPlanRoiAction.qml
+        LocalGridPlanTakeoffAction.qml
+        LocalGridPlanWaypointAction.qml
         LocalGridPositionCorrection.qml
         LocalGridProjection.qml
         LocalGridReadout.qml

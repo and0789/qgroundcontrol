@@ -3746,6 +3746,66 @@ void LocalGridViewTest::_armedTool_chainsSeveralPlacementsInARow_test()
     }
 }
 
+/// Plan mode is what puts an insert tool in the operator's hand, so leaving it has to take the tool
+/// back. A tool that outlived the mode would turn the next tap on the grid -- a tap meant to read a
+/// point, now that the click panel offers nothing else -- into an edit of the plan.
+void LocalGridViewTest::_planEditMode_dropsTheArmedToolWhenItEnds_test()
+{
+    MAKE_GRID_VIEW(gridView);
+
+    gridView->setProperty("planEditMode", true);
+    gridView->setProperty("armedTool", QStringLiteral("waypoint"));
+    QCOMPARE(gridView->property("armedTool").toString(), QStringLiteral("waypoint"));
+
+    gridView->setProperty("planEditMode", false);
+    QCOMPARE(gridView->property("armedTool").toString(), QString());
+}
+
+/// Switching the grid off is switching plan mode off. The view is hidden rather than destroyed, so
+/// a mode left standing would come back with the plan buttons on the tool strip and nothing under
+/// them to tap -- and with a tool still armed for a grid the operator can no longer see.
+void LocalGridViewTest::_planEditMode_endsWhenTheGridIsHidden_test()
+{
+    MAKE_GRID_VIEW(gridView);
+
+    gridView->setProperty("planEditMode", true);
+    gridView->setProperty("armedTool", QStringLiteral("waypoint"));
+
+    gridView->setProperty("visible", false);
+    QVERIFY(!gridView->property("planEditMode").toBool());
+    QCOMPARE(gridView->property("armedTool").toString(), QString());
+}
+
+/// The state the tool strip refuses every insert but Take off in, and the state the grid puts one
+/// line of explanation on screen for. It has to describe the plan rather than the mode: outside plan
+/// mode there is nothing to explain, and the moment the takeoff exists the refusal is over.
+void LocalGridViewTest::_planNeedsTakeoffFirst_clearsOnceTheTakeoffIsPlaced_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // Nothing to say while the strip is showing the flying controls
+    QVERIFY(!gridView->property("planNeedsTakeoffFirst").toBool());
+
+    gridView->setProperty("planEditMode", true);
+    QVERIFY(gridView->property("planNeedsTakeoffFirst").toBool());
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "insertTakeoffAtOrigin", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added)));
+    QVERIFY(added.toBool());
+    QVERIFY(gridView->property("planHasTakeoff").toBool());
+    QVERIFY(!gridView->property("planNeedsTakeoffFirst").toBool());
+}
+
 /// An ROI carries a real coordinate and belongs on the grid, but the aircraft is never routed to
 /// it -- so it must still be drawn, while the leg reaching the item after it is measured from the
 /// last item actually flown to, not from the ROI.
