@@ -97,6 +97,12 @@ private slots:
     void _planTotalsIncludeTheWaits_test();
     void _yawItemCarriesAHeadingAndNoLeg_test();
 
+    // Bagian 5: pattern tools (Lampiran F)
+    void _rotatePlan_turnsThePatternAboutWhereItStarts_test();
+    void _rotatePlan_turnsYawHeadingsWithThePattern_test();
+    void _nudgePlan_movesTheAnchorWithThePattern_test();
+    void _patternShapingIsRefusedWhileArmedOrSyncing_test();
+
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);
 };

@@ -1,6 +1,6 @@
 # Rencana Pembenahan UI Local Grid: Responsif, Sentuh, dan Paritas Pembuatan Misi
 
-Status: Bagian 0–4 selesai; Bagian 5 berikutnya • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
+Status: Bagian 0–5 selesai (5b ditunda); Bagian 6 berikutnya • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
 
 Dokumen ini menjawab tiga keluhan konkret: panel-panel di Local Grid saling bertabrakan dan tertutup
 fitur lain di layar mobile, pembuatan waypoint di mode grid jauh lebih miskin dibanding halaman Plan,
@@ -167,13 +167,24 @@ saat menulis kodenya dan hasil pengujian lengkap.
 **Verifikasi:** lihat "Bagian 4 — Catatan Implementasi" di bawah untuk temuan yang muncul saat
 menulis kodenya dan hasil pengujian lengkap.
 
-### Bagian 5 — Alat pola khas grid
+### Bagian 5 — Alat pola khas grid ✅ SELESAI (20 Agustus 2026)
 
 | | |
 |---|---|
-| **Isi** | (a) Putar dan geser seluruh misi — `rotateMission`/`offsetMission` sudah tersedia, dan di grid lokal ini jauh lebih berguna daripada di peta: menyelaraskan pola ke dinding ruangan atau garis landas. (b) Survey di atas persegi/poligon yang digambar langsung di grid. |
-| **Keluaran** | Komponen transformasi baru; (b) berpotensi jadi bagian tersendiri karena butuh editor poligon |
+| **Isi** | (a) Putar dan geser seluruh pola dari grid: `rotatePlan`/`nudgePlan` di `LocalGridView.qml`, dengan poros jangkar plan dan heading item yaw ikut berputar. `MissionController::rotateMission` sengaja tidak dipakai — porosnya planned home dan ia diam tanpa pesan saat home tidak sah (F0). (b) Survey di atas poligon **dipecah jadi Bagian 5b dan ditunda**, dengan alasan di F2. |
+| **Keluaran** | `LocalGridView.qml`, `LocalGridPlanAction.qml` (kelompok "Shape the pattern" di drop panel — bukan di panel aksi seperti rencana F1.6, lihat catatan implementasi), `LocalGridViewTest.{h,cc}` (4 tes baru) |
 | **Selesai bila** | (a) selesai dan teruji; (b) dinilai ulang setelah (a) — kalau ternyata besar, pecah jadi Bagian 5b |
+| **Model** | Spesifikasi **Opus 5** (Lampiran F). Penerapan **Opus 5** |
+
+**Verifikasi:** lihat "Bagian 5 — Catatan Implementasi" di bawah.
+
+### Bagian 5b — Survey di atas poligon (ditunda)
+
+| | |
+|---|---|
+| **Isi** | Editor poligon di grid (tambah/geser/hapus verteks, ramah sentuh), lalu `SurveyComplexItem` di atasnya. |
+| **Kenapa ditunda** | Tiga alasan terukur di F2: tidak ada editor poligon di grid dan membuatnya sebesar Bagian 3; item kompleks tidak pernah dibangun ulang saat plan datang dari kendaraan (`MissionController.cc:1782-1783`), jadi sekali round-trip ia berhenti jadi survey; dan pola di ruang uji belasan meter sudah murah dibuat manual sejak Bagian 3–4. |
+| **Urutan bila dikerjakan** | Editor poligon dulu sebagai bagian tersendiri, survey menyusul |
 | **Model** | **Opus 5** |
 
 ### Bagian 6 — Poles layar sentuh
@@ -1083,6 +1094,7 @@ Fact sendiri berarti dua sumber untuk satu angka.
 ### E3 — Yang dikerjakan
 
 **1. `LocalGridView.qml`**
+
 - `waypointHoldTimeFact(index)` — kembalikan `_param1Fact` hanya untuk item ber-`commandWaypoint`,
   null untuk yang lain (takeoff dan landing memakai param1 untuk hal berbeda).
 - `missionHoldSeconds` — jumlah seluruh hold time di plan, untuk dipakai panel statistik.
@@ -1208,3 +1220,216 @@ di §5 bahwa basis repo memang belum format-clean; `cmake-format` dan `cmake-lin
 `ModuleNotFoundError: No module named 'yaml'` dari environment hook-nya sendiri (python3.14) —
 gagal sebelum sempat membaca berkas mana pun. Plan view tidak disentuh
 (`MissionController.*` dan `PlanView.qml` tidak ada di diff), sesuai E5.
+
+---
+
+## Lampiran F — Briefing Eksekusi Bagian 5
+
+Ditulis setelah memeriksa apa yang benar-benar dilakukan `rotateMission`/`offsetMission` milik QGC
+dan apa yang sudah ada di grid hari ini. Standar bukti **S** yang sama: tiap klaim menunjuk baris.
+
+Hasilnya: kalimat rencana "`rotateMission`/`offsetMission` sudah tersedia" **benar untuk geser dan
+menyesatkan untuk putar**.
+
+### F0 — Keadaan terukur hari ini
+
+**1. Geser seluruh misi sudah ada, dan sudah ada di grid sendiri.** `LocalGridView.qml:1330`
+(`offsetMission(northMetres, eastMetres)`) dipakai oleh koreksi posisi
+(`LocalGridPositionCorrection.qml:126`) dan oleh `reanchorPlanToVehicle`. Ia berjalan di atas
+snapshot `missionPoints`, melewati item pinned dan item yang tidak ada di grid, dan menulis lewat
+`moveWaypointTo`. **Yang belum ada** adalah cara operator menggeser pola dengan sengaja sekian meter
+— yang ada hanya dua jalur yang dimaksudkan sebagai koreksi drift.
+
+**2. `MissionController::rotateMission` ada, tapi tidak bisa dipakai apa adanya dari fly view.**
+Tiga alasan, masing-masing cukup sendirian:
+
+- **Porosnya planned home**, bukan origin: `const QGeoCoordinate home = _settingsItem->coordinate();`
+  lalu tiap item diputar terhadapnya (`MissionController.cc:2242`, `:2260-2266`).
+- **Home yang tidak sah membuatnya diam.** `MissionController.cc:2237-2240` hanya menulis
+  `qCWarning` lalu `return` — dari sisi operator itu tombol yang tidak melakukan apa pun dan tidak
+  mengatakan apa pun. Plan view menutupi ini dengan menggerbangi tombolnya pada `_hasHome`
+  (`TransformEditor.qml:332`, "Home position must be set to rotate the mission"); grid harus
+  melakukan hal setara atau tidak memakai jalur ini sama sekali.
+- **Di fly view home tidak pernah diturunkan dari pola.** `_setPlannedHomePositionFromFirstCoordinate`
+  digerbangi `!_flyView` (`MissionController.cc:1441`). Yang menyetelnya di fly view cuma dua: item
+  home dari kendaraan saat plan diunduh (`:133-139`), atau takeoff yang ditulis grid — karena
+  takeoff ArduPilot multirotor `specifiesCoordinate()`-nya false, `_launchTakeoffAtSameLocation`
+  jadi true (`TakeoffMissionItem.cc:129-131`) dan `setCoordinate` ikut menulis home
+  (`TakeoffMissionItem.cc:99-104`). Jadi poros yang sama bisa berarti origin, bisa berarti home
+  kendaraan, bisa berarti tidak ada — tiga arti untuk satu tombol.
+
+**3. Rotasi controller geodesik terhadap home** (`home.distanceTo` / `home.azimuthTo`, `:2260` dan `:2264`),
+sementara grid berbicara meter north/east dan punya proyeksinya sendiri.
+
+**4. Controller tidak tahu apa-apa tentang item `CONDITION_YAW`.** Ia melewati tiap item yang
+`!specifiesCoordinate()` (`:2246`) — dan itu persis item yaw yang baru ditambahkan Bagian 4.
+Memutar pola tanpa memutar heading-nya menghasilkan pola yang benar dengan hidung yang salah, dan
+pada wahana tanpa GNSS arah hidung adalah bagian dari yang diukur, bukan detail tampilan.
+
+### F1 — Keputusan
+
+**F1.1 — Rotasi dikerjakan di grid, bukan didelegasikan.** Dalam bingkai north/east grid, lewat
+`moveWaypointTo` (yang sudah menolak item pinned), berjalan di atas snapshot `missionPoints` —
+alasan yang persis sama dengan `offsetMission`: `missionPoints` adalah binding atas koordinat item,
+jadi daftar yang dihitung ulang di tengah jalan akan memutar item kedua dua kali.
+
+**F1.2 — Porosnya jangkar plan, bukan origin dan bukan home.** `planAnchorNorth`/`planAnchorEast`
+(`LocalGridView.qml:1375-1378`) menyimpan di mana pola *saat ini* dimulai. Untuk pola yang belum
+pernah digeser nilainya (0, 0) — yaitu origin, yang juga tempat takeoff dipaku. Untuk pola yang
+sudah dipindah ke posisi wahana, memutar terhadap origin akan menyapu seluruh pola mengelilingi
+origin: titik awalnya pindah entah ke mana, sementara `reanchorNorthMetres` tetap dihitung dari
+jangkar yang tersimpan, bukan dari titik yang sebenarnya. Memutar terhadap jangkar membuat titik
+awal pola tetap di tempatnya dan jangkar tetap sahih tanpa disentuh.
+
+**F1.3 — Heading item yaw ikut diputar sebesar sudut yang sama.** Ia tidak punya koordinat untuk
+diputar; yang berputar adalah angkanya. `setWaypointYawHeading` sudah membungkus 0–360, jadi
+penambahannya tidak perlu penjagaan sendiri.
+
+**F1.4 — Geser sengaja memakai `offsetMission` yang sudah ada, tapi wajib memperbarui jangkar.**
+Ini konsekuensi yang mudah terlewat: jangkar berarti "di mana pola dimulai", jadi geseran yang
+disengaja menggeser artinya juga. Kalau jangkar tidak ikut, `planStartsAtVehicle` akan mengatakan
+pola sudah mulai di wahana padahal ia dua meter dari situ, dan alasan tombol "Fly this plan from
+here" jadi bohong. Rotasi tidak menyentuh jangkar (F1.2); geseran selalu menyentuhnya.
+
+**F1.5 — Tidak ada checkbox "juga pindahkan takeoff/landing" ala Plan view.** Grid sudah punya
+aturannya sendiri dan aturan itu lebih tegas: takeoff dipaku ke origin karena multirotor naik di
+tempat, jadi ia tidak pernah ikut; sisanya — termasuk landing dan ROI — ikut, sehingga pola dan
+titik yang dipandanginya tetap pada hubungan yang sama. Dua checkbox yang menawarkan pilihan yang
+tidak masuk akal di grid ini hanya menambah dua cara untuk salah.
+
+**F1.6 — Tidak ada panel baru.** Alat ini masuk sebagai satu kelompok di dalam
+`LocalGridMissionActions`, dengan judul tebal seperti kelompok "After a flight" yang sudah ada
+(`LocalGridMissionActions.qml:605-610`). Anggaran chrome Bagian 2 karena itu tidak berubah, dan
+tidak perlu disentuh di `LocalGridResponsiveLayoutTest`.
+
+**F1.7 — Gerbang yang sama dengan reanchor.** Tidak saat armed (memutar pola di bawah wahana yang
+sedang menerbangkannya mengubah tujuannya di tengah terbang), tidak saat transfer berjalan, dan
+hanya bila ada yang bisa diputar. Alasannya dinyatakan di sebelah tombol, bukan dibiarkan sebagai
+tombol mati — aturan yang sudah dipakai `reanchorBlockedReason`.
+
+### F2 — (b) Survey di atas poligon: dipecah jadi Bagian 5b dan ditunda
+
+Rencana sudah menyediakan pintu ini ("kalau ternyata besar, pecah jadi Bagian 5b"). Ia besar, dan
+ada satu alasan tambahan yang lebih menentukan daripada besarnya:
+
+- **Poligonnya tidak punya editor di sini.** Plan view menggambar poligon lewat
+  `QGCMapPolygonVisuals` di atas peta. Grid tidak punya peta; menambah/menggeser/menghapus verteks
+  yang ramah sentuh adalah pekerjaan sebesar Bagian 3 sendiri, sebelum satu transek pun dihitung.
+- **Item kompleks tidak pernah dibangun ulang saat plan datang dari kendaraan.** Yang dipindai hanya
+  pola landing (`MissionController.cc:1782-1783`); tidak ada `scanForItem` untuk survey di jalur
+  itu. Jadi survey yang sudah diunggah kembali sebagai deretan waypoint biasa — sekali round-trip ia
+  berhenti menjadi survey dan tidak bisa disunting lagi. Digabung dengan aturan "fly view adalah
+  cermin kendaraan" yang ditemukan Bagian 3, umur sebuah survey lokal sangat pendek.
+- **Nilainya untuk riset ini kecil.** Pola kotak dan lawnmower di ruang uji berukuran belasan meter
+  bisa dibuat dengan 4–8 klik di grid, dan sejak Bagian 3–4 tiap titiknya bisa disisipi, digandakan,
+  diberi kecepatan, hold, dan heading. Survey membayar mahal untuk sesuatu yang sudah murah.
+
+Kalau kelak dikerjakan, urutannya: editor poligon dulu sebagai bagian tersendiri, survey menyusul.
+
+### F3 — Yang dikerjakan
+
+**1. `LocalGridView.qml`**
+
+- `rotatePlan(degreesCW)` — memutar tiap titik yang tidak dipaku dan ada di grid terhadap jangkar,
+  lalu menambah `degreesCW` ke heading tiap item yaw. Mengembalikan jumlah item yang berubah.
+- `nudgePlan(northMetres, eastMetres)` — `offsetMission` plus pemutakhiran jangkar (F1.4).
+- `canTransformPlan` + `transformBlockedReason` — sepasang dengan `canReanchorPlan` /
+  `reanchorBlockedReason`, dengan alasan yang sama persis kata-katanya di mana keadaannya sama.
+
+**2. `LocalGridMissionActions.qml`** — kelompok "Shape the pattern": satu field derajat searah jarum
+jam dengan tombol Apply, satu pasang field north/east dengan tombol Apply, satu baris alasan, satu
+baris hasil ("N item(s) turned. Upload the plan to fly it.").
+
+> **Dikoreksi saat pelaksanaan:** kelompok ini akhirnya masuk ke `LocalGridPlanAction.qml` (drop
+> panel "Plan"), bukan ke panel aksi. Panel aksi ternyata sudah penuh — dua tes UI membuktikannya.
+> Lihat "Bagian 5 — Catatan Implementasi".
+
+### F4 — Tes
+
+1. Memutar 90° CW memindahkan (20, 0) ke (0, 20) dan membiarkan takeoff di origin.
+2. Memutar pola yang sudah dipindah berputar terhadap jangkarnya, bukan terhadap origin — titik awal
+   pola tetap di tempat.
+3. Heading item yaw ikut bertambah sebesar sudut yang sama, dan membungkus di 360.
+4. Geser sengaja memperbarui jangkar: sesudahnya `planStartsAtVehicle` menjawab dengan jujur.
+5. Ditolak saat armed dan saat transfer berjalan, dengan alasan yang tidak kosong.
+6. Anggaran chrome `LocalGridResponsiveLayoutTest` tidak naik — tidak ada panel baru.
+
+### F5 — Selesai bila
+
+- Sebuah pola bisa diselaraskan ke dinding atau garis landas tanpa menyentuh satu pun waypoint
+- Enam tes di atas hijau, `LocalGridViewTest` seluruhnya hijau
+- `ctest -R "LocalGrid|SetEstimatorOrigin|NonGps|FlyViewLocalGrid|MissionController"` hijau
+- (b) tercatat sebagai Bagian 5b dengan alasannya, bukan hilang diam-diam
+
+---
+
+## Bagian 5 — Catatan Implementasi (20 Agustus 2026) ✅ SELESAI
+
+Dikerjakan mengikuti Lampiran F tanpa perubahan keputusan. Yang bertambah adalah beberapa hal yang
+baru kelihatan saat menulis kodenya dan tesnya.
+
+**Poros jangkar terbukti bukan detail.** Tes memutar pola dua kali: sekali pada pola yang belum
+digeser (poros = origin), sekali sesudah `nudgePlan(10, 0)`. Kasus kedua adalah yang membedakan
+implementasi ini dari yang mudah: titik (10, 20) diputar 90° searah jarum jam menghasilkan **(-10, 0)**
+terhadap jangkar dan **(-20, 10)** terhadap origin. Keduanya angka yang masuk akal di layar; hanya
+satu yang membiarkan pola tetap dimulai di tempat yang sama. Asersi tesnya menyebut kedua angka itu
+supaya kegagalannya membaca sendiri.
+
+**Putaran satu putaran penuh dijawab "tidak ada yang berubah", bukan ditulis ulang.** `rotatePlan`
+menormalkan sudut sebelum memutuskan (`((deg % 360) + 360) % 360 === 0`), jadi 360 dan -360 tidak
+menyentuh satu item pun. Bukan optimasi: setiap penulisan koordinat menandai plan kotor dan
+membangunkan seluruh binding yang menggantung padanya.
+
+**Item yaw diperlakukan sebelum saringan `onGrid`, bukan sesudahnya.** Ia tidak punya koordinat, jadi
+`onGrid`-nya false dan saringan yang sama yang melindungi takeoff akan melewatinya diam-diam —
+menghasilkan pola yang berputar dengan hidung yang tidak. Urutan di dalam loop itu satu-satunya hal
+yang membuat F1.3 benar-benar berlaku.
+
+**Geser sengaja dan jangkar diuji lewat angka yang dilihat operator.** Tesnya memberi wahana posisi
+5 m di utara, memastikan tawaran "pindahkan plan ke sini" berbunyi 5 m, lalu menggeser pola 2 m ke
+utara dan menuntut tawaran itu menjadi 3 m. Itu invarian F1.4 dinyatakan dalam satuan yang muncul di
+panel, bukan dalam nilai fact.
+
+**F1.6 salah, dan tesnya yang membuktikannya.** Rencana menaruh alat pola sebagai satu kelompok di
+dalam `LocalGridMissionActions` dengan alasan "tidak ada panel baru, jadi anggaran chrome tidak
+berubah". Anggarannya memang tidak dilanggar oleh panel baru — ia dilanggar oleh panel yang sudah
+ada yang jadi lebih besar: `LocalGridResponsiveLayoutTest` melaporkan **15,5% pada tablet terhadap
+anggaran 15%**. Dan `LocalGridPositionCorrectionUITest` gagal berbarengan dengan cara yang lebih
+tajam: tombol "Vehicle is on the origin" terdorong keluar dari badan panel yang bisa digulir, jadi
+kliknya mendarat di grid dan tidak ada perintah yang terkirim. Dua tes itu mengatakan hal yang sama —
+panel aksi sudah penuh.
+
+**Alat pola pindah ke drop panel "Plan".** Ia tidak berdiri di layar, jadi biayanya nol selama
+tertutup; dan tempatnya memang di sana: drop panel itu sudah jadi tempat pola dibangun sejak
+keputusan D2.2 di Bagian 3, dan membentuk pola adalah lanjutan dari membangunnya. Satu perbedaan
+perilaku yang disengaja dari tombol-tombol lain di panel itu: tombol Turn dan Move **tidak** menutup
+panelnya. Menyelaraskan pola ke ruangan dilakukan dengan mata dan lebih dari sekali — seperempat
+putaran, lihat gridnya, lalu sisanya.
+
+**Tiga hal kecil di luar kode fitur, semuanya karena `pre-commit` kini bisa dijalankan lokal:**
+
+1. `markdownlint` menemukan dua daftar tanpa baris kosong di atasnya di dokumen ini (satu di
+   Lampiran E, satu di F3) — diperbaiki. Sisa peringatannya (94 × MD060 gaya pipa tabel, dan tiga
+   lagi di bagian-bagian lama) sudah ada sebelum pekerjaan ini dan tidak disentuh.
+2. `typos` menandai kata Indonesia sebagai salah eja (`lokal`, `poligon`, `fase`). Akar masalahnya
+   ternyata lebih tua: `.typos.toml` sudah mendaftar `docs/ko/`, `docs/tr/` dan seterusnya di
+   `[files] extend-exclude`, tapi daftar itu **tidak pernah berlaku** untuk berkas yang diserahkan
+   pre-commit satu per satu — typos hanya menghormatinya dengan `--force-exclude`. Jadi
+   `docs/tr/` pun masih dipindai selama ini (40 temuan). Diperbaiki dengan menambahkan flag itu di
+   `.pre-commit-config.yaml` dan mendaftarkan `docs/nongps/` bersama direktori bahasa lain.
+   Auto-fix tetap mati — itu `--write-changes`, yang tidak ikut diberikan; diperiksa ulang bahwa
+   salah eja Inggris yang sungguhan masih tertangkap.
+3. Hook `Lint QML files` (qmllint dengan jalur impor build) hijau untuk kedua berkas QML yang
+   disentuh.
+
+**Verifikasi:** `LocalGridViewTest` 77/77 lulus (4 baru + 73 lama). `ctest -R
+"LocalGrid|SetEstimatorOrigin|NonGps|FlyViewLocalGrid|MissionController"` 15/15 lulus, termasuk
+`LocalGridResponsiveLayoutTest`, `LocalGridPositionCorrectionUITest` dan `FlyViewLocalGridUITest` —
+ketiganya sempat merah pada penempatan pertama dan hijau lagi sesudah alat pola dipindah ke drop
+panel; anggaran chrome kembali tidak tersentuh karena alat itu tidak berdiri di layar. `ctest -L
+Unit` penuh: 215/218 — tiga kegagalan yang sama dengan yang sudah didokumentasikan di §5
+(`BluetoothConfigurationTest`, `BluetoothWorkerTest`, `LoggingQmlBindingTest`), tidak satu pun
+baru. `pre-commit` atas berkas yang
+disentuh: semua hijau kecuali `clang-format`, yang menandai seluruh berkas tes dari baris pertama
+karena versi lokal berbeda dari yang di-pin (lihat §5). `PlanView.qml` dan `MissionController.*`
+tidak disentuh.

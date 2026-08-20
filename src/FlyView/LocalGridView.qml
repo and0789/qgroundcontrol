@@ -1484,6 +1484,128 @@ Item {
         return moved
     }
 
+    /// True when the pattern could be turned or nudged as it stands.
+    ///
+    /// The same gate the move to the aircraft answers to, and for the same reasons: nothing is
+    /// shaped while a transfer is running, and nothing is shaped under an aircraft that is already
+    /// flying it. A reported position is not required though -- these two are measured against the
+    /// plan itself rather than against where the aircraft is standing.
+    readonly property bool canTransformPlan: !vehicleArmed && canPlaceWaypoints && _hasMovablePlan
+
+    /// Why the pattern cannot be shaped, or an empty string when it can -- and also when there is
+    /// nothing drawn, since a grid with no pattern on it explains itself.
+    readonly property string transformBlockedReason: {
+        if (canTransformPlan || !_hasMovablePlan) {
+            return ""
+        }
+        if (!originKnown) {
+            return qsTr("The pattern can be shaped once the estimator has an origin to measure from.")
+        }
+        if (planSyncInProgress) {
+            return qsTr("The pattern can be shaped once the transfer finishes.")
+        }
+        if (vehicleArmed) {
+            return qsTr("The pattern can be shaped once the aircraft is disarmed. Turning it under an aircraft already flying it changes where it is going mid-flight.")
+        }
+        return ""
+    }
+
+    /// Turns the whole pattern clockwise about the point it starts from.
+    ///
+    /// This is the transform a grid needs and a map does not. Indoors a pattern is flown against
+    /// walls, a net or a landing line, and the angle it has to sit at is not one anyone wants to
+    /// work out per waypoint. On a map the same job is done by dragging the shape around against
+    /// what is underneath it; on a bare grid there is nothing to drag it against.
+    ///
+    /// Turned about the plan's own anchor rather than about the origin. For a pattern as drawn the
+    /// two are the same point. For one already moved to start from where the aircraft is standing
+    /// they are not, and turning about the origin would sweep the whole pattern around a point it no
+    /// longer has anything to do with -- while the anchor, which is what says where the pattern
+    /// starts, would go on describing where it used to start.
+    ///
+    /// QGC's own rotateMission is deliberately not used. It turns about the planned home position,
+    /// which in the fly view is whatever the vehicle last reported -- or nothing at all, in which
+    /// case it writes a line to the log and returns, which from the operator's side is a button that
+    /// does nothing and says nothing. It also steps over every item that carries no coordinate,
+    /// which is exactly the yaw items whose heading has to turn with the pattern.
+    ///     @return how many items changed
+    function rotatePlan(degreesCW) {
+        if (!canTransformPlan || isNaN(degreesCW) || (((degreesCW % 360) + 360) % 360 === 0)) {
+            return 0
+        }
+
+        const radians = degreesCW * Math.PI / 180
+        const cos = Math.cos(radians)
+        const sin = Math.sin(radians)
+        const pivotNorth = planAnchorNorth
+        const pivotEast  = planAnchorEast
+
+        // Walked over a snapshot taken before the first write, the same as offsetMission and for the
+        // same reason: missionPoints is a binding on the items' coordinates, so a list that
+        // recomputed underneath this loop would turn the second item through the first item's angle
+        // as well.
+        const points = missionPoints
+        var turned = 0
+        for (var i = 0; i < points.length; i++) {
+            const point = points[i]
+            // The takeoff stays where it is. It is pinned to the origin because a multirotor climbs
+            // in place whatever coordinate is uploaded with it.
+            if (point.isPinned) {
+                continue
+            }
+
+            // An item with no position still turns -- what turns is the heading it holds. Without
+            // this the pattern comes out at the right angle with the nose pointing the old way,
+            // which on this aircraft is not a cosmetic difference: the flow sensor measures in the
+            // airframe's own frame.
+            if (waypointIsYawCommand(point.index)) {
+                const heading = waypointYawHeading(point.index)
+                if (!isNaN(heading) && setWaypointYawHeading(point.index, heading + degreesCW)) {
+                    turned++
+                }
+                continue
+            }
+
+            if (!point.onGrid) {
+                continue
+            }
+
+            // Clockwise in the grid's own frame, where north is up and east is to the right, so a
+            // quarter turn takes a point due north of the pivot to due east of it
+            const north = point.north - pivotNorth
+            const east  = point.east  - pivotEast
+            if (moveWaypointTo(point.index,
+                               pivotNorth + (north * cos) - (east * sin),
+                               pivotEast  + (east * cos)  + (north * sin))) {
+                turned++
+            }
+        }
+        return turned
+    }
+
+    /// Moves the whole pattern by hand, in metres, keeping its shape and its heading.
+    ///
+    /// The other half of aligning a pattern to a room: a metre further off the wall, half a metre
+    /// clear of the net. Distinct from the two moves that already exist -- the position correction
+    /// and the move to the aircraft are both remedies for the frame having shifted under a pattern
+    /// that was drawn correctly, and neither is something the operator chose the distance of.
+    ///
+    /// The anchor moves with it. It records where the pattern starts, and a deliberate move changes
+    /// that as surely as an automatic one: left alone, the grid would go on saying the pattern
+    /// starts where the aircraft is standing while it sat a metre away from there.
+    ///     @return how many items moved
+    function nudgePlan(northMetres, eastMetres) {
+        if (!canTransformPlan || isNaN(northMetres) || isNaN(eastMetres)) {
+            return 0
+        }
+
+        const moved = offsetMission(northMetres, eastMetres)
+        if (moved > 0) {
+            _storePlanAnchor(planAnchorNorth + northMetres, planAnchorEast + eastMetres)
+        }
+        return moved
+    }
+
     /// Which item of the plan a mission sequence number falls on, counting from the head of the plan.
     ///
     /// The two do not run together. ArduPilot's sequence numbers count the home position and the

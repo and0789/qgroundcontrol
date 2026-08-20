@@ -48,6 +48,40 @@ ToolStripAction {
     visible:    QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
     enabled:    gridView !== null
 
+    readonly property bool   _canTransform:           gridView ? gridView.canTransformPlan : false
+    readonly property string _transformBlockedReason: gridView ? gridView.transformBlockedReason : ""
+    readonly property string _distanceUnits: (gridView && gridView.gridTransform)
+                                                ? gridView.gridTransform.displayUnits : ""
+
+    /// What the last shaping did, for the panel to say back. Cleared when the panel is opened again
+    /// rather than on a timer: this one is read in the same breath as the button that caused it.
+    property string _shapedResult: ""
+
+    /// Turns the whole pattern. No confirmation, unlike the move to the aircraft in the actions
+    /// panel: the angle was typed and then applied, which is two deliberate acts already, and the way
+    /// back is the same angle negated.
+    function _rotatePattern(degreesCW) {
+        if (!gridView || isNaN(degreesCW)) {
+            return
+        }
+        const turned = gridView.rotatePlan(degreesCW)
+        _shapedResult = turned > 0
+                            ? qsTr("%1 item(s) turned. Upload the plan to fly it.").arg(turned)
+                            : qsTr("Nothing turned.")
+    }
+
+    /// Moves the whole pattern, in the units on screen
+    function _movePattern(northDisplay, eastDisplay) {
+        if (!gridView || !gridView.gridTransform || isNaN(northDisplay) || isNaN(eastDisplay)) {
+            return
+        }
+        const transform = gridView.gridTransform
+        const moved = gridView.nudgePlan(transform.fromDisplay(northDisplay), transform.fromDisplay(eastDisplay))
+        _shapedResult = moved > 0
+                            ? qsTr("%1 item(s) moved. Upload the plan to fly it.").arg(moved)
+                            : qsTr("Nothing moved.")
+    }
+
     function _cannotAddTakeoffReason() {
         if (!_root._mc || (_root._mc.isInsertTakeoffValid === true)) {
             return ""
@@ -154,6 +188,112 @@ ToolStripAction {
                     _root.gridView.insertConditionYaw(isNaN(heading) ? 0 : heading)
                     dropPanel.hide()
                 }
+            }
+
+            // Shaping the whole pattern, under the items that build it. In this panel rather than in
+            // the mission actions panel on the grid: that one is already as tall as the smallest
+            // screen has room for, and adding to it pushed the between-flights buttons out of its
+            // scrolling body and the standing chrome past the budget Bagian 2 set. A drop panel
+            // costs nothing while it is shut, and shaping a pattern belongs with building it.
+            QGCLabel {
+                Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
+                text:               qsTr("Shape the pattern")
+            }
+
+            // What a room asks for and a map never does: the pattern is square to the walls or it is
+            // not, and the angle that makes it square is one number rather than a new position for
+            // every waypoint. It turns about the point the pattern starts from; the takeoff stays
+            // pinned where the aircraft stands, and a yaw item's heading turns with the pattern so
+            // the nose keeps the direction it was given relative to it.
+            RowLayout {
+                Layout.fillWidth:   true
+                spacing:            ScreenTools.defaultFontPixelWidth / 2
+
+                QGCLabel {
+                    font.pointSize: ScreenTools.smallFontPointSize
+                    text:           qsTr("Turn")
+                }
+
+                QGCTextField {
+                    id:                     rotateField
+                    objectName:             "localGrid_planRotateField"
+                    Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 7
+                    font.pointSize:         ScreenTools.smallFontPointSize
+                    text:                   "90"
+                    unitsLabel:             qsTr("° CW")
+                }
+
+                QGCButton {
+                    objectName: "localGrid_planRotateButton"
+                    text:       qsTr("Turn")
+                    enabled:    _root._canTransform
+                    // The panel stays open. Squaring a pattern to a room is done by eye and in more
+                    // than one go -- a quarter turn, then a look at the grid, then the rest.
+                    onClicked:  _root._rotatePattern(parseFloat(rotateField.text))
+                }
+            }
+
+            // The other half of squaring a pattern to a room: clear of the net, off the wall.
+            // Deliberate, unlike the drift correction and the move to the aircraft, which are both
+            // remedies for the frame having shifted under a pattern that was drawn correctly.
+            RowLayout {
+                Layout.fillWidth:   true
+                spacing:            ScreenTools.defaultFontPixelWidth / 2
+
+                QGCLabel {
+                    font.pointSize: ScreenTools.smallFontPointSize
+                    text:           qsTr("Move (%1)").arg(_root._distanceUnits)
+                }
+
+                QGCTextField {
+                    id:                     moveNorthField
+                    objectName:             "localGrid_planMoveNorthField"
+                    Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 7
+                    font.pointSize:         ScreenTools.smallFontPointSize
+                    text:                   "0"
+                    unitsLabel:             qsTr("N")
+                }
+
+                QGCTextField {
+                    id:                     moveEastField
+                    objectName:             "localGrid_planMoveEastField"
+                    Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 7
+                    font.pointSize:         ScreenTools.smallFontPointSize
+                    text:                   "0"
+                    unitsLabel:             qsTr("E")
+                }
+
+                QGCButton {
+                    objectName: "localGrid_planMoveButton"
+                    text:       qsTr("Move")
+                    enabled:    _root._canTransform
+                    onClicked:  _root._movePattern(parseFloat(moveNorthField.text),
+                                                   parseFloat(moveEastField.text))
+                }
+            }
+
+            // Why the two are shut, rather than leaving them dead and unexplained. Only shown when
+            // there is a pattern to shape: an empty grid explains itself.
+            QGCLabel {
+                objectName:             "localGrid_planShapeBlockedReason"
+                Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 24
+                visible:                _root._transformBlockedReason !== ""
+                wrapMode:               Text.WordWrap
+                font.pointSize:         ScreenTools.smallFontPointSize
+                color:                  qgcPal.colorGrey
+                text:                   _root._transformBlockedReason
+            }
+
+            // What it did. The pattern turning on the grid is easy to miss on a bright screen, and
+            // nothing has reached the aircraft until the plan is uploaded.
+            QGCLabel {
+                objectName:             "localGrid_planShapeResult"
+                Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 24
+                visible:                _root._shapedResult !== ""
+                wrapMode:               Text.WordWrap
+                font.pointSize:         ScreenTools.smallFontPointSize
+                color:                  qgcPal.colorGreen
+                text:                   _root._shapedResult
             }
 
             QGCLabel {

@@ -4241,3 +4241,241 @@ void LocalGridViewTest::_yawItemCarriesAHeadingAndNoLeg_test()
                                       Q_ARG(QVariant, 1), Q_ARG(QVariant, 90.0)));
     QVERIFY2(!applied.toBool(), "a waypoint's own yaw never reaches the aircraft, so it is not offered one");
 }
+
+/// A pattern flown indoors is square to the walls or it is not, and the angle that makes it square
+/// is one number rather than a new position for every waypoint. It turns about the point the pattern
+/// starts from -- not about the origin, which for a pattern already moved to the aircraft is a point
+/// the pattern no longer has anything to do with.
+void LocalGridViewTest::_rotatePlan_turnsThePatternAboutWhereItStarts_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    // A quarter turn clockwise takes a point due north of the pivot to due east of it
+    QVariant turned;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QCOMPARE(turned.toInt(), 1);
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber()) < 0.05);
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("east")).toNumber() - 20.0) < 0.05);
+
+    // The takeoff does not turn with it. It is pinned to the origin because a multirotor climbs in
+    // place whatever coordinate is uploaded with it.
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("north")).toNumber()) < 0.05);
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("east")).toNumber()) < 0.05);
+
+    // Moved ten metres north on purpose, which is what makes the pivot visible: the pattern now
+    // starts somewhere other than the origin, and the anchor is what says so
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "nudgePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QCOMPARE(moved.toInt(), 1);
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 10.0);
+
+    // The waypoint is now at (10, 20), due east of the anchor at (10, 0). Another quarter turn
+    // clockwise puts it due south of that anchor -- at (-10, 0).
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QCOMPARE(turned.toInt(), 1);
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    const double north = points.property(1).property(QStringLiteral("north")).toNumber();
+    const double east = points.property(1).property(QStringLiteral("east")).toNumber();
+    QVERIFY2(qAbs(north + 10.0) < 0.05,
+             qPrintable(QStringLiteral("turned about the origin instead of the anchor: north %1").arg(north)));
+    QVERIFY2(qAbs(east) < 0.05,
+             qPrintable(QStringLiteral("turned about the origin instead of the anchor: east %1").arg(east)));
+
+    // And turning does not move the anchor: the pattern still starts where it started
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 10.0);
+
+    // A turn of a whole revolution changes nothing rather than rewriting every item to where it
+    // already was
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 360.0)));
+    QCOMPARE(turned.toInt(), 0);
+}
+
+/// A yaw item has no position to turn -- what turns is the heading it holds. Left behind, the pattern
+/// comes out at the right angle with the nose pointing the old way, and on an aircraft measuring with
+/// optical flow that is not a cosmetic difference.
+void LocalGridViewTest::_rotatePlan_turnsYawHeadingsWithThePattern_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QVariant inserted;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "insertConditionYaw", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, inserted), Q_ARG(QVariant, 0.0)));
+    QVERIFY(inserted.toBool());
+
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 3);
+    Fact *const heading = publishItemFact(items.at(2).value<QObject *>(), "textFieldFacts",
+                                          QStringLiteral("Heading"));
+    QVERIFY(heading);
+
+    // Set past three quarters, so the turn below has to wrap rather than run off the end of the compass
+    QVariant applied;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, applied),
+                                      Q_ARG(QVariant, 2), Q_ARG(QVariant, 350.0)));
+    QVERIFY(applied.toBool());
+
+    QVariant turned;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QVERIFY2(turned.toInt() == 2, "the waypoint turns and so does the heading beside it");
+
+    QVariant read;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, read), Q_ARG(QVariant, 2)));
+    QVERIFY2(qAbs(read.toDouble() - 80.0) < 1e-9,
+             "350 turned a quarter clockwise is 80, not 440");
+}
+
+/// The anchor is what says where the pattern starts, and a move made on purpose changes that as
+/// surely as one made to follow the aircraft. Left behind, the grid goes on offering to move a
+/// pattern to where it already claims it is.
+void LocalGridViewTest::_nudgePlan_movesTheAnchorWithThePattern_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    // The aircraft is standing five metres up the field, so the offer to move the plan to it is five
+    // metres -- the number the anchor is subtracted from
+    sendLocalPosition(vehicle(), 5.0F, 0.0F, -1.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("positionValid").toBool(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(qAbs(gridView->property("reanchorNorthMetres").toDouble() - 5.0) < 0.05,
+                             TestTimeout::mediumMs());
+
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "nudgePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 2.0), Q_ARG(QVariant, 0.0)));
+    QCOMPARE(moved.toInt(), 1);
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 22.0) < 0.05);
+
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 2.0);
+    QVERIFY2(qAbs(gridView->property("reanchorNorthMetres").toDouble() - 3.0) < 0.05,
+             "the pattern moved two metres further from the aircraft, so the offer to move it back must shrink by two");
+}
+
+/// Both of these rewrite the plan, and both are shut for the same two reasons the move to the
+/// aircraft is: an aircraft already flying the pattern would have its route changed underneath it,
+/// and a transfer in progress is sending the very items being rewritten. Shut with the reason said
+/// out loud, because a dead button teaches an operator the feature is broken.
+void LocalGridViewTest::_patternShapingIsRefusedWhileArmedOrSyncing_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    // Nothing drawn yet: there is no reason to give, because a grid with no pattern on it explains
+    // itself
+    QVERIFY(!gridView->property("canTransformPlan").toBool());
+    QCOMPARE(gridView->property("transformBlockedReason").toString(), QString());
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(gridView->property("canTransformPlan").toBool());
+
+    plan->setProperty("syncInProgress", true);
+    QVERIFY(!gridView->property("canTransformPlan").toBool());
+    QVERIFY(!gridView->property("transformBlockedReason").toString().isEmpty());
+
+    QVariant turned;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QCOMPARE(turned.toInt(), 0);
+    plan->setProperty("syncInProgress", false);
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+    QTRY_COMPARE_WITH_TIMEOUT(gridView->property("canTransformPlan").toBool(), false, TestTimeout::mediumMs());
+    QVERIFY(!gridView->property("transformBlockedReason").toString().isEmpty());
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QCOMPARE(turned.toInt(), 0);
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "nudgePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 2.0), Q_ARG(QVariant, 0.0)));
+    QCOMPARE(moved.toInt(), 0);
+
+    // The pattern is where it was drawn, not somewhere between
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05);
+
+    vehicle()->setArmedShowError(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
+}
