@@ -1,6 +1,6 @@
 # Rencana Pembenahan UI Local Grid: Responsif, Sentuh, dan Paritas Pembuatan Misi
 
-Status: Bagian 0–3 selesai; Bagian 4 berikutnya • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
+Status: Bagian 0–4 selesai; Bagian 5 berikutnya • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
 
 Dokumen ini menjawab tiga keluhan konkret: panel-panel di Local Grid saling bertabrakan dan tertutup
 fitur lain di layar mobile, pembuatan waypoint di mode grid jauh lebih miskin dibanding halaman Plan,
@@ -155,14 +155,17 @@ harus turun, bukan ukurannya.
 **Verifikasi:** lihat "Bagian 3 — Catatan Implementasi" di bawah untuk tiga penyesuaian yang muncul
 saat menulis kodenya dan hasil pengujian lengkap.
 
-### Bagian 4 — Paritas pembuatan misi: detail item
+### Bagian 4 — Paritas pembuatan misi: detail item ✅ SELESAI (20 Agustus 2026)
 
 | | |
 |---|---|
-| **Isi** | Pemilih perintah yang lebih luas (subset yang masuk akal tanpa GNSS). Field per item: hold time, acceptance radius, aksi kamera bila didukung. Item mission settings: cruise/hover speed, aksi akhir misi. Panel statistik misi (jarak, perkiraan waktu). |
-| **Keluaran** | `LocalGridWaypointEditor.qml`, komponen setting misi baru, komponen statistik baru |
+| **Isi** | Dipangkas jadi tiga hal oleh Lampiran E: field **hold time** pada waypoint, item **`CONDITION_YAW`**, dan **panel statistik misi** (jarak, waktu termasuk hold). Empat hal lain digugurkan karena tidak sampai ke pesawat — acceptance radius, yaw per-waypoint, aksi akhir misi, cruise speed tingkat-misi (E0). Pemilih perintah umum tidak jadi dikerjakan (E2.2). |
+| **Keluaran** | `LocalGridView.qml`, `LocalGridWaypointEditor.qml`, `LocalGridPlanAction.qml`, `LocalGridMissionStats.qml` (baru), `LocalGridViewTest.{h,cc}` (4 tes baru + stub yang diperluas) |
 | **Selesai bila** | Field yang ditampilkan benar-benar memengaruhi penerbangan — tidak ada field hiasan seperti altitude landing yang sudah dibereskan sebelumnya |
-| **Model** | **Sonnet 5** untuk field dan statistik; naikkan ke **Opus 5** kalau pemilih perintah jadi dikerjakan |
+| **Model** | Spesifikasi **Opus 5** (Lampiran E). Penerapan **Sonnet 5**, effort **medium** — tetap, karena syarat "naikkan ke Opus" bergantung pada pemilih perintah yang gugur |
+
+**Verifikasi:** lihat "Bagian 4 — Catatan Implementasi" di bawah untuk temuan yang muncul saat
+menulis kodenya dan hasil pengujian lengkap.
 
 ### Bagian 5 — Alat pola khas grid
 
@@ -966,3 +969,242 @@ baru. `qmllint` pada seluruh berkas yang disentuh: hanya dua kategori peringatan
 dijalankan tanpa jalur impor build — berkas baru `LocalGridPlanAction.qml` nol peringatan.
 Plan view tidak disentuh sama sekali (`git diff` tidak menyentuh `PlanView.qml` atau
 `MissionController.*`), sesuai D5.
+
+---
+
+## Lampiran E — Briefing Eksekusi Bagian 4
+
+Ditulis setelah memeriksa apa yang benar-benar dilakukan ArduCopter terhadap tiap field yang
+diusulkan, ke source pada checkout `/Users/mc/CLionProjects/ardupilot` (master,
+`ArduPilot-4.6.0-beta1-8092-g2cd33afd17`) — standar bukti **S** yang sama dipakai panduan parameter.
+
+Hasilnya memangkas Bagian 4, bukan memperluasnya. Kriteria "tidak ada field hiasan" ternyata
+menggugurkan **empat dari tujuh** hal yang disebut rencana.
+
+### E0 — Yang digugurkan, dan buktinya
+
+**1. Acceptance radius per-waypoint tidak sampai ke pesawat.** Ini temuan terpenting di sini, dan
+persis kelas kesalahan yang sama dengan altitude landing yang sudah dibereskan sebelumnya.
+
+`AP_Mission` menyimpan tiap item misi dalam rekaman 15 byte yang tidak muat menampung delay **dan**
+radius sekaligus. Untuk build **non-Plane** — yaitu Copter — dekodernya hanya menyimpan param1:
+
+```cpp
+// AP_Mission.cpp:1092-1116
+case MAV_CMD_NAV_WAYPOINT: {
+    /*
+      the 15 byte limit means we can't fit both delay and radius
+      in the cmd structure. ...
+     */
+#if APM_BUILD_TYPE(APM_BUILD_ArduPlane)
+    ... acp / passby disimpan ...
+#else
+    cmd.p1 = (uint16_t)packet.param1;   // hanya ini
+#endif
+}
+```
+
+Jadi **param2 (acceptance radius) dan param3 (pass-by) dibuang saat upload**. Yang sungguh-sungguh
+menentukan kapan sebuah waypoint dianggap tercapai adalah parameter kendaraan `WP_RADIUS_M`
+(`AC_WPNav.cpp:65`; dulu bernama `WPNAV_RADIUS`, ada di tabel konversi `AC_WPNav.cpp:142`).
+Menampilkan field per-item untuknya berarti menawarkan angka yang tidak akan pernah diterbangkan.
+
+**2. Yaw per-waypoint juga dibuang.** Blok dekode yang sama tidak menyentuh `param4` sama sekali.
+Cara Copter yang sungguhan untuk menyetir hidung di dalam misi adalah item tersendiri,
+`MAV_CMD_CONDITION_YAW` (`mode_auto.cpp:791`) — bukan field pada waypoint.
+
+**3. Aksi akhir misi adalah kode mati di QGC.** `MissionSettingsItem::addMissionEndAction()`
+(`MissionSettingsItem.cc:147`) mengabaikan ketiga argumennya dan `return false`. Tidak ada apa pun
+di baliknya. UI untuknya akan jadi field hiasan paling murni yang bisa dibuat.
+
+**4. Cruise/hover speed di mission settings menjadi mubazir setelah Bagian 3.** Grid sudah menulis
+`speedSection` pada **setiap** waypoint yang ditaruhnya, dan kalkulator statistik membaca yang
+per-item itu (E1 di bawah). Menambah satu speed tingkat-misi berarti dua tempat menyatakan hal yang
+sama, dengan yang belakangan menang secara diam-diam.
+
+### E1 — Yang lolos, dan buktinya
+
+**1. Hold time (`param1`) benar-benar diterbangkan.** `do_nav_wp` menyimpannya
+(`mode_auto.cpp:1584`, `loiter_time_max = cmd.p1`) dan `verify_nav_wp` menahan pesawat sampai
+detiknya habis. Satuannya **detik**, bilangan bulat (`uint16_t`).
+
+Nilainya untuk riset ini bukan sekadar paritas: hover diam di satu titik adalah cara mengukur drift
+optical flow **tanpa** komponen jarak tempuh — kondisi eksperimen yang berbeda dari terbang menerus,
+dan sampai sekarang tidak bisa dinyatakan dari grid sama sekali.
+
+**2. Statistik misi dihitung juga di fly view.** `_recalcMissionFlightStatus`
+(`MissionController.cc:1160`) **tidak** digerbangi `_flyView` — berbeda dari jebakan
+`_setPlannedHomePositionFromFirstCoordinate` yang ditemukan di Bagian 3. Dan kalkulatornya membaca
+kecepatan per-item:
+
+```cpp
+// MissionFlightStatusCalculator.cc:226
+double newSpeed = item->specifiedFlightSpeed();
+```
+
+yaitu persis yang ditulis grid ke tiap waypoint. Jadi jarak dan waktu untuk plan yang dibangun di
+grid ini **akurat**, bukan perkiraan kasar dari parameter kendaraan.
+
+**Satu kehalusan yang harus dinyatakan:** kalkulator itu tidak punya suku hold time sama sekali.
+Begitu hold time bisa disetel (E1.1), waktu yang ditampilkan akan kurang sebesar jumlah seluruh
+hold. Panel statistik harus menambahkannya sendiri, atau mengatakan bahwa ia tidak menghitungnya —
+angka yang diam-diam kurang lebih buruk daripada angka yang tidak ada.
+
+### E2 — Keputusan
+
+**E2.1 — Bagian 4 jadi tiga hal, bukan tujuh.**
+
+| Yang dikerjakan | Kenapa |
+|---|---|
+| Field **hold time** pada waypoint | Satu-satunya param NAV_WAYPOINT yang selamat sampai pesawat, dan ia membuka kondisi eksperimen baru (drift saat diam) |
+| **Item `CONDITION_YAW`** | Tanpa GNSS, heading adalah satu-satunya rujukan absolut. Ini cara Copter yang benar untuk menyatakannya di dalam misi |
+| **Panel statistik misi** | Sudah akurat untuk plan grid, tinggal ditampilkan — dengan hold time dijumlahkan sendiri |
+
+**E2.2 — Tidak ada pemilih MAV_CMD umum.** Rencana menawarkan "pemilih perintah yang lebih luas
+(subset yang masuk akal tanpa GNSS)", dengan catatan naikkan ke Opus bila dikerjakan. Setelah E0,
+subset itu ternyata hampir kosong: sebagian besar perintah yang bisa dipilih membawa parameter yang
+tidak selamat di rekaman 15 byte, atau bergantung pada GNSS/kamera yang tidak ada di wahana ini.
+Yang tersisa bernilai cuma satu, `CONDITION_YAW`, dan itu lebih jujur ditawarkan sebagai jenis item
+tersendiri di panel Plan daripada disembunyikan di balik pemilih kategori.
+
+Konsekuensi biaya: **Bagian 4 tetap `sonnet` / `medium`.** Syarat "naikkan ke Opus" di rencana
+tergantung pemilih perintah, dan pemilih perintah tidak jadi dikerjakan.
+
+**E2.3 — Kamera ditunda, bukan ditolak.** `cameraSection` punya gerbang `available` sendiri, jadi
+menampilkannya aman. Tapi wahana riset ini tidak membawa kamera atau gimbal, jadi tidak ada yang
+bisa membuktikan field itu bekerja — dan field yang tidak bisa diuji adalah field yang tidak bisa
+dijamin. Ditunda sampai ada perangkat yang membuatnya terbukti.
+
+**E2.4 — Field hold time menulis `param1` lewat `textFieldFacts`, bukan lewat Fact baru.**
+`SimpleMissionItem` sudah menerbitkan `textFieldFacts` (`SimpleMissionItem.h:43`) yang berisi
+`_param1Fact` untuk perintah yang memakainya, dengan nama dan satuan dari command tree QGC. Membuat
+Fact sendiri berarti dua sumber untuk satu angka.
+
+### E3 — Yang dikerjakan
+
+**1. `LocalGridView.qml`**
+- `waypointHoldTimeFact(index)` — kembalikan `_param1Fact` hanya untuk item ber-`commandWaypoint`,
+  null untuk yang lain (takeoff dan landing memakai param1 untuk hal berbeda).
+- `missionHoldSeconds` — jumlah seluruh hold time di plan, untuk dipakai panel statistik.
+- `insertConditionYawAt(...)` / dukungan tipe baru pada `addMissionItemAt`.
+- Konstanta `commandConditionYaw: 115`, ditulis keluar seperti tiga konstanta lain yang sudah ada,
+  dan dipin ke header MAVLink oleh tes.
+
+**2. `LocalGridWaypointEditor.qml`** — satu `EntryRow` hold time, hanya untuk waypoint biasa, dengan
+satu kalimat yang menyebut bahwa radius penerimaan datang dari `WP_RADIUS_M` dan bukan dari sini.
+Kalimat itu bukan hiasan: ia mencegah operator mencari field yang sengaja tidak ada.
+
+**3. `LocalGridMissionStats.qml` (baru)** — jarak total, waktu (termasuk hold), jumlah item. Dilipat
+seperti panel lain, dan mengikuti aturan `compact` Bagian 2 supaya anggaran chrome tidak naik.
+
+**4. `LocalGridPlanAction.qml`** — satu tombol lagi di drop panel untuk `CONDITION_YAW`.
+
+### E4 — Tes
+
+1. Hold time yang diketik sampai ke `param1` item, dan hanya muncul untuk waypoint biasa.
+2. `missionHoldSeconds` menjumlahkan seluruh hold, dan nol untuk plan tanpa hold.
+3. Statistik menampilkan jarak yang cocok dengan pola kotak yang diketahui (4 × 20 m = 80 m).
+4. Waktu statistik = waktu terbang + hold, bukan waktu terbang saja.
+5. `CONDITION_YAW` tersisip di titik yang benar dan **tidak** ikut digambar sebagai leg (ia tidak
+   membawa koordinat sama sekali — jalur yang sama dengan Cancel ROI di Bagian 3).
+6. Anggaran chrome `LocalGridResponsiveLayoutTest` tidak naik di keempat ukuran.
+
+### E5 — Selesai bila
+
+- Tiap field yang tampil bisa ditunjuk barisnya di source ArduPilot yang membacanya
+- Enam tes di atas hijau
+- `LocalGridResponsiveLayoutTest` lulus tanpa anggaran chrome disentuh
+- `ctest -R "LocalGrid|SetEstimatorOrigin|NonGps|FlyViewLocalGrid|MissionController"` hijau
+
+---
+
+## Bagian 4 — Catatan Implementasi (20 Agustus 2026) ✅ SELESAI
+
+Dikerjakan mengikuti Lampiran E. Tiga hal yang dikerjakan tetap tiga; yang berubah adalah **cara**
+sebuah parameter ditemukan pada item, dan itu berubah karena membaca sisi QGC-nya, bukan hanya sisi
+ArduPilot-nya.
+
+**Parameter dicari lewat nama, bukan lewat posisi — dan di dua daftar sekaligus.** E2.4 benar bahwa
+`textFieldFacts` adalah sumber yang tepat, tapi tidak menyebut bahwa daftar itu **terfilter dan
+terbelah dua**. `SimpleMissionItem::_rebuildTextFieldFacts` menamai tiap fact dengan label dari
+command tree (`SimpleMissionItem.cc:451`, `paramFact->setName(paramInfo->label())`) lalu
+menaruhnya di `_textFieldFactsAdvanced` bila param itu ditandai `advanced`, dan di `_textFieldFacts`
+bila tidak (`:468-470`). `Hold` ditandai advanced di `MavCmdInfoCommon.json`; `Heading` milik
+`CONDITION_YAW` tidak. Jadi `_namedFactOf()` menyapu **kedua** daftar dan mencocokkan nama.
+
+Indeks tidak dipakai karena isi daftar itu bergantung firmware: `APM-MavCmdInfoCommon.json` membuang
+param2 dari `NAV_WAYPOINT` dan `APM-MavCmdInfoMultiRotor.json` membuang param3 dan param4. Ini
+sekaligus **bukti kedua, di sisi QGC**, untuk E0 butir 1 dan 2 — QGC sendiri sudah tidak menawarkan
+acceptance radius maupun yaw per-waypoint untuk multirotor ArduPilot. Temuan Lampiran E dari sisi
+`AP_Mission.cpp` dan keputusan upstream QGC sampai pada tempat yang sama.
+
+**`CONDITION_YAW` lolos jalur friendly-edit hanya karena punya objek param.** JSON-nya tidak menulis
+`friendlyEdit` sama sekali, dan defaultnya `false` (`MissionCommandUIInfo.cc:313-315`) — yang akan
+melempar item ini ke jalur `rawEdit`, tempat fact-nya dinamai `Param1`..`Alt/Z` dan pencarian per
+nama pasti gagal. Yang menyelamatkannya satu baris: `_setInfoValue(_friendlyEditJsonKey, true)`
+dipanggil begitu ada objek param yang dibaca (`:370`). Perlu dicatat karena ini bukan jaminan yang
+dinyatakan di mana pun — kalau param `CONDITION_YAW` suatu saat dipangkas habis oleh override
+firmware, field Heading hilang diam-diam. Yang aman: hilang, bukan salah edit.
+
+Param3 (`Direction`) dan param4 (`Offset`) punya `enumStrings`, jadi keduanya memang tidak pernah
+masuk `textFieldFacts` (`SimpleMissionItem.cc:447`). Yang terbit hanya `Heading` dan `Rate`.
+
+**Derajat: grid menulis 0–360, command tree menampilkan −180..180.** Itu `userMin`/`userMax`, yaitu
+batas validasi UI, bukan `min`/`max` metadata — jadi `rawValue` 270 diterima tanpa penolakan.
+Karena field bawaan akan menandai 270 sebagai di luar rentang, baris heading di editor memakai
+`EntryRow` grid sendiri (yang sudah dipakai bearing/jarak) dan bukan `FactTextField`, dengan
+pembungkusan `((x % 360) + 360) % 360` supaya 370 berarti 10.
+
+**Penyisipan yaw menempuh jalur Cancel ROI, dan namanya `insertConditionYaw` (bukan
+`insertConditionYawAt` seperti di E3).** `MissionController` tidak punya penyisip khusus untuk
+perintah ini, jadi item disisipkan sebagai simple item lalu diberi command-nya — persis pola yang
+sudah dipakai Bagian 3. Tombolnya di drop panel "Plan" menyisipkan pada **heading kendaraan saat
+itu**, bukan nol: yang hampir selalu dimaksud operator adalah mengunci hidung di arah sekarang, dan
+default nol berarti "putar ke utara" yang akan mengayun wahana pada run pertama.
+
+Tombolnya digerbangi `flyThroughCommandsAllowed` seperti tombol Waypoint di sebelahnya, meski
+`CONDITION_YAW` bukan perintah fly-through. Itu pemakaian ulang yang disengaja: flag itu tepatnya
+berarti "sebelum takeoff atau sesudah land" (`MissionController.cc:2081` dan `:2096`), dan di kedua
+tempat itu sebuah item yaw memang tidak berarti apa-apa — yang sesudah land tidak pernah dijalankan,
+dan yang sebelum takeoff melanggar syarat takeoff harus item pertama.
+
+**Stub takeoff di test tidak pernah membawa command-nya sendiri.** `insertTakeoffItem` pada stub
+menyetel `isTakeoffItem` dan `commandName` tapi membiarkan `command` di 16 (`NAV_WAYPOINT`) — tidak
+pernah terlihat karena belum ada yang bertanya. Tes hold time langsung menemukannya: field itu
+muncul di takeoff. Diperbaiki jadi `command: 22`. Ini bug stub, bukan bug implementasi, dan
+memperbaikinya membuat 69 tes lama tetap hijau.
+
+**Batas yang jujur soal tes yaw.** `Fact` menerbitkan `name` sebagai properti read-only, jadi QML
+tidak bisa menamai fact-nya sendiri dan stub tidak bisa meniru penerbitan fact yang dilakukan
+command tree saat command ditulis. Fact diterbitkan dari sisi C++ (`publishItemFact`). Akibatnya
+yang teruji adalah: item tersisip di posisi yang benar dengan command yang benar, tidak digambar dan
+tidak ikut diukur sebagai leg, lalu `setWaypointYawHeading`/`waypointYawHeading` bekerja dengan
+konvensi 0–360 termasuk pembungkusan. Yang **tidak** teruji di stub: heading yang disetel oleh
+`insertConditionYaw` sendiri pada detik penyisipan, karena pada stub fact-nya belum ada saat itu.
+Pada controller sungguhan fact itu ada, karena `setCommand` membangun ulang fact-nya seketika.
+
+**Empat tes, bukan enam.** Butir 3 dan 4 di E4 (jarak pola kotak, dan waktu = terbang + hold) adalah
+dua asersi atas satu plan yang sama, jadi digabung ke `_planTotalsIncludeTheWaits_test` — yang
+sekalian menegaskan teks yang benar-benar tampil di panel (jarak lewat transform yang sama sehingga
+tetap benar di satuan non-metrik, waktu sebagai `1:30`, dan catatan hold yang muncul hanya kalau ada
+hold). Butir 6 (anggaran chrome) tidak butuh tes baru: `LocalGridResponsiveLayoutTest` sudah
+mengukurnya dan tetap hijau tanpa anggarannya disentuh.
+
+**Verifikasi:** `LocalGridViewTest` 73/73 lulus (4 baru + 69 lama). `ctest -R
+"LocalGrid|SetEstimatorOrigin|NonGps|FlyViewLocalGrid|MissionController"` 15/15 lulus, termasuk
+`LocalGridResponsiveLayoutTest` tanpa anggaran chrome disentuh. `ctest -L Unit` penuh: 215/218 —
+tiga kegagalan yang sama persis dengan yang sudah didokumentasikan di §5 sebelum pekerjaan ini
+(`BluetoothConfigurationTest`, `BluetoothWorkerTest`, `LoggingQmlBindingTest`), tidak satu pun
+baru. `qmllint` pada berkas yang disentuh:
+hanya dua kategori peringatan yang sudah tersebar di seluruh basis kode (`unqualified`,
+`unresolved-type`) akibat qmllint dijalankan tanpa jalur impor build — `LocalGridMissionStats.qml`
+yang baru menghasilkan pola peringatan yang sama persis dengan panel tetangganya
+(`LocalGridReadout.qml`), bukan yang baru. `pre-commit run --files` atas tujuh berkas yang disentuh:
+seluruh hook yang relevan hijau — termasuk **Lint QML files** (qmllint dengan jalur impor build,
+nol peringatan), `typos`, `QTest::ignoreMessage`, dan `qWait` berdelay tetap. Tiga hook merah,
+tidak satu pun karena isi perubahan ini: `clang-format` (22.1.8 lokal vs 22.1.5 yang di-pin)
+menandai seluruh berkas tes dari baris pertama termasuk kode yang tidak disentuh, sesuai catatan
+di §5 bahwa basis repo memang belum format-clean; `cmake-format` dan `cmake-lint` mati dengan
+`ModuleNotFoundError: No module named 'yaml'` dari environment hook-nya sendiri (python3.14) —
+gagal sebelum sempat membaca berkas mana pun. Plan view tidak disentuh
+(`MissionController.*` dan `PlanView.qml` tidak ada di diff), sesuai E5.

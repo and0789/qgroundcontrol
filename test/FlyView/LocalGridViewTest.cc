@@ -1,6 +1,7 @@
 #include "LocalGridViewTest.h"
 
 #include <cmath>
+#include <iterator>
 
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QtNumeric>
@@ -58,6 +59,7 @@ constexpr const char *kMissionControllerStub = R"(
         // -- a plain object would take the value silently and the move would never appear.
         property Component itemComponent: Component {
             QtObject {
+                id: missionItem
                 property bool specifiesCoordinate: true
                 // False for every plain waypoint and landing: the aircraft is routed through them,
                 // so a leg is measured through them and the polyline is drawn through them. True for
@@ -89,6 +91,38 @@ constexpr const char *kMissionControllerStub = R"(
                     property bool available: true
                     property bool specifyFlightSpeed: false
                     property Fact flightSpeed: Fact { }
+                }
+
+                // Where the command tree publishes an item's editable parameters, in the two lists
+                // it sorts them into: the plain ones here, the ones it marks advanced beside them.
+                // Only the shape the grid reads off a QmlObjectListModel -- a count and a get().
+                //
+                // Left empty for tests to fill through publishItemFact rather than filled per
+                // command here. Which parameters a command publishes, which list each falls into,
+                // and what each is named are the command tree's answers; a stand-in that made them
+                // up would be asserting its own guess instead of the search the grid does.
+                property QtObject textFieldFacts: QtObject {
+                    property var facts: []
+                    readonly property int count: facts.length
+                    function get(index) { return facts[index] }
+                }
+
+                property QtObject textFieldFactsAdvanced: QtObject {
+                    property var facts: []
+                    readonly property int count: facts.length
+                    function get(index) { return facts[index] }
+                }
+
+                // What the real item does when its command is written: the command tree decides all
+                // over again what the item is, and a CONDITION_YAW carries no position at all. It
+                // matters here because the grid inserts one as a plain item and gives it its command
+                // afterwards -- an item left claiming a coordinate would be drawn on the grid and
+                // measured into the leg beside it.
+                onCommandChanged: {
+                    if (command === 115) {
+                        specifiesCoordinate = false
+                        commandName = "Wait for Yaw"
+                    }
                 }
             }
         }
@@ -162,6 +196,16 @@ constexpr const char *kMissionControllerStub = R"(
         /// binds it into a real: left off, it reads as undefined and QML says so on every rebuild --
         /// which the runner counts as a failure.
         property real progressPct: 0
+
+        /// What MissionController's flight-status calculation produces. Real properties on the real
+        /// controller and not gated behind the plan view, so the grid's totals panel reads them in
+        /// flight -- which means the stand-in has to carry them or every binding on them reads
+        /// undefined and QML says so on each rebuild.
+        ///
+        /// Set by tests rather than derived from the items here: reproducing QGC's own distance and
+        /// speed integration would be testing a copy of it instead of what the grid does with it.
+        property real missionTotalDistance: 0
+        property real missionTime: 0
 
         readonly property var visualItems: QtObject {
             readonly property int count: items.length
@@ -246,6 +290,11 @@ constexpr const char *kMissionControllerStub = R"(
             const item = itemComponent.createObject(null, {
                 coordinate: takeoffLandsOn ? takeoffLandsOn : coordinate,
                 sequenceNumber: _nextAutoSequenceNumber,
+                // MAV_CMD_NAV_TAKEOFF. Carried like the landing's own command below, because a
+                // takeoff's param1 is not a waypoint's: anything that decides what to offer per item
+                // reads the command, and an item left claiming to be a waypoint would be offered a
+                // waypoint's fields.
+                command: 22,
                 isTakeoffItem: true,
                 commandName: "Takeoff",
                 specifiesCoordinate: takeoffSpecifiesCoordinate
@@ -418,6 +467,36 @@ QObject *stubSpeedSection(QObject *stub, int index)
         makeFactDouble(section->property("flightSpeed").value<QObject *>());
     }
     return section;
+}
+
+/// Publishes a parameter on a stub item under the name the command tree gives it, and hands the
+/// fact back so a test can set what the operator would type into it.
+///
+/// Named from here because a Fact publishes its name read-only: the real one takes it from the
+/// metadata the command tree built it with, which is exactly the path a stub item does not have. The
+/// name is the whole point of the exercise -- the grid finds this parameter by asking for it by
+/// name, because the position it sits at in the list depends on which other parameters this firmware
+/// and vehicle publish.
+///     @param listName "textFieldFacts" or "textFieldFactsAdvanced", which is the tree's own choice
+///            per parameter: NAV_WAYPOINT's Hold is marked advanced, CONDITION_YAW's Heading is not
+Fact *publishItemFact(QObject *item, const char *listName, const QString &factName)
+{
+    if (!item) {
+        return nullptr;
+    }
+
+    QObject *const list = item->property(listName).value<QObject *>();
+    if (!list) {
+        return nullptr;
+    }
+
+    // Parented to the item, so the fact lives exactly as long as the item publishing it and no
+    // engine ever takes ownership of it
+    auto *const fact = new Fact(0, factName, FactMetaData::valueTypeDouble, item);
+    QVariantList facts = list->property("facts").toList();
+    facts.append(QVariant::fromValue(static_cast<QObject *>(fact)));
+    list->setProperty("facts", facts);
+    return fact;
 }
 
 /// Feeds the vehicle an EKF_STATUS_REPORT, the message ArduPilot reports estimator health in
@@ -3853,4 +3932,312 @@ void LocalGridViewTest::_insertBetween_splitsTheLegAtItsMidpoint_test()
                                       Q_RETURN_ARG(QVariant, refused),
                                       Q_ARG(QVariant, lastVisualIndex)));
     QVERIFY2(!refused.toBool(), "there is no leg after the plan's last item to split");
+}
+
+/// The one thing a waypoint says besides where it is that an ArduCopter ever reads. Its mission
+/// records are 15 bytes and cannot carry a delay and a radius both, so for every non-Plane build the
+/// firmware keeps param1 and drops the rest -- and what it keeps it flies, holding the aircraft on
+/// the point until the seconds run out. Offering it on a takeoff or a landing would be offering a
+/// number those commands spend on something else entirely.
+void LocalGridViewTest::_holdTimeIsOfferedOnWaypointsAlone_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // A takeoff of its own accord, then the waypoint, then a landing: one plan holding all three of
+    // the commands this grid places
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added), Q_ARG(QVariant, QStringLiteral("land")),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 3);
+    QObject *const takeoff = items.at(0).value<QObject *>();
+    QObject *const waypoint = items.at(1).value<QObject *>();
+    QObject *const landing = items.at(2).value<QObject *>();
+    QVERIFY(takeoff && waypoint && landing);
+
+    // Published the way the command tree publishes it for an ArduPilot multirotor: in the advanced
+    // list, because the tree marks this parameter advanced, and named for its label
+    Fact *const hold = publishItemFact(waypoint, "textFieldFactsAdvanced", QStringLiteral("Hold"));
+    QVERIFY(hold);
+
+    // And the same name published on the takeoff, which is not the reason the field stays off it.
+    // The guard is the command: param1 on a takeoff is a different quantity, and a grid that went by
+    // the name alone would edit it the moment some firmware's tree happened to label it this way.
+    QVERIFY(publishItemFact(takeoff, "textFieldFactsAdvanced", QStringLiteral("Hold")));
+
+    // The item's own fact, not a copy of it: what the operator types into the field is the number
+    // the item carries into the upload
+    QVariant found;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointHoldTimeFact", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, found), Q_ARG(QVariant, 1)));
+    QCOMPARE(found.value<QObject *>(), static_cast<QObject *>(hold));
+
+    for (const int index : { 0, 2 }) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointHoldTimeFact", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, found), Q_ARG(QVariant, index)));
+        QVERIFY2(found.value<QObject *>() == nullptr,
+                 "a takeoff and a landing spend param1 on something else, so there is no wait to offer");
+    }
+
+    // And an index that names no item at all answers the same way rather than reaching into the
+    // list past its end -- the panel asks with whatever index it last held, and a plan can shrink
+    // under it
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointHoldTimeFact", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, found), Q_ARG(QVariant, 99)));
+    QVERIFY(found.value<QObject *>() == nullptr);
+}
+
+/// The totals panel has to add the waits itself: QGC's own flight-status calculation has no hold
+/// term in it at all. A sum that missed one would show a plan as taking less time than it takes,
+/// which is the number a battery is sized against.
+void LocalGridViewTest::_holdSecondsAreSummedAcrossThePlan_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    for (const double north : { 10.0, 20.0 }) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, added),
+                                          Q_ARG(QVariant, north), Q_ARG(QVariant, 0.0)));
+        QVERIFY(added.toBool());
+    }
+
+    QVERIFY2(qFuzzyIsNull(gridView->property("missionHoldSeconds").toDouble()),
+             "a plan whose waypoints publish no wait waits for nothing");
+
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 3);
+    Fact *const firstHold = publishItemFact(items.at(1).value<QObject *>(), "textFieldFactsAdvanced",
+                                            QStringLiteral("Hold"));
+    Fact *const secondHold = publishItemFact(items.at(2).value<QObject *>(), "textFieldFactsAdvanced",
+                                             QStringLiteral("Hold"));
+    QVERIFY(firstHold && secondHold);
+
+    firstHold->setRawValue(5.0);
+    secondHold->setRawValue(7.0);
+
+    // Waited on rather than read once: the sum is a binding over every hold in the plan, and it is
+    // re-run when one of them changes rather than at the moment it is asked for
+    QTRY_COMPARE_WITH_TIMEOUT(gridView->property("missionHoldSeconds").toDouble(), 12.0,
+                              TestTimeout::shortMs());
+
+    // Editing one re-runs the sum. This is the whole reason the totals are a binding and not a
+    // number worked out once when the panel was built.
+    secondHold->setRawValue(20.0);
+    QTRY_COMPARE_WITH_TIMEOUT(gridView->property("missionHoldSeconds").toDouble(), 25.0,
+                              TestTimeout::shortMs());
+}
+
+/// What the panel shows, end to end: the distance QGC measured for the plan the grid drew, and a
+/// duration that is the flying plus every wait. The duration is the one number here that does not
+/// come from QGC as-is, and a quietly short one is worse than none at all.
+void LocalGridViewTest::_planTotalsIncludeTheWaits_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    QObject *const stats = gridItem->findChild<QObject *>(QStringLiteral("localGrid_missionStats"));
+    QVERIFY2(stats, "the totals panel has to be findable, or nothing below is testing it");
+    QVERIFY2(!stats->property("visible").toBool(),
+             "an empty plan has no totals, and a panel saying so is chrome over the grid");
+
+    // A 20 m square, which is the pattern this grid exists to fly: four corners, four legs of 20 m
+    constexpr double kCornerNorths[] = { 20.0, 20.0, 0.0, 0.0 };
+    constexpr double kCornerEasts[]  = {  0.0, 20.0, 20.0, 0.0 };
+    QVariant added;
+    for (size_t i = 0; i < std::size(kCornerNorths); i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, added),
+                                          Q_ARG(QVariant, kCornerNorths[i]), Q_ARG(QVariant, kCornerEasts[i])));
+        QVERIFY(added.toBool());
+    }
+
+    // What MissionController's own flight-status pass produces for that square at the 1 m/s this
+    // grid writes onto every waypoint it places. Set here rather than derived, because reproducing
+    // QGC's distance and speed integration would test a copy of it instead of what the grid does
+    // with what it produced.
+    stub->setProperty("missionTotalDistance", 80.0);
+    stub->setProperty("missionTime", 80.0);
+
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 5);
+    Fact *const hold = publishItemFact(items.at(1).value<QObject *>(), "textFieldFactsAdvanced",
+                                       QStringLiteral("Hold"));
+    QVERIFY(hold);
+    hold->setRawValue(10.0);
+
+    QTRY_COMPARE_WITH_TIMEOUT(gridView->property("missionHoldSeconds").toDouble(), 10.0,
+                              TestTimeout::shortMs());
+    QCOMPARE(gridView->property("missionDistanceMetres").toDouble(), 80.0);
+    QVERIFY2(qFuzzyCompare(gridView->property("missionDurationSeconds").toDouble(), 90.0),
+             "the plan takes the flying plus the waiting, and the calculator counts only the flying");
+    QVERIFY(gridView->property("missionStatsKnown").toBool());
+
+    QTRY_VERIFY_WITH_TIMEOUT(stats->property("visible").toBool(), TestTimeout::shortMs());
+
+    // Opened by hand: it is folded by default, because a total is read while a pattern is being
+    // built and not again while it is flown
+    stats->setProperty("collapsed", false);
+
+    QObject *const distanceLabel = gridItem->findChild<QObject *>(QStringLiteral("localGrid_missionStatsDistance"));
+    QObject *const durationLabel = gridItem->findChild<QObject *>(QStringLiteral("localGrid_missionStatsDuration"));
+    QVERIFY(distanceLabel && durationLabel);
+
+    // Asked of the same transform the panel asks, so this holds whichever distance units the
+    // application is set to rather than only the metric ones the numbers above are in
+    QObject *const transform = gridView->property("gridTransform").value<QObject *>();
+    QVERIFY(transform);
+    QVariant display;
+    QVERIFY(QMetaObject::invokeMethod(transform, "toDisplay", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, display), Q_ARG(QVariant, 80.0)));
+    const QString expectedDistance = QStringLiteral("%1 %2")
+                                         .arg(qRound(display.toDouble()))
+                                         .arg(transform->property("displayUnits").toString());
+    QCOMPARE(distanceLabel->property("text").toString(), expectedDistance);
+
+    // Minutes and seconds, which is the form a plan is compared against a battery in
+    QCOMPARE(durationLabel->property("text").toString(), QStringLiteral("1:30"));
+
+    // And the panel says where the extra time came from, because it is the one line on it that QGC
+    // did not produce
+    QObject *const holdNote = gridItem->findChild<QObject *>(QStringLiteral("localGrid_missionStatsHoldNote"));
+    QVERIFY(holdNote);
+    QVERIFY(holdNote->property("visible").toBool());
+    QVERIFY(holdNote->property("text").toString().contains(QStringLiteral("10")));
+}
+
+/// Without GNSS the compass is the only absolute reference the aircraft has, and which way the nose
+/// points while a leg is flown is part of what the flow sensor measures. A waypoint cannot say it --
+/// the 15-byte record drops param4 the same way it drops the radius -- so the heading is an item of
+/// its own, and an item that carries no position must not be drawn on the grid or measured into the
+/// leg beside it.
+void LocalGridViewTest::_yawItemCarriesAHeadingAndNoLeg_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QCOMPARE(gridView->property("commandConditionYaw").toInt(), static_cast<int>(MAV_CMD_CONDITION_YAW));
+
+    QVariant added;
+    for (const double east : { 0.0, 20.0 }) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, added),
+                                          Q_ARG(QVariant, 20.0), Q_ARG(QVariant, east)));
+        QVERIFY(added.toBool());
+    }
+
+    // Placed on the first of the two waypoints, so the yaw item lands between them rather than at
+    // the end of the plan
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 1)));
+
+    QVariant inserted;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "insertConditionYaw", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, inserted), Q_ARG(QVariant, 270.0)));
+    QVERIFY(inserted.toBool());
+
+    QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 4);
+    QObject *const yawItem = items.at(2).value<QObject *>();
+    QVERIFY2(yawItem, "the yaw item belongs right after the waypoint it was placed on");
+    QCOMPARE(yawItem->property("command").toInt(), static_cast<int>(MAV_CMD_CONDITION_YAW));
+
+    // Listed, because it is an item the aircraft will fly, and nowhere on the grid, because it has
+    // no position to be drawn at
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 4);
+    const QJSValue yawPoint = points.property(2);
+    QCOMPARE(yawPoint.property(QStringLiteral("index")).toInt(), 2);
+    QVERIFY2(!yawPoint.property(QStringLiteral("onGrid")).toBool(),
+             "an item with no coordinate has nowhere on the grid to be drawn");
+    QVERIFY2(!yawPoint.property(QStringLiteral("flyThrough")).toBool(),
+             "the aircraft is not routed through a heading");
+
+    // The leg reaching the last waypoint is still measured from the waypoint before the yaw item,
+    // not from the yaw item -- the same path a cancelled ROI takes through this view
+    QVariant legStart;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "legStartFor", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, legStart), Q_ARG(QVariant, 3)));
+    const QVariantMap legStartMap = legStart.toMap();
+    QVERIFY(qAbs(legStartMap.value(QStringLiteral("north")).toDouble() - 20.0) < 0.05);
+    QVERIFY(qAbs(legStartMap.value(QStringLiteral("east")).toDouble()) < 0.05);
+
+    // The heading itself, once the command tree publishes the parameter for the command the item was
+    // just given -- which is what the real controller does as the command is written, and what the
+    // stand-in leaves to the test so that the name comes from the tree rather than from the stub
+    Fact *const heading = publishItemFact(yawItem, "textFieldFacts", QStringLiteral("Heading"));
+    QVERIFY(heading);
+
+    QVariant applied;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, applied),
+                                      Q_ARG(QVariant, 2), Q_ARG(QVariant, 270.0)));
+    QVERIFY(applied.toBool());
+
+    QVariant read;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, read), Q_ARG(QVariant, 2)));
+    QVERIFY2(qAbs(read.toDouble() - 270.0) < 1e-9,
+             "the grid speaks the aircraft's convention: 270 is west, not an angle out of range");
+
+    // Past the wrap is an ordinary thing to type while rotating a pattern, and 370 means 10
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, applied),
+                                      Q_ARG(QVariant, 2), Q_ARG(QVariant, 370.0)));
+    QVERIFY(applied.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, read), Q_ARG(QVariant, 2)));
+    QVERIFY(qAbs(read.toDouble() - 10.0) < 1e-9);
+
+    // And a plain waypoint has no heading of its own to read or write, whatever it publishes
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, read), Q_ARG(QVariant, 1)));
+    QVERIFY(qIsNaN(read.toDouble()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, applied),
+                                      Q_ARG(QVariant, 1), Q_ARG(QVariant, 90.0)));
+    QVERIFY2(!applied.toBool(), "a waypoint's own yaw never reaches the aircraft, so it is not offered one");
 }

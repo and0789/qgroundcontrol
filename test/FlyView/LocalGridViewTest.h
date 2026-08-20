@@ -91,6 +91,12 @@ private slots:
     void _duplicateItem_copiesPositionAltitudeAndSpeed_test();
     void _insertBetween_splitsTheLegAtItsMidpoint_test();
 
+    // Bagian 4: item detail and plan totals (Lampiran E)
+    void _holdTimeIsOfferedOnWaypointsAlone_test();
+    void _holdSecondsAreSummedAcrossThePlan_test();
+    void _planTotalsIncludeTheWaits_test();
+    void _yawItemCarriesAHeadingAndNoLeg_test();
+
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);
 };

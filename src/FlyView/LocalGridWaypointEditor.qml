@@ -94,6 +94,17 @@ ColumnLayout {
     /// Whether this item's altitude is worth showing, and worth taking an edit
     readonly property bool _altitudeIsOwn: (_altitudeFact !== null) && !_isLanding
 
+    /// How long the aircraft waits here, in seconds. Null for every item that has no such wait --
+    /// which is every item but a plain waypoint.
+    readonly property var _holdTimeFact: (gridView && (visualItemIndex >= 0))
+                                            ? gridView.waypointHoldTimeFact(visualItemIndex)
+                                            : null
+
+    /// True for an item whose whole job is to point the nose somewhere
+    readonly property bool _isYawCommand: (gridView && (visualItemIndex >= 0))
+                                            ? gridView.waypointIsYawCommand(visualItemIndex)
+                                            : false
+
     /// Whether the fields that move this item are any use on it
     readonly property bool _movable: _placedOnGrid && !_isPinned
 
@@ -183,6 +194,14 @@ ColumnLayout {
     /// property from one leaves the fields a step behind -- which showed as bearing and distance
     /// reading NaN while north and east beside them were already correct.
     function _refillFields() {
+        // Filled ahead of the guard below, not after it. A yaw item carries no coordinate at all, so
+        // north and east are NaN on it and the early return would leave this field permanently
+        // blank -- on the one item type it is the only field for.
+        if (_isYawCommand && !yawHeadingRow.field.activeFocus) {
+            const heading = gridView.waypointYawHeading(visualItemIndex)
+            yawHeadingRow.field.text = isNaN(heading) ? "" : heading.toFixed(1)
+        }
+
         if (!_transform || isNaN(north) || isNaN(east)) {
             return
         }
@@ -488,6 +507,71 @@ ColumnLayout {
         visible:            _root._speedSection !== null
         text:               qsTr("Set this speed on all")
         onClicked:          _root._applySpeedToAll()
+    }
+
+    // The one waypoint parameter besides position and altitude that reaches an ArduCopter. Its
+    // mission records are 15 bytes and cannot carry both a delay and a radius, so the firmware keeps
+    // this and drops the rest -- which is why there is no acceptance radius field beside it.
+    RowLayout {
+        Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
+        visible:            _root._holdTimeFact !== null
+        spacing:            ScreenTools.defaultFontPixelWidth
+
+        QGCLabel {
+            Layout.preferredWidth:  _root._labelWidth
+            horizontalAlignment:    Text.AlignRight
+            font.pointSize:         ScreenTools.smallFontPointSize
+            text:                   qsTr("Hold")
+        }
+
+        FactTextField {
+            objectName:             "localGrid_waypointHoldField"
+            Layout.preferredWidth:  _root._fieldWidth
+            font.pointSize:         ScreenTools.smallFontPointSize
+            fact:                   _root._holdTimeFact
+        }
+    }
+
+    // Why there is no acceptance radius here, said once beside the field that replaced it. An
+    // operator who has planned in the Plan view has seen that field and will look for it; left
+    // unsaid, its absence reads as something this panel failed to load rather than as a number the
+    // aircraft was never going to read.
+    QGCLabel {
+        objectName:             "localGrid_acceptanceRadiusNote"
+        Layout.maximumWidth:    _root._textWidth
+        visible:                _root._holdTimeFact !== null
+        wrapMode:               Text.WordWrap
+        font.pointSize:         ScreenTools.smallFontPointSize
+        color:                  qgcPal.colorGrey
+        text:                   qsTr("A wait of 0 flies straight through. There is no acceptance radius here: ArduPilot's mission records have no room for one beside the wait, so the firmware drops it and uses the WP_RADIUS_M parameter for every waypoint alike.")
+    }
+
+    // The only field a yaw item has, and the reason it exists. Its own row rather than the generic
+    // fact field: the command tree describes this parameter as -180..180 while ArduPilot reads it as
+    // 0-360 from north, and this grid speaks the aircraft's convention everywhere else -- a bearing
+    // of 270 has to be typeable here without the field calling it out of range.
+    EntryRow {
+        id:         yawHeadingRow
+        objectName: "localGrid_yawHeadingRow"
+        visible:    _root._isYawCommand
+        label:      qsTr("Heading")
+        units:      "°"
+        onApplied: {
+            const heading = parseFloat(yawHeadingRow.field.text)
+            if (!isNaN(heading)) {
+                _root.gridView.setWaypointYawHeading(_root.visualItemIndex, heading)
+            }
+            _root._refillFields()
+        }
+    }
+
+    QGCLabel {
+        Layout.maximumWidth:    _root._textWidth
+        visible:                _root._isYawCommand
+        wrapMode:               Text.WordWrap
+        font.pointSize:         ScreenTools.smallFontPointSize
+        color:                  qgcPal.colorGrey
+        text:                   qsTr("Clockwise from north, held from here until another yaw item changes it. Which way the nose points is part of what a leg measures: the flow sensor reads movement in the airframe's own frame.")
     }
 
     QGCLabel {

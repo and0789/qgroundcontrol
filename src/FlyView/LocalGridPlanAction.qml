@@ -137,6 +137,25 @@ ToolStripAction {
                 }
             }
 
+            // Points the nose and holds it. A waypoint's own yaw parameter never reaches an
+            // ArduCopter -- the 15-byte mission record has no room for it, and QGC's command tree
+            // already removes it for these vehicles -- so heading has to be an item of its own.
+            //
+            // Inserted at the vehicle's current heading rather than at zero: the operator is almost
+            // always fixing the nose where it already points, and a yaw item that silently means
+            // "turn to north" is one that swings the airframe on the first run.
+            QGCButton {
+                objectName:         "localGrid_planYawButton"
+                Layout.fillWidth:   true
+                text:               qsTr("Hold heading")
+                enabled:            _root._canPlace && _root._mc && (_root._mc.flyThroughCommandsAllowed === true)
+                onClicked: {
+                    const heading = _root.gridView.vehicleHeadingDegrees
+                    _root.gridView.insertConditionYaw(isNaN(heading) ? 0 : heading)
+                    dropPanel.hide()
+                }
+            }
+
             QGCLabel {
                 objectName:             "localGrid_planCannotPlaceReason"
                 Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 24

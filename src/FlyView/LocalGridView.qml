@@ -709,6 +709,66 @@ Item {
         return true
     }
 
+    /// Points the nose at a heading and holds it there for the rest of the plan.
+    ///
+    /// The way an ArduCopter mission actually sets yaw. A waypoint's own yaw parameter does not
+    /// reach the aircraft -- the same 15-byte record that drops the acceptance radius drops param4
+    /// with it, and QGC's own command tree already removes it for ArduPilot multirotors -- so the
+    /// heading has to be its own item.
+    ///
+    /// Worth more here than on a map. Without GNSS the compass is the only absolute reference the
+    /// aircraft has, and the optical flow sensor measures in the airframe's frame: which way the
+    /// nose points while a leg is flown is part of what is being measured, not a detail of how it
+    /// looks. A pattern flown nose-forward and the same pattern flown nose-fixed are two different
+    /// experiments.
+    ///     @param headingDegrees clockwise from north, the same convention the whole grid uses
+    ///     @return true if it was added
+    function insertConditionYaw(headingDegrees) {
+        if (!canPlaceWaypoints || !missionController || isNaN(headingDegrees)) {
+            return false
+        }
+
+        // Carries no coordinate at all, so it takes the same route a cancelled ROI does: inserted as
+        // a plain item and then given its command, since MissionController offers no insertion of
+        // its own for it.
+        const item = missionController.insertSimpleMissionItem(QtPositioning.coordinate(),
+                                                               _insertIndex(), true /* makeCurrentItem */)
+        if (!item) {
+            return false
+        }
+
+        item.command = commandConditionYaw
+        setWaypointYawHeading(missionController.currentPlanViewVIIndex, headingDegrees)
+        return true
+    }
+
+    /// @return the fact the command tree gave this name on an item, or null when it has none.
+    ///
+    /// Both lists are searched because which one a parameter lands in is the command tree's own
+    /// choice -- Hold is marked advanced and Heading is not -- and that is not something this grid
+    /// should encode. Searched by name rather than by position: the lists hold only the parameters
+    /// shown for this firmware and vehicle, so an index would point at a different parameter the
+    /// moment that set changes.
+    function _namedFactOf(item, factName) {
+        if (!item) {
+            return null
+        }
+        const lists = [ item.textFieldFacts, item.textFieldFactsAdvanced ]
+        for (var i = 0; i < lists.length; i++) {
+            const facts = lists[i]
+            if (!facts) {
+                continue
+            }
+            for (var j = 0; j < facts.count; j++) {
+                const fact = facts.get(j)
+                if (fact && (fact.name === factName)) {
+                    return fact
+                }
+            }
+        }
+        return null
+    }
+
     /// Adds a copy of an item right after it: same command, position, altitude and, when the item
     /// carries one, the same per-leg speed. Not offered for the takeoff, which only a plan's first
     /// item may be, and not for an item with no real coordinate to copy -- a cancelled ROI, which
@@ -983,6 +1043,119 @@ Item {
         return item.speedSection
     }
 
+    /// The label QGC's command tree gives NAV_WAYPOINT's param1. Matched by name rather than by
+    /// position in the list below, because that list is filtered -- only the params the command tree
+    /// marks as shown for this firmware and vehicle appear in it, so an index would point at a
+    /// different parameter the moment that set changes. A rename upstream makes the field disappear,
+    /// which is the safe direction to fail: the alternative is silently editing the wrong parameter.
+    readonly property string _holdTimeFactName: "Hold"
+
+    /// How long the aircraft waits on a waypoint before flying on, in seconds, or null for an item
+    /// that has no such wait.
+    ///
+    /// The one NAV_WAYPOINT parameter that survives the trip to an ArduCopter. Its mission records
+    /// are 15 bytes and cannot hold both a delay and a radius, so for every non-Plane build the
+    /// firmware keeps param1 and discards the rest -- AP_Mission.cpp says so in as many words at the
+    /// case that decodes this command. What it keeps is flown: do_nav_wp copies it into
+    /// loiter_time_max and verify_nav_wp holds the aircraft there until it runs out.
+    ///
+    /// Worth having beyond parity with the Plan view: hovering in one place is how drift is measured
+    /// without a distance term in it, which is a different experiment from flying a pattern and one
+    /// this grid could not express at all until now.
+    ///
+    /// Offered only on plain waypoints. A takeoff and a landing both use param1 for something else
+    /// entirely, and the command tree names it accordingly -- so the name match below finds nothing
+    /// on them, which is the answer that keeps the field off items it would not mean anything on.
+    function waypointHoldTimeFact(index) {
+        if (waypointCommand(index) !== commandWaypoint) {
+            return null
+        }
+        return _namedFactOf(_visualItemAt(index), _holdTimeFactName)
+    }
+
+    /// True for an item whose whole job is to point the nose somewhere
+    function waypointIsYawCommand(index) {
+        return waypointCommand(index) === commandConditionYaw
+    }
+
+    /// The heading a yaw item holds, in degrees clockwise from north, or NaN for any other item.
+    ///
+    /// Read and written through the grid's own field rather than bound straight to the fact, because
+    /// QGC's command tree describes this parameter as -180..180 while ArduPilot reads it as 0-360
+    /// with zero at north (AP_Mission stores param1 into yaw.angle_deg, and Copter hands it to
+    /// set_fixed_yaw_rad unchanged). The grid speaks the aircraft's convention everywhere else, so a
+    /// bearing of 270 has to be typeable here without the field calling it out of range.
+    function waypointYawHeading(index) {
+        const fact = waypointIsYawCommand(index) ? _namedFactOf(_visualItemAt(index), "Heading") : null
+        return fact ? fact.rawValue : NaN
+    }
+
+    /// @return true if the heading was set
+    function setWaypointYawHeading(index, headingDegrees) {
+        if (isNaN(headingDegrees) || !waypointIsYawCommand(index)) {
+            return false
+        }
+        const fact = _namedFactOf(_visualItemAt(index), "Heading")
+        if (!fact) {
+            return false
+        }
+        // Wrapped rather than refused: 370 means 10, and typing past the wrap is an ordinary thing
+        // to do while rotating a pattern
+        fact.rawValue = ((headingDegrees % 360) + 360) % 360
+        return true
+    }
+
+    /// Every waypoint's wait added together, in seconds. Read by the statistics panel, which has to
+    /// add this itself: QGC's flight-status calculator has no hold term at all, so a plan with waits
+    /// in it would otherwise be reported as taking less time than it takes.
+    readonly property real missionHoldSeconds: _sumHoldSeconds()
+
+    function _sumHoldSeconds() {
+        var total = 0
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            const fact = waypointHoldTimeFact(points[i].index)
+            // rawValue is read inside the loop so this binding depends on every hold in the plan,
+            // and editing one re-runs the sum -- the same reason _findItemsAboveAltitudeLimit does it
+            if (fact && !isNaN(fact.rawValue)) {
+                total += fact.rawValue
+            }
+        }
+        return total
+    }
+
+    /// How far the aircraft flies to complete this plan, in metres.
+    ///
+    /// Taken from MissionController's own flight-status calculation rather than measured across the
+    /// grid's points, so a plan holding items the grid does not draw still measures correctly. That
+    /// calculation runs in the fly view -- it is not one of the passes gated behind !_flyView -- and
+    /// it reads each waypoint's own speed, which is exactly what this grid writes onto every
+    /// waypoint it places. So the numbers describe the plan that was drawn, not a guess from the
+    /// vehicle's parameters.
+    readonly property real missionDistanceMetres: _finiteOrZero(missionController ? missionController.missionTotalDistance
+                                                                                  : 0)
+
+    /// How long the plan takes, in seconds: the flying, plus every wait added on.
+    ///
+    /// The calculator has no hold term of its own, so a plan with waits in it reads short by exactly
+    /// the sum of them. Added here rather than left out, because a duration that is quietly too
+    /// small is worse than one that is missing -- it is the number an operator sizes a battery
+    /// against.
+    readonly property real missionDurationSeconds: _finiteOrZero(missionController ? missionController.missionTime : 0)
+                                                        + missionHoldSeconds
+
+    /// True once the plan holds enough for those two numbers to mean anything
+    readonly property bool missionStatsKnown: (missionPoints.length > 0) && (missionDistanceMetres > 0)
+
+    /// @return the number given, or zero for anything that is not one.
+    ///
+    /// A controller that does not carry a property answers undefined, which is not a number and
+    /// which QML refuses to assign to a real -- reporting it on every rebuild. The same guard the
+    /// click panel already applies to the insert-validity flags, for the same reason.
+    function _finiteOrZero(value) {
+        return (typeof value === "number") && isFinite(value) ? value : 0
+    }
+
     /// Gives every placed waypoint the same speed, and makes each of them say so.
     ///
     /// The companion to setAllWaypointAltitudes, and needed for the same reason: flying one pattern
@@ -1018,9 +1191,10 @@ Item {
     // Written out because MAVLinkEnums exposes no values to QML in this build: moc emits an empty
     // enum list for the generated namespace, so every member of it reads as undefined.
     // LocalGridViewTest pins each number against the MAVLink header.
-    readonly property int commandWaypoint:  16  // MAV_CMD_NAV_WAYPOINT
-    readonly property int commandLand:      21  // MAV_CMD_NAV_LAND
-    readonly property int commandTakeoff:   22  // MAV_CMD_NAV_TAKEOFF
+    readonly property int commandWaypoint:      16  // MAV_CMD_NAV_WAYPOINT
+    readonly property int commandLand:          21  // MAV_CMD_NAV_LAND
+    readonly property int commandTakeoff:       22  // MAV_CMD_NAV_TAKEOFF
+    readonly property int commandConditionYaw: 115  // MAV_CMD_CONDITION_YAW
 
     /// @return the command of a mission item, or -1 for one that does not carry a settable command
     function waypointCommand(index) {
@@ -1796,9 +1970,33 @@ Item {
         // rows tall. The limit is what is left down to the bottom edge: past that the rows scroll
         // inside the panel rather than the panel running off the view.
         height:                 implicitHeight
+        // Room is reserved for the totals panel below by measuring it rather than by guessing a
+        // number tall enough -- the same correction Bagian 1 made to the scale bar. missionStats
+        // sizes itself from its own contents and never from this panel, so reading its height here
+        // closes no loop.
         maximumHeight:          Math.max(collapsedHeight,
                                          _root.height - y - _root._margins
-                                             - _root._inset("bottomEdgeRightInset"))
+                                             - _root._inset("bottomEdgeRightInset")
+                                             - (missionStats.visible ? missionStats.height + _root._margins : 0))
+        z:                      2
+        gridView:               _root
+    }
+
+    /// What the plan costs to fly, under the plan itself. Last in the right-hand column because it
+    /// is read once while a pattern is being built and then not again -- unlike the position above
+    /// it, which is read continuously in flight.
+    LocalGridMissionStats {
+        id:                     missionStats
+        objectName:             "localGrid_missionStats"
+        anchors.right:          parent.right
+        anchors.top:            missionList.bottom
+        anchors.rightMargin:    _root._margins
+        anchors.topMargin:      visible ? _root._margins : 0
+        width:                  missionList.width
+        // Folded on a screen too small to carry every panel open at once, the same rule the other
+        // three follow. Only the starting value: a deliberate unfold is the operator's and is left
+        // alone.
+        Component.onCompleted:  collapsed = _root.compact
         z:                      2
         gridView:               _root
     }
