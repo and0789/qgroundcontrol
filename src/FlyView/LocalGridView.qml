@@ -445,6 +445,15 @@ Item {
     /// waypoint invented from a guessed origin uploads cleanly and flies somewhere else.
     readonly property bool canPlaceWaypoints: originKnown && (missionController !== null) && !planSyncInProgress
 
+    // A transfer that has started will rebuild the plan from the vehicle's copy when it lands, so
+    // whatever is on the undo entry stops describing anything. Dropped as the transfer starts rather
+    // than when it finishes, so the control goes away while the buttons around it do.
+    onPlanSyncInProgressChanged: {
+        if (planSyncInProgress) {
+            _clearUndo()
+        }
+    }
+
     /// Where a new item goes: straight after the item currently selected, or after the end of the
     /// plan when nothing is. The rule the Plan view's own insert strip uses (PlanView.qml's
     /// insertSimpleItemAfterCurrent and its siblings), and the same point every insert-validity flag
@@ -468,6 +477,11 @@ Item {
         if (!canPlaceWaypoints) {
             return false
         }
+
+        // Captured before anything is written, so undo can put the plan back exactly as it was. Both
+        // are needed: one tap can add two items when an empty plan gains its takeoff as well.
+        const insertAt = _insertIndex()
+        const countBefore = _visualItemCount()
 
         // A plan started from nothing is a new pattern, laid out from the origin like every other
         // one. Wherever the last plan had been moved to describes that plan, not this one, and left
@@ -517,6 +531,7 @@ Item {
         // to be done by picking the newest item off the end of the plan (_selectNewestItem), which
         // was correct only while every insert landed at the end -- it is gone along with that
         // assumption.
+        _recordInsertUndo(qsTr("Undo add"), insertAt, countBefore)
         return true
     }
 
@@ -526,6 +541,9 @@ Item {
         if (!canPlaceWaypoints || !_takeoffAllowed()) {
             return false
         }
+
+        const insertAt = _insertIndex()
+        const countBefore = _visualItemCount()
 
         const coordinate = projection.coordinateAt(originCoordinate, 0, 0)
         if (!coordinate.isValid) {
@@ -544,6 +562,7 @@ Item {
         item.coordinate = coordinate
 
         _applyDefaultAltitude(item)
+        _recordInsertUndo(qsTr("Undo takeoff"), insertAt, countBefore)
         return true
     }
 
@@ -583,6 +602,9 @@ Item {
             return false
         }
 
+        const insertAt = _insertIndex()
+        const countBefore = _visualItemCount()
+
         const item = missionController.insertSimpleMissionItem(coordinate, _insertIndex(), true /* makeCurrentItem */)
         if (!item) {
             return false
@@ -592,6 +614,7 @@ Item {
         // Not given the default altitude the waypoints get: a landing is flown at the height of the
         // leg that reaches it, whatever that is, so it takes the altitude of the item before it
         syncLandingAltitudes()
+        _recordInsertUndo(qsTr("Undo landing"), insertAt, countBefore)
         return true
     }
 
@@ -688,12 +711,16 @@ Item {
             return false
         }
 
+        const insertAt = _insertIndex()
+        const countBefore = _visualItemCount()
+
         if (planIsEmpty) {
             resetPlanAnchor()
             insertTakeoffAtOrigin()
         }
 
         missionController.insertROIMissionItem(coordinate, _insertIndex(), true /* makeCurrentItem */)
+        _recordInsertUndo(qsTr("Undo ROI"), insertAt, countBefore)
         return true
     }
 
@@ -705,7 +732,10 @@ Item {
         if (!canPlaceWaypoints || !missionController) {
             return false
         }
-        missionController.insertCancelROIMissionItem(_insertIndex(), true /* makeCurrentItem */)
+        const insertAt = _insertIndex()
+        const countBefore = _visualItemCount()
+        missionController.insertCancelROIMissionItem(insertAt, true /* makeCurrentItem */)
+        _recordInsertUndo(qsTr("Undo cancel ROI"), insertAt, countBefore)
         return true
     }
 
@@ -728,17 +758,21 @@ Item {
             return false
         }
 
+        const insertAt = _insertIndex()
+        const countBefore = _visualItemCount()
+
         // Carries no coordinate at all, so it takes the same route a cancelled ROI does: inserted as
         // a plain item and then given its command, since MissionController offers no insertion of
         // its own for it.
         const item = missionController.insertSimpleMissionItem(QtPositioning.coordinate(),
-                                                               _insertIndex(), true /* makeCurrentItem */)
+                                                               insertAt, true /* makeCurrentItem */)
         if (!item) {
             return false
         }
 
         item.command = commandConditionYaw
         setWaypointYawHeading(missionController.currentPlanViewVIIndex, headingDegrees)
+        _recordInsertUndo(qsTr("Undo heading"), insertAt, countBefore)
         return true
     }
 
@@ -780,6 +814,7 @@ Item {
             return false
         }
 
+        const countBefore = _visualItemCount()
         const command = (item.command !== undefined) ? item.command : commandWaypoint
         var newItem
         if (command === commandLand) {
@@ -807,6 +842,7 @@ Item {
         }
 
         syncLandingAltitudes()
+        _recordInsertUndo(qsTr("Undo duplicate"), index + 1, countBefore)
         return true
     }
 
@@ -880,6 +916,212 @@ Item {
         return false
     }
 
+    // ---- Undo -------------------------------------------------------------------------------
+    //
+    // One level, and only for actions that commit on a single tap or drag with nothing else
+    // guarding them. Clear, Restart, Fly From Here, Download and Upload all go through a
+    // confirmation dialog already (LocalGridMissionActions.qml's _confirm) and are deliberately left
+    // out: an action that has already asked does not also need taking back.
+    //
+    // One level rather than a stack because this controller is a mirror of the vehicle -- it rebuilds
+    // every item when a plan transaction completes -- so any recorded action is only valid until the
+    // next plan arrives. A single entry, dropped aggressively, can be shown to be correct; a stack is
+    // a set of claims about a plan that may no longer exist.
+    //
+    // Entries hold the inverse action rather than a snapshot of the plan. A snapshot built from what
+    // this grid understands would quietly drop anything it does not -- a camera section, a complex
+    // item, a command that arrived from a file -- and restoring it would destroy that without a word.
+
+    /// The one action that can be taken back, as { label, apply }, or null when there is none
+    property var _undoEntry: null
+
+    /// Set while an inverse is running, so the inverse does not record an entry of its own
+    property bool _applyingUndo: false
+
+    /// Set while a whole-plan operation is running, so the per-item writes it makes do not each
+    /// record an entry over the single one the operation itself recorded
+    property bool _batchingUndo: false
+
+    /// True while there is something to take back. The undo control exists only when this is true,
+    /// which is also why it costs nothing against the chrome budget: in the default state there is
+    /// nothing to undo and no control.
+    readonly property bool canUndo: _undoEntry !== null
+
+    /// What would be taken back, said on the control itself. One tap after an accident the operator
+    /// does not necessarily know which action was the last one recorded.
+    readonly property string undoLabel: _undoEntry ? _undoEntry.label : ""
+
+    function _recordUndo(label, apply) {
+        if (_applyingUndo || _batchingUndo) {
+            return
+        }
+        _undoEntry = { label: label, apply: apply }
+    }
+
+    function _clearUndo() {
+        _undoEntry = null
+    }
+
+    /// Takes back the last recorded action.
+    ///     @return true if something was taken back
+    function undoLastAction() {
+        const entry = _undoEntry
+        if (!entry) {
+            return false
+        }
+
+        // Cleared before the inverse runs, not after. The inverse calls the same functions the
+        // original action did, and those record entries -- so leaving it in place would have the
+        // undo overwrite itself with its own mirror image and offer to undo the undo.
+        _undoEntry = null
+        _applyingUndo = true
+        entry.apply()
+        _applyingUndo = false
+        return true
+    }
+
+    /// Records the removal of whatever a single insert just added, so taking it back leaves the plan
+    /// exactly as it was before the tap.
+    ///
+    /// Counted rather than pointed at, because one tap can add more than one item: placing the first
+    /// waypoint of an empty plan puts a takeoff on the origin ahead of it, and an undo that removed
+    /// only the waypoint would leave behind a takeoff the operator never asked for.
+    ///     @param label what to call the action on the control
+    ///     @param firstIndex the insert index the action used
+    ///     @param countBefore how many visual items there were before it ran
+    function _recordInsertUndo(label, firstIndex, countBefore) {
+        const items = missionController ? missionController.visualItems : null
+        if (!items) {
+            return
+        }
+        const added = items.count - countBefore
+        if (added <= 0) {
+            return
+        }
+        _recordUndo(label, () => {
+            // Highest first: removing from the front would shift every index after it, and the
+            // second removal would take out the wrong item.
+            for (var i = added - 1; i >= 0; i--) {
+                if (_visualItemAt(firstIndex + i)) {
+                    missionController.removeVisualItem(firstIndex + i)
+                }
+            }
+            clearWaypointSelection()
+        })
+    }
+
+    /// @return how many visual items the plan holds, including the settings item the grid never draws
+    function _visualItemCount() {
+        const items = missionController ? missionController.visualItems : null
+        return items ? items.count : 0
+    }
+
+    /// Everything about an item that this grid is able to put back, or null for one it cannot.
+    ///
+    /// The boundary is drawn where it can be proved rather than guessed: only the commands this grid
+    /// can itself create, and only while the item carries no camera section that would be lost. An
+    /// item outside that boundary records no undo entry at all, so deleting it simply offers no
+    /// undo -- which is honest, where restoring it as something subtly different would not be.
+    function _describeItemForUndo(index) {
+        const item = _visualItemAt(index)
+        if (!item) {
+            return null
+        }
+
+        const command = waypointCommand(index)
+        const known = [ commandWaypoint, commandLand, commandTakeoff, commandConditionYaw ]
+        if (known.indexOf(command) < 0) {
+            return null
+        }
+        if (item.cameraSection && item.cameraSection.available && item.cameraSection.specifyGimbal) {
+            return null
+        }
+
+        const point = _pointForIndex(index)
+        const altitudeFact = waypointAltitudeFact(index)
+        const speedSection = waypointSpeedSection(index)
+        const holdFact = waypointHoldTimeFact(index)
+
+        return {
+            index:      index,
+            command:    command,
+            north:      point ? point.north : NaN,
+            east:       point ? point.east : NaN,
+            onGrid:     point ? point.onGrid : false,
+            altitude:   altitudeFact ? altitudeFact.rawValue : NaN,
+            speed:      (speedSection && speedSection.specifyFlightSpeed) ? speedSection.flightSpeed.rawValue : NaN,
+            hold:       holdFact ? holdFact.rawValue : NaN,
+            heading:    waypointYawHeading(index)
+        }
+    }
+
+    /// @return the missionPoints entry for a visual item index, or null
+    function _pointForIndex(index) {
+        const points = missionPoints
+        for (var i = 0; i < points.length; i++) {
+            if (points[i].index === index) {
+                return points[i]
+            }
+        }
+        return null
+    }
+
+    /// Puts back an item taken out, from the description recorded before it went
+    function _restoreDescribedItem(described) {
+        if (!described || !missionController) {
+            return
+        }
+
+        // Placed back at the index it came from, so a pattern keeps its order rather than having the
+        // restored item reappear on the end of the route
+        const insertAt = Math.min(described.index, _visualItemCount())
+        var item = null
+
+        if (described.command === commandConditionYaw) {
+            item = missionController.insertSimpleMissionItem(QtPositioning.coordinate(), insertAt, true)
+            if (item) {
+                item.command = commandConditionYaw
+                setWaypointYawHeading(insertAt, described.heading)
+            }
+        } else if (described.command === commandTakeoff) {
+            const originCoord = projection.coordinateAt(originCoordinate, 0, 0)
+            item = missionController.insertTakeoffItem(originCoord, insertAt, true)
+            if (item) {
+                item.coordinate = originCoord
+            }
+        } else {
+            const coordinate = described.onGrid
+                                ? projection.coordinateAt(originCoordinate, described.north, described.east)
+                                : QtPositioning.coordinate()
+            item = missionController.insertSimpleMissionItem(coordinate, insertAt, true)
+            if (item && (described.command !== commandWaypoint)) {
+                item.command = described.command
+            }
+        }
+
+        if (!item) {
+            return
+        }
+
+        if (!isNaN(described.altitude) && item.altitude) {
+            item.altitude.rawValue = described.altitude
+        }
+        if (!isNaN(described.speed)) {
+            const section = waypointSpeedSection(insertAt)
+            if (section) {
+                section.flightSpeed.rawValue = described.speed
+                section.specifyFlightSpeed = true
+            }
+        }
+        if (!isNaN(described.hold)) {
+            const holdFact = waypointHoldTimeFact(insertAt)
+            if (holdFact) {
+                holdFact.rawValue = described.hold
+            }
+        }
+        syncLandingAltitudes()
+    }
+
     /// Set while clearWaypointSelection is putting the controller's current item back at the end of
     /// the plan on purpose. Without this guard the onPlanViewStateChanged handler below would read
     /// that as a fresh selection and re-open the last row's editor immediately after this function
@@ -943,6 +1185,9 @@ Item {
         // clicked.
         function onVisualItemsReset() {
             _root.clearWaypointSelection()
+            // The recorded action describes a plan that no longer exists. Applying its inverse to
+            // the one that just arrived would edit an item it was never about.
+            _root._clearUndo()
         }
     }
 
@@ -953,10 +1198,21 @@ Item {
             return false
         }
 
+        // Described before it goes, while there is still something to read. Null for an item this
+        // grid cannot put back exactly -- those record nothing, so no undo is offered rather than one
+        // that would restore something subtly different.
+        const described = _describeItemForUndo(index)
+
         // Cleared first. Removal renumbers everything after it, so a selection held across the call
         // would name a different waypoint than the one the operator was looking at.
         clearWaypointSelection()
         missionController.removeVisualItem(index)
+
+        if (described) {
+            _recordUndo(qsTr("Undo delete"), () => _restoreDescribedItem(described))
+        } else {
+            _clearUndo()
+        }
         return true
     }
 
@@ -1167,6 +1423,19 @@ Item {
             return 0
         }
 
+        // Recorded for the same reason the altitudes are: one tap, every waypoint, and nothing left
+        // on screen to read the old values back from
+        const previous = []
+        const beforePoints = missionPoints
+        for (var p = 0; p < beforePoints.length; p++) {
+            const beforeSection = waypointSpeedSection(beforePoints[p].index)
+            if (beforeSection) {
+                previous.push({ index:     beforePoints[p].index,
+                                value:     beforeSection.flightSpeed.rawValue,
+                                specified: beforeSection.specifyFlightSpeed })
+            }
+        }
+
         var changed = 0
         const points = missionPoints
         for (var i = 0; i < points.length; i++) {
@@ -1176,6 +1445,18 @@ Item {
                 section.specifyFlightSpeed = true
                 changed++
             }
+        }
+
+        if (changed > 0) {
+            _recordUndo(qsTr("Undo speeds"), () => {
+                for (var j = 0; j < previous.length; j++) {
+                    const restoreSection = waypointSpeedSection(previous[j].index)
+                    if (restoreSection) {
+                        restoreSection.flightSpeed.rawValue = previous[j].value
+                        restoreSection.specifyFlightSpeed = previous[j].specified
+                    }
+                }
+            })
         }
         return changed
     }
@@ -1233,6 +1514,18 @@ Item {
             return 0
         }
 
+        // The altitudes as they stand, before one number replaces all of them. This is the widest
+        // single tap on the grid, and the values it overwrites are not recoverable from anything
+        // still on screen once it has run.
+        const previous = []
+        const beforePoints = missionPoints
+        for (var p = 0; p < beforePoints.length; p++) {
+            const beforeFact = waypointAltitudeFact(beforePoints[p].index)
+            if (beforeFact) {
+                previous.push({ index: beforePoints[p].index, value: beforeFact.rawValue })
+            }
+        }
+
         var changed = 0
         const points = missionPoints
         for (var i = 0; i < points.length; i++) {
@@ -1241,6 +1534,18 @@ Item {
                 fact.rawValue = metres
                 changed++
             }
+        }
+
+        if (changed > 0) {
+            _recordUndo(qsTr("Undo altitudes"), () => {
+                for (var j = 0; j < previous.length; j++) {
+                    const restoreFact = waypointAltitudeFact(previous[j].index)
+                    if (restoreFact) {
+                        restoreFact.rawValue = previous[j].value
+                    }
+                }
+                syncLandingAltitudes()
+            })
         }
         return changed
     }
@@ -1310,6 +1615,15 @@ Item {
             return false
         }
 
+        // Read before the write, so undo has somewhere to put it back. Suppressed while a whole-plan
+        // operation is running: offsetMission and rotatePlan call this once per item and record a
+        // single entry of their own, and per-item entries would overwrite it with the last leg of
+        // the loop -- an undo that straightened one waypoint out of a turned pattern.
+        const before = _pointForIndex(index)
+        if (before && before.onGrid) {
+            _recordUndo(qsTr("Undo move"), () => moveWaypointTo(index, before.north, before.east))
+        }
+
         item.coordinate = coordinate
         return true
     }
@@ -1332,6 +1646,12 @@ Item {
             return 0
         }
 
+        // One entry for the whole operation, not one per item. The flag stops the per-item writes
+        // below from each recording their own and leaving the last leg of the loop as the only thing
+        // undo knew about.
+        const wasBatching = _batchingUndo
+        _batchingUndo = true
+
         // Walked over a snapshot taken before the first write. missionPoints is a binding on the
         // items' coordinates, so it is rebuilt the moment one of them moves -- and an offset applied
         // to a list that recomputes underneath it would move the second item by the first item's
@@ -1346,6 +1666,13 @@ Item {
             if (moveWaypointTo(point.index, point.north + northMetres, point.east + eastMetres)) {
                 moved++
             }
+        }
+
+        _batchingUndo = wasBatching
+        if (moved > 0) {
+            // The exact inverse: shifting back by the negation puts every item on the offsets it
+            // came from, with no rounding of its own to accumulate.
+            _recordUndo(qsTr("Undo move plan"), () => offsetMission(-northMetres, -eastMetres))
         }
         return moved
     }
@@ -1534,6 +1861,10 @@ Item {
             return 0
         }
 
+        // One entry for the whole turn, the same reason offsetMission does it
+        const wasBatching = _batchingUndo
+        _batchingUndo = true
+
         const radians = degreesCW * Math.PI / 180
         const cos = Math.cos(radians)
         const sin = Math.sin(radians)
@@ -1579,6 +1910,16 @@ Item {
                                pivotEast  + (east * cos)  + (north * sin))) {
                 turned++
             }
+        }
+
+        _batchingUndo = wasBatching
+        if (turned > 0) {
+            // Turned back through the negated angle about the same anchor. Exact for the yaw items,
+            // whose heading is set rather than accumulated; for the positions it is a second rotation
+            // rather than a stored copy, so a pattern turned and turned back lands within floating
+            // point of where it started rather than exactly on it -- far below the metre this grid
+            // reads out, and far below what the aircraft flies to.
+            _recordUndo(qsTr("Undo turn plan"), () => rotatePlan(-degreesCW))
         }
         return turned
     }
@@ -2250,6 +2591,29 @@ Item {
     readonly property real safeAreaTop:    topEdgeOffset + _inset("topEdgeLeftInset")
     readonly property real safeAreaRight:  _inset("rightEdgeBottomInset")
     readonly property real safeAreaBottom: _inset("bottomEdgeLeftInset")
+
+    /// Takes back the last thing that happened, and exists only while there is something to take
+    /// back.
+    ///
+    /// Standing on its own rather than inside the mission panel, because that panel starts folded on
+    /// a small screen and a folded undo is not an undo -- this has to be one tap from the accident
+    /// that needs it. Costing nothing when idle is what lets it stand alone: with no recorded action
+    /// there is no control, so the chrome budget the responsive tests hold the view to is untouched
+    /// in the default state they measure.
+    ///
+    /// Centred along the bottom, which is the one edge no standing panel of this view claims -- the
+    /// scale bar and mission actions are on the left of it, the plan column is up the right.
+    QGCButton {
+        id:                     undoButton
+        objectName:             "localGrid_undoButton"
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom:         parent.bottom
+        anchors.bottomMargin:   _root._margins + _root._inset("bottomEdgeCenterInset")
+        z:                      3
+        visible:                _root.canUndo
+        text:                   _root.undoLabel
+        onClicked:              _root.undoLastAction()
+    }
 
     // Bottom left, the corner the waypoint panel gave up when it moved under the readout. Declared
     // first so missionActions below can sit its bottom margin on this panel's actual measured height

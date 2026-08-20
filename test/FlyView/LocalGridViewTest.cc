@@ -4479,3 +4479,344 @@ void LocalGridViewTest::_patternShapingIsRefusedWhileArmedOrSyncing_test()
     vehicle()->setArmedShowError(false);
     QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
 }
+
+// ============================================================================
+// Bagian 6b: undo (Lampiran H)
+// ============================================================================
+
+/// Placing is one tap with nothing guarding it, so it has to be takeable back -- and taking it back
+/// has to leave the plan exactly as it was, not merely one item shorter.
+///
+/// The empty-plan case is the one that makes this more than a removal: the first waypoint of a plan
+/// also brings a takeoff in with it, and an undo that removed only the waypoint would leave behind a
+/// takeoff nobody asked for.
+void LocalGridViewTest::_undoTakesBackAPlacement_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVERIFY2(!gridView->property("canUndo").toBool(), "nothing has happened yet, so there is nothing to undo");
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(placed.toBool());
+
+    // The takeoff came along with it
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY2(gridView->property("canUndo").toBool(), "a placement must be takeable back");
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY2(points.property(QStringLiteral("length")).toInt() == 0,
+             "undoing the first placement must take the takeoff it brought with it as well");
+    QVERIFY2(!gridView->property("canUndo").toBool(),
+             "the control must go once its action has been taken back");
+}
+
+/// The accident 6a reduced but could not remove: a waypoint selected on a touch screen and nudged in
+/// the process. Undo has to put it back exactly, not approximately.
+void LocalGridViewTest::_undoPutsAMovedWaypointBack_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 5.0)));
+    QVERIFY(placed.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int waypointIndex = points.property(1).property(QStringLiteral("index")).toInt();
+
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointTo", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, waypointIndex),
+                                      Q_ARG(QVariant, 31.0), Q_ARG(QVariant, -9.0)));
+    QVERIFY(moved.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 31.0) < 0.05);
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY2(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05,
+             "the waypoint must come back to the offsets it was moved from");
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("east")).toNumber() - 5.0) < 0.05);
+}
+
+/// A delete is one tap on a trash icon with no confirmation behind it, and it takes the altitude,
+/// the speed and the wait typed into the item along with the item itself. Undo has to bring all of
+/// it back -- restoring the position alone would hand back something that looks right and flies
+/// differently.
+void LocalGridViewTest::_undoRestoresADeletedItemWholly_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 12.0), Q_ARG(QVariant, -4.0)));
+    QVERIFY(placed.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int waypointIndex = points.property(1).property(QStringLiteral("index")).toInt();
+
+    // Given the fields an operator would have typed before losing it. Whole numbers because the
+    // stub's Facts default to int32 -- the values matter, their precision does not.
+    QObject *const item = stub->property("lastInsertedItem").value<QObject *>();
+    QVERIFY(item);
+    QObject *const altitude = item->property("altitude").value<QObject *>();
+    QVERIFY(altitude);
+    altitude->setProperty("rawValue", 6.0);
+    Fact *const hold = publishItemFact(item, "textFieldFactsAdvanced", QStringLiteral("Hold"));
+    QVERIFY(hold);
+    hold->setRawValue(9.0);
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, waypointIndex)));
+    QVariant removed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "removeSelectedWaypoint", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, removed)));
+    QVERIFY(removed.toBool());
+    QCOMPARE(gridView->property("missionPoints").value<QJSValue>().property(QStringLiteral("length")).toInt(), 1);
+    QVERIFY2(gridView->property("canUndo").toBool(), "a delete with no confirmation behind it must be takeable back");
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY2(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 12.0) < 0.05,
+             "the restored item must come back where it was");
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("east")).toNumber() + 4.0) < 0.05);
+
+    const int restoredIndex = points.property(1).property(QStringLiteral("index")).toInt();
+    QVariant altitudeFactValue;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointAltitudeFact", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, altitudeFactValue),
+                                      Q_ARG(QVariant, restoredIndex)));
+    QObject *const restoredAltitude = altitudeFactValue.value<QObject *>();
+    QVERIFY2(restoredAltitude, "the restored item carries no altitude at all");
+    QVERIFY2(qFuzzyCompare(restoredAltitude->property("rawValue").toDouble(), 6.0),
+             "the altitude typed into the item must come back with it");
+}
+
+/// Turning the whole pattern is one tap that moves every item. Undo turns it back through the same
+/// angle about the same anchor, which is the inverse rather than a stored copy -- so the check is
+/// that every offset lands back where it started.
+void LocalGridViewTest::_undoTurnsThePatternBack_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    const double north[] = {20.0, 20.0};
+    const double east[]  = {0.0, 20.0};
+    for (int i = 0; i < 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, north[i]), Q_ARG(QVariant, east[i])));
+        QVERIFY(placed.toBool());
+    }
+
+    QVariant turned;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QVERIFY2(turned.toInt() > 0, "the pattern never turned");
+    QVERIFY2(gridView->property("canUndo").toBool(), "turning the plan must be takeable back");
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    for (int i = 0; i < 2; i++) {
+        const QJSValue point = points.property(i + 1);
+        QVERIFY2(qAbs(point.property(QStringLiteral("north")).toNumber() - north[i]) < 0.05,
+                 "every item must come back to the offsets the turn moved it from");
+        QVERIFY(qAbs(point.property(QStringLiteral("east")).toNumber() - east[i]) < 0.05);
+    }
+}
+
+/// "Set this altitude on all" is the widest single tap on the grid: one number replaces every
+/// altitude in the plan, and none of the old ones are readable from anything left on screen.
+void LocalGridViewTest::_undoRestoresTheAltitudesOneTapReplaced_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    for (int i = 0; i < 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, 10.0 * (i + 1)), Q_ARG(QVariant, 0.0)));
+        QVERIFY(placed.toBool());
+    }
+
+    // Two different altitudes, so a restore that simply writes one number everywhere would show up
+    const QJSValue before = gridView->property("missionPoints").value<QJSValue>();
+    const int firstIndex  = before.property(1).property(QStringLiteral("index")).toInt();
+    const int secondIndex = before.property(2).property(QStringLiteral("index")).toInt();
+
+    const auto altitudeOf = [&gridView](int index) -> QObject * {
+        QVariant value;
+        if (!QMetaObject::invokeMethod(gridView.get(), "waypointAltitudeFact", Qt::DirectConnection,
+                                       Q_RETURN_ARG(QVariant, value), Q_ARG(QVariant, index))) {
+            return nullptr;
+        }
+        return value.value<QObject *>();
+    };
+
+    QObject *const firstAltitude = altitudeOf(firstIndex);
+    QObject *const secondAltitude = altitudeOf(secondIndex);
+    QVERIFY(firstAltitude);
+    QVERIFY(secondAltitude);
+    firstAltitude->setProperty("rawValue", 4.0);
+    secondAltitude->setProperty("rawValue", 7.0);
+
+    QVariant changed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointAltitudes", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, 9.0)));
+    QVERIFY(changed.toInt() > 0);
+    QCOMPARE(altitudeOf(firstIndex)->property("rawValue").toDouble(), 9.0);
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    QVERIFY2(qFuzzyCompare(altitudeOf(firstIndex)->property("rawValue").toDouble(), 4.0),
+             "each item must get its own altitude back, not a single shared one");
+    QVERIFY2(qFuzzyCompare(altitudeOf(secondIndex)->property("rawValue").toDouble(), 7.0),
+             "each item must get its own altitude back, not a single shared one");
+}
+
+/// The fly view's controller is a mirror of the vehicle: a completed transfer rebuilds every item.
+/// A recorded action describes the plan that was there before that, so applying its inverse
+/// afterwards would edit an item it was never about.
+void LocalGridViewTest::_undoIsDroppedWhenThePlanArrivesFromTheVehicle_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(placed.toBool());
+    QVERIFY(gridView->property("canUndo").toBool());
+
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "visualItemsReset", Qt::DirectConnection));
+
+    QVERIFY2(!gridView->property("canUndo").toBool(),
+             "an action describing the previous plan must not survive the arrival of a new one");
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY2(!undone.toBool(), "there must be nothing left to take back");
+}
+
+/// One level, deliberately. Two actions then one undo takes back the second and offers nothing
+/// further -- a stack of claims about a plan the vehicle may already have replaced is what this
+/// avoids.
+void LocalGridViewTest::_undoRemembersOnlyTheLastAction_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    for (int i = 0; i < 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, 10.0 * (i + 1)), Q_ARG(QVariant, 0.0)));
+        QVERIFY(placed.toBool());
+    }
+    // takeoff plus two waypoints
+    QCOMPARE(gridView->property("missionPoints").value<QJSValue>().property(QStringLiteral("length")).toInt(), 3);
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    // Only the second placement went; the first waypoint and its takeoff stay
+    QCOMPARE(gridView->property("missionPoints").value<QJSValue>().property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY2(!gridView->property("canUndo").toBool(),
+             "one level means the first placement is not offered up after the second is taken back");
+}

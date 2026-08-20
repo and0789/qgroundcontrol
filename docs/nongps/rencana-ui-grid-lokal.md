@@ -1,6 +1,6 @@
 # Rencana Pembenahan UI Local Grid: Responsif, Sentuh, dan Paritas Pembuatan Misi
 
-Status: Bagian 0–5a dan 6a selesai; 6b lalu 7 berikutnya; 5b/5c ditunda dan terhalang • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
+Status: Bagian 0–5a dan 6 selesai; 7 berikutnya; 5b/5c ditunda dan terhalang • Disusun 20 Agustus 2026 • Branch `feat/nongps-hud-overlay`
 
 Dokumen ini menjawab tiga keluhan konkret: panel-panel di Local Grid saling bertabrakan dan tertutup
 fitur lain di layar mobile, pembuatan waypoint di mode grid jauh lebih miskin dibanding halaman Plan,
@@ -234,13 +234,18 @@ dengan mengembalikan offsetnya sementara, lalu hijau setelah dikembalikan. Suite
 Catatan lingkungan: sapuan sebelumnya sempat gagal di `giveTheVehicleAnOrigin` karena disk mesin
 penuh (sisa 237 MB), bukan karena perubahan ini — hijau lagi begitu ruang dibebaskan.
 
-### Bagian 6b — Urungkan
+### Bagian 6b — Urungkan ✅ SELESAI (20 Agustus 2026)
 
 | | |
 |---|---|
-| **Isi** | Urungkan untuk penempatan, geser, dan penghapusan terakhir. Ikon hapus baris naik ke ambang sentuh bersamanya (G1). |
-| **Selesai bila** | Tes menegaskan tiap aksi yang masuk riwayat bisa dikembalikan, dan yang tidak masuk memang sengaja |
-| **Model** | **Opus 5** lalu **Sonnet 5** — yang perlu diputuskan: apa saja yang masuk riwayat dan sedalam apa |
+| **Isi** | Satu tingkat undo untuk tujuh aksi satu-ketukan; kontrol mengambang yang hanya ada saat ada yang bisa diurungkan; ikon hapus baris naik ke ambang sentuh bersamanya (G1). |
+| **Keluaran** | `LocalGridView.qml`, `LocalGridMissionItemRow.qml`, `LocalGridViewTest.{h,cc}` |
+| **Model** | **Opus 5** — keputusannya di Lampiran H, penerapannya di sesi yang sama |
+
+**Verifikasi:** tujuh tes baru, dan ketujuhnya **dibuktikan merah dulu** dengan menonaktifkan
+`_recordUndo` sementara lalu menghitung kegagalannya. Suite terkait 15/15 lulus. Anggaran chrome tidak
+disentuh — kontrol undo tidak ada pada keadaan bawaan yang diukur tes anggaran, karena pada keadaan
+itu memang tidak ada yang bisa diurungkan.
 
 ### Bagian 7 — Urut ulang item (opsional, paling akhir)
 
@@ -285,7 +290,7 @@ perintah tersendiri yang ditagih terpisah.
 | 5b — Editor poligon | `opus` | **xhigh** | Desain baru di frame lokal, bukan peniruan. Ditunda: nilainya bergantung pada 5c dibuka lebih dulu |
 | 5c — Survey lokal | `opus` | **xhigh** | Terhalang: item kompleks tidak dibangun ulang saat plan datang dari kendaraan, jadi survey tidak selamat satu round-trip |
 | 6a — Poles layar sentuh | `sonnet` | **low** — **✅ selesai** | Perkiraan tepat, dan G0 memangkasnya lebih kecil lagi: `QGCMouseArea` sudah menangani ambang sentuh, jadi hanya satu kontrol yang meleset |
-| 6b — Urungkan | `opus` **lalu** `sonnet` | **high** lalu **medium** | Yang perlu diputuskan: apa saja yang masuk riwayat dan berapa dalam. Penerapannya sesudah itu sepele |
+| 6b — Urungkan | `opus` | **high** — **✅ selesai** | Yang perlu diputuskan ternyata bukan kedalaman tapi **batasnya**: aksi yang sudah punya dialog konfirmasi tidak masuk riwayat. Penerapannya sesudah itu memang sepele |
 | 7 — Urut ulang (opsional) | `opus` | **high** | Menyentuh `QmlObjectListModel` yang juga dipakai halaman Plan; salah di sini merusak Plan view |
 
 ### Dari mana penghematan sebenarnya datang
@@ -1480,3 +1485,114 @@ baru. `pre-commit` atas berkas yang
 disentuh: semua hijau kecuali `clang-format`, yang menandai seluruh berkas tes dari baris pertama
 karena versi lokal berbeda dari yang di-pin (lihat §5). `PlanView.qml` dan `MissionController.*`
 tidak disentuh.
+
+---
+
+## Lampiran H — Briefing Eksekusi Bagian 6b (Urungkan)
+
+### H0 — Apa yang masuk riwayat: aturan satu-ketukan
+
+Grid ini sudah punya gerbang untuk aksi yang mahal: `_confirm()` di `LocalGridMissionActions.qml:97`
+membungkus Clear (`:134`), Start From The Beginning (`:270`), Fly From Here (`:308`), Download
+(`:326`) dan Upload (`:389`). Semuanya menanyakan dulu.
+
+Maka garisnya bukan "aksi mana yang penting", melainkan **aksi mana yang sudah dijaga**:
+
+> Aksi yang sudah lewat dialog konfirmasi **tidak** masuk riwayat — ia sudah punya penjaganya.
+> Aksi yang jadi hanya dengan satu ketukan atau satu seretan, tanpa penjaga apa pun, **masuk**.
+
+| Masuk riwayat | Kenapa |
+|---|---|
+| Menaruh waypoint (panel klik, senjata aktif, tekan-lama) | Satu ketukan, langsung jadi |
+| Menggeser waypoint (seret atau ketik) | Satu seretan; justru kegagalan yang 6a kurangi tapi tidak hilangkan |
+| Menghapus item | Satu ketukan pada ikon tong sampah, tanpa konfirmasi |
+| Duplikat, sisip-di-antara | Satu ketukan |
+| Putar / geser seluruh misi | Satu ketukan, dan mengubah **setiap** item |
+| "Set this altitude on all" / "Set this speed on all" | Satu ketukan dengan jangkauan terluas di seluruh grid |
+
+| Tidak masuk | Kenapa |
+|---|---|
+| Clear, Restart, Fly From Here, Download, Upload | Sudah dikonfirmasi |
+| Ketik altitude/speed/hold/heading pada satu item | Disengaja, dan nilai lamanya masih terbaca di field yang sama |
+
+### H1 — Sedalam apa: satu tingkat
+
+Rencana menyebut "penempatan/geser **terakhir**", dan itu ditepati. Alasan yang lebih kuat daripada
+sekadar mengikuti kata-katanya: pengendali misi di fly view adalah **cermin kendaraan**, dan ia
+membangun ulang seluruh itemnya setiap satu transaksi plan selesai. Setiap entri riwayat karena itu
+hanya sah sampai plan berikutnya tiba. Satu entri yang dibatalkan dengan agresif bisa dibuktikan
+benar; sebuah tumpukan adalah sekumpulan klaim tentang plan yang mungkin sudah tidak ada.
+
+### H2 — Bentuk penyimpanan: aksi kebalikan, bukan snapshot
+
+Dua jalur snapshot ditolak, dengan alasan terukur:
+
+- **Snapshot dari sisi QML atas apa yang grid ketahui** — diam-diam membuang apa pun di luar
+  kosakata grid (camera section, item kompleks, perintah dari berkas). Memulihkan plan begini
+  merusak data tanpa bilang apa-apa.
+- **Snapshot JSON lewat `MissionController::save`/`load`** — lengkap dan tidak merusak, tapi keduanya
+  bukan `Q_INVOKABLE` (`MissionController.h:235-236`) jadi butuh tambahan C++ pada kode bersama; dan
+  `PlanMasterController` hanya menerbitkan save/load **berbasis berkas** ke QML
+  (`PlanMasterController.h:86,94`). Menulis berkas tiap kali satu waypoint ditaruh adalah bentuk yang
+  salah — dan mesin ini baru saja membuktikan ruang disk bukan barang gratis.
+
+**Dipilih:** tiap entri adalah aksi kebalikan yang dicatat pada saat aksinya dilakukan. Semua aksi di
+H0 punya kebalikan yang eksak dan murah, kecuali satu:
+
+| Aksi | Kebalikannya |
+|---|---|
+| taruh / duplikat / sisip-di-antara | hapus item itu |
+| geser | kembalikan ke north/east yang dicatat |
+| putar / geser misi | putar / geser dengan negasinya |
+| set-altitude-on-all / set-speed-on-all | kembalikan nilai per item yang dicatat sebelumnya |
+| hapus | bangun ulang dari deskripsi yang dicatat sebelumnya |
+
+Hapus satu-satunya yang membangun ulang, dan ia hanya membangun ulang apa yang grid **bisa** jelaskan
+seluruhnya: perintah, north/east, altitude beserta frame-nya, speed section, hold.
+
+**Item yang tidak bisa dijelaskan seluruhnya tidak masuk riwayat saat dihapus** — dan kontrol undo
+tidak muncul untuknya, alih-alih menawarkan pemulihan yang akan kembali berbeda dari aslinya. Batasnya
+dibuat tegas dan mudah diuji: hanya perintah yang grid sendiri bisa buat (waypoint, takeoff, land,
+ROI, cancel ROI, condition yaw), dan hanya bila item itu tidak membawa camera section yang aktif.
+
+### H3 — Pembatalan riwayat (pelajaran Bagian 3)
+
+Entri dibuang saat:
+
+- **`visualItemsReset`** — plan tiba utuh dari kendaraan. Sinyal yang sama yang sudah membersihkan
+  seleksi di Bagian 3, dan untuk alasan yang sama: entri itu menjelaskan plan yang sudah tidak ada.
+- **`planSyncInProgress` menjadi true** — sama seperti penempatan ditolak saat itu.
+- **item sasarannya sudah tidak ada** pada indeks yang dicatat.
+
+### H4 — Di mana kontrolnya
+
+Undo harus satu ketukan tepat setelah kecelakaannya, jadi ia tidak boleh berada di dalam panel yang
+terlipat secara bawaan di layar sempit — panel `missionActions` mulai terlipat saat `compact`, dan
+undo yang terlipat bukan undo.
+
+**Keputusan:** kontrol mengambang kecil yang **hanya ada selama ada yang bisa diurungkan**. Biaya
+anggaran chrome nol pada keadaan bawaan yang diukur tes anggaran — karena pada keadaan itu tidak ada
+yang bisa diurungkan dan kontrolnya tidak ada.
+
+Ia juga menyebut apa yang akan diurungkan ("Undo move", "Undo delete"), bukan cuma "Undo": satu
+ketukan setelah sebuah kecelakaan, operator belum tentu tahu aksi mana yang tercatat terakhir.
+
+### H5 — Tes
+
+1. Taruh lalu urungkan: plan kembali seperti semula, dan kontrolnya hilang sesudahnya.
+2. Geser lalu urungkan: waypoint kembali ke offset yang dicatat.
+3. Hapus lalu urungkan: perintah, posisi, altitude, speed dan hold semuanya kembali.
+4. Putar lalu urungkan: offset setiap item kembali.
+5. Set-altitude-on-all lalu urungkan: altitude per item yang tadinya berbeda kembali berbeda.
+6. Plan tiba dari kendaraan: entri dibuang, kontrol tidak ditawarkan.
+7. Satu tingkat saja: dua aksi lalu urungkan hanya membatalkan yang kedua.
+8. Anggaran chrome tidak naik — kontrol tidak ada saat tidak ada yang bisa diurungkan.
+
+### H6 — Selesai bila
+
+- Delapan tes di atas hijau, dan tes 1–3 terbukti merah dulu
+- `LocalGridResponsiveLayoutTest` lulus tanpa anggaran chrome disentuh
+- Ikon hapus baris naik ke ambang sentuh (G1) di bagian yang sama
+- `ctest -R "LocalGrid|SetEstimatorOrigin|NonGps|FlyViewLocalGrid|MissionController"` hijau
+
+---

@@ -103,6 +103,15 @@ private slots:
     void _nudgePlan_movesTheAnchorWithThePattern_test();
     void _patternShapingIsRefusedWhileArmedOrSyncing_test();
 
+    // Bagian 6b: undo (Lampiran H)
+    void _undoTakesBackAPlacement_test();
+    void _undoPutsAMovedWaypointBack_test();
+    void _undoRestoresADeletedItemWholly_test();
+    void _undoTurnsThePatternBack_test();
+    void _undoRestoresTheAltitudesOneTapReplaced_test();
+    void _undoIsDroppedWhenThePlanArrivesFromTheVehicle_test();
+    void _undoRemembersOnlyTheLastAction_test();
+
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);
 };

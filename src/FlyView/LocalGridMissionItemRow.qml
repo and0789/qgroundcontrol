@@ -214,7 +214,12 @@ Rectangle {
                     // waiting for a gloved finger, and the Plan view holds to the same rule.
                     visible:                _root.isCurrentItem
 
+                    // Grown to a full touch target only now that a delete can be taken back. Held at
+                    // icon size through 6a on purpose: making a destructive control easier to hit
+                    // before undo existed would have traded a target that is hard to hit for one
+                    // that is easy to hit by accident, with nothing to undo it.
                     QGCMouseArea {
+                        objectName: "localGrid_rowDeleteTouchArea"
                         fillItem:   parent
                         onClicked:  _root.removeRequested()
                     }
