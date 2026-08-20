@@ -5072,3 +5072,69 @@ void LocalGridViewTest::_undoPutsAReorderedItemBack_test()
     QVERIFY2(qAbs(offsets.at(2) - 20.0) < 0.05, "the plan must come back to the order it was in");
     QVERIFY(qAbs(offsets.at(3) - 30.0) < 0.05);
 }
+
+/// The bug an operator met first: build a plan, and every waypoint after the first became waypoint
+/// one.
+///
+/// setCurrentPlanViewSeqNum finds the item whose *first* sequence number matches what it is handed.
+/// The fly view handed it lastSequenceNumber instead -- in MissionController's own initialisation
+/// and in the grid's clearWaypointSelection, which was written to mirror it. The two are equal only
+/// for an item that occupies one place in the uploaded mission, and every waypoint this grid places
+/// carries a speed, so it is flown as NAV_WAYPOINT followed by DO_CHANGE_SPEED and occupies two.
+///
+/// Nothing matched, the controller was left with no current item, currentPlanViewVIIndex stayed at
+/// -1, and _insertIndex turned that into 0 -- the mission settings item's own slot, in front of the
+/// whole plan.
+///
+/// This went unseen because the stand-in was kinder than the real thing: its items default to
+/// lastSequenceNumber == sequenceNumber, so the lookup always succeeded. The span is set explicitly
+/// here, which is the shape a real speed-carrying waypoint has.
+void LocalGridViewTest::_insertAppendsWhenAnItemSpansTwoSequenceNumbers_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(placed.toBool());
+
+    // The waypoint just placed carries a speed, so it spans two numbers the way the real one does
+    QObject *const firstWaypoint = stub->property("lastInsertedItem").value<QObject *>();
+    QVERIFY(firstWaypoint);
+    firstWaypoint->setProperty("lastSequenceNumber",
+                               firstWaypoint->property("sequenceNumber").toInt() + 1);
+
+    // Clicking bare grid deselects, which is what puts the controller back at the end of the plan --
+    // the path that was handing over the wrong number
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearWaypointSelection", Qt::DirectConnection));
+
+    QVariant insertIndex;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "_insertIndex", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, insertIndex)));
+    QVERIFY2(insertIndex.toInt() != 0,
+             qPrintable(QStringLiteral("an insert must never land on the mission settings item's own "
+                                       "slot; got index %1").arg(insertIndex.toInt())));
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(placed.toBool());
+
+    // takeoff, then 10 north, then 20 north -- in the order they were placed
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    QVERIFY2(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 10.0) < 0.05,
+             "the first waypoint must stay first");
+    QVERIFY2(qAbs(points.property(2).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05,
+             "the second waypoint must land after it, not in front of the whole plan");
+}

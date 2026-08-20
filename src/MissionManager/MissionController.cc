@@ -1555,7 +1555,12 @@ void MissionController::_initAllVisualItems(void)
         const VisualMissionItem *const lastItem = (_visualItems->count() > 0)
                 ? _visualItems->value<VisualMissionItem*>(_visualItems->count() - 1)
                 : nullptr;
-        setCurrentPlanViewSeqNum(lastItem ? lastItem->lastSequenceNumber() : 0, true);
+        // The item's own sequence number rather than its last one. This function matches on
+        // sequenceNumber(), and the two differ for every item that occupies more than one place in
+        // the uploaded mission -- a waypoint carrying a speed is flown as NAV_WAYPOINT followed by
+        // DO_CHANGE_SPEED. Handed the last number, the search below matched nothing and left
+        // _currentPlanViewVIIndex at -1, which reads as "no current item" to everything downstream.
+        setCurrentPlanViewSeqNum(lastItem ? lastItem->sequenceNumber() : 0, true);
     } else {
         setCurrentPlanViewSeqNum(0, true);
     }

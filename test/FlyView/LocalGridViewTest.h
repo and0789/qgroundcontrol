@@ -118,6 +118,9 @@ private slots:
     void _reorderCannotCrossTheTakeoffOrTheEnding_test();
     void _undoPutsAReorderedItemBack_test();
 
+    // Regression: a waypoint carrying a speed spans two mission sequence numbers
+    void _insertAppendsWhenAnItemSpansTwoSequenceNumbers_test();
+
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);
 };

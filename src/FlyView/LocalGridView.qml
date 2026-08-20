@@ -462,8 +462,23 @@ Item {
     /// selectedWaypointIndex on purpose: the two are kept in step by selectWaypoint and
     /// clearWaypointSelection below, but the controller is the one place those flags actually come
     /// from, so asking it directly cannot go out of step with what it just answered.
+    ///
+    /// Never index 0 by accident. Index 0 is the mission settings item's own slot, so an insert
+    /// there puts the new item in front of the plan's home position -- which is what an operator
+    /// sees as "the waypoints are scrambled and item 1 keeps changing", because every new item
+    /// becomes the first one. The controller answers -1 for "no current item", and -1 + 1 is exactly
+    /// that slot, so the arithmetic quietly turned a missing answer into a destructive one.
+    /// Appending is the honest fallback: with nothing current, the end of the plan is where a new
+    /// item belongs anyway.
     function _insertIndex() {
-        return missionController ? (missionController.currentPlanViewVIIndex + 1) : -1
+        if (!missionController) {
+            return -1
+        }
+        const viIndex = missionController.currentPlanViewVIIndex
+        // 0 is a real answer -- it is the mission settings item, and inserting after it puts the new
+        // item at the front of the route, which is where the first item of an empty plan goes. Only
+        // -1 means "no current item at all", and only that becomes an append.
+        return (viIndex >= 0) ? (viIndex + 1) : -1
     }
 
     /// Adds a mission item at a point on the grid, in metres from the origin.
@@ -987,9 +1002,9 @@ Item {
     /// waypoint of an empty plan puts a takeoff on the origin ahead of it, and an undo that removed
     /// only the waypoint would leave behind a takeoff the operator never asked for.
     ///     @param label what to call the action on the control
-    ///     @param firstIndex the insert index the action used
+    ///     @param insertAt the insert index the action used, or -1 when it appended
     ///     @param countBefore how many visual items there were before it ran
-    function _recordInsertUndo(label, firstIndex, countBefore) {
+    function _recordInsertUndo(label, insertAt, countBefore) {
         const items = missionController ? missionController.visualItems : null
         if (!items) {
             return
@@ -998,6 +1013,12 @@ Item {
         if (added <= 0) {
             return
         }
+
+        // -1 means the insert appended, so the new items are the ones past where the plan used to
+        // end. Taken from the count rather than from the index, because -1 is not a position and
+        // walking back from it removes the wrong rows -- or none at all.
+        const firstIndex = (insertAt < 0) ? countBefore : insertAt
+
         _recordUndo(label, () => {
             // Highest first: removing from the front would shift every index after it, and the
             // second removal would take out the wrong item.
@@ -1155,8 +1176,14 @@ Item {
         }
         const items = missionController.visualItems
         const lastItem = (items && (items.count > 0)) ? items.get(items.count - 1) : null
+        // sequenceNumber, not lastSequenceNumber. setCurrentPlanViewSeqNum finds the item whose
+        // *first* sequence number matches, and the two differ for every item that occupies more than
+        // one place in the uploaded mission -- which is every waypoint this grid places, since each
+        // one carries a speed and so is flown as NAV_WAYPOINT followed by DO_CHANGE_SPEED. Handing
+        // over the last number matched nothing, left the controller with no current item at all, and
+        // sent the next insert to the front of the plan.
         _revertingSelectionToEndOfPlan = true
-        missionController.setCurrentPlanViewSeqNum(lastItem ? lastItem.lastSequenceNumber : 0, true)
+        missionController.setCurrentPlanViewSeqNum(lastItem ? lastItem.sequenceNumber : 0, true)
         _revertingSelectionToEndOfPlan = false
     }
 
