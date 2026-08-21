@@ -53,6 +53,13 @@ FlightMap {
 
     onPipModeChanged: _adjustMapZoomForPipMode()
 
+    // Takes the initial position from the setting and, by assigning center
+    // imperatively, drops the declarative binding above. Left in place that binding
+    // feeds onCenterChanged straight back into flightMapPosition and QML reports a
+    // loop. The sync is one-way from here on: the map writes the setting, and reads
+    // it again in onVisibleChanged. Plan View's editorMap does the same thing.
+    Component.onCompleted: center = QGroundControl.flightMapPosition
+
     onVisibleChanged: {
         if (visible) {
             // Synchronize center position with Plan View
