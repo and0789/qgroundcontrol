@@ -153,6 +153,13 @@ Rectangle {
             id:                 headerBlock
             Layout.fillWidth:   true
             implicitHeight:     headerRow.implicitHeight
+            // This panel takes its width from what it holds (see implicitWidth above), and an Item
+            // does not pick up a RowLayout child's width on its own. Left out, the moment the numbers
+            // below were folded away this header -- the only child still contributing anything --
+            // had nothing to contribute either, and the whole panel collapsed to a stub the width of
+            // its chevron: no title, no summary, and nothing left to recognise or aim at to open it
+            // again.
+            implicitWidth:      headerRow.implicitWidth
 
             RowLayout {
                 id:                     headerRow
@@ -171,6 +178,7 @@ Rectangle {
                 }
 
                 QGCLabel {
+                    objectName:         "localGrid_readoutTitle"
                     Layout.alignment:   Qt.AlignVCenter
                     font.pointSize:     ScreenTools.smallFontPointSize
                     font.bold:          true

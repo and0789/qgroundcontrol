@@ -4028,6 +4028,55 @@ void LocalGridViewTest::_thePlanPanelStandsDownWhileArmed_test()
     QVERIFY(shown(QStringLiteral("localGrid_uploadMissionButton")));
 }
 
+/// Folded away, the readout has to stay something an operator can find and aim at. It did not: the
+/// panel is sized from what it holds, and with the numbers hidden the header contributed no width of
+/// its own, so the whole thing collapsed to a stub the width of its chevron -- title gone, summary
+/// gone, and nothing left on the grid to say what the stub was or that pressing it brought the
+/// numbers back.
+void LocalGridViewTest::_theFoldedReadoutStaysWideEnoughToFind_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+
+    QQmlComponent readoutComponent(&gridViewEngine);
+    readoutComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridReadout { }
+    )", QUrl());
+    QVERIFY2(readoutComponent.isReady(), qPrintable(readoutComponent.errorString()));
+
+    const QScopedPointer<QObject> readout(readoutComponent.create());
+    QVERIFY2(readout, qPrintable(readoutComponent.errorString()));
+    readout->setProperty("gridView", QVariant::fromValue(gridView.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, readout.get()));
+
+    auto *const readoutItem = qobject_cast<QQuickItem *>(readout.get());
+    QVERIFY(readoutItem);
+    QQuickItem *const title =
+        collectItemsNamed(readoutItem, QStringLiteral("localGrid_readoutTitle")).value(0);
+    QVERIFY(title);
+
+    // Open first, which is where telemetry leaves it, so the fold below is the operator's own
+    readout->setProperty("collapsed", false);
+    QTRY_VERIFY_WITH_TIMEOUT(title->implicitWidth() > 0, TestTimeout::mediumMs());
+    const qreal openWidth = readoutItem->width();
+    QVERIFY(openWidth > 0);
+
+    readout->setProperty("collapsed", true);
+    QTRY_VERIFY_WITH_TIMEOUT(readoutItem->width() < openWidth, TestTimeout::mediumMs());
+
+    QVERIFY2(readoutItem->width() >= title->implicitWidth(),
+             "the folded panel is narrower than its own name, so there is nothing on the grid to aim at");
+    QVERIFY(title->isVisible());
+}
+
 /// The switch that puts the background notes back is inside the mission list's header, and the whole
 /// of that header is a click target that folds the panel. The header's own mouse area was declared
 /// after the row holding the switch, which puts it on top of the switch: every press meant for the

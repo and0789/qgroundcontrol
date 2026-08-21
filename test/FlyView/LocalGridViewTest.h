@@ -91,6 +91,7 @@ private slots:
     void _rowEditIconsAppearOnlyWhereTheEditIsAllowed_test();
     void _backgroundNotesWaitToBeAskedFor_test();
     void _thePlanPanelStandsDownWhileArmed_test();
+    void _theFoldedReadoutStaysWideEnoughToFind_test();
     void _theHelpSwitchTakesTheTapItIsGiven_test();
     void _planEditMode_dropsTheArmedToolWhenItEnds_test();
     void _planEditMode_endsWhenTheAircraftArms_test();
