@@ -572,6 +572,29 @@ bool QmlUITestBase::scrollIntoView(QQuickItem* item, const QString& flickableObj
         return false;
     }
 
+    // A row whose editor is still resizing keeps dragging the view back: PlanTreeView
+    // calls _scrollToMissionItem() on every height change to keep that editor in
+    // sight, which overwrites whatever contentY the settle loop below writes. The
+    // centre then never holds still for the two passes success requires. Wait for the
+    // view to stop moving on its own first. This is a resize animation rather than a
+    // flick, so `moving` stays false throughout and cannot be used to detect it.
+    {
+        const QPointer<QQuickItem> restTarget(flickable);
+        double previousContentY = qQNaN();
+        int stableCount = 0;
+        (void) waitForCondition(
+            [&] {
+                if (!restTarget) {
+                    return true;
+                }
+                const double now = restTarget->property("contentY").toDouble();
+                stableCount = (now == previousContentY) ? (stableCount + 1) : 0;
+                previousContentY = now;
+                return stableCount >= 2;
+            },
+            TestTimeout::mediumMs(), QStringLiteral("flickable stopped scrolling"));
+    }
+
     // Scroll until the item's centre sits inside the flickable's clickable region
     // and stays there. A single scroll is not enough: expand/collapse reflows and
     // pending polish passes can shift content after contentY is applied (a row that
