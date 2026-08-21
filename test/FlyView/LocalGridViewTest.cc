@@ -3897,6 +3897,63 @@ void LocalGridViewTest::_rowEditIconsAppearOnlyWhereTheEditIsAllowed_test()
              "the row that was closed must have taken its icons with it");
 }
 
+/// The switch that puts the background notes back is inside the mission list's header, and the whole
+/// of that header is a click target that folds the panel. The header's own mouse area was declared
+/// after the row holding the switch, which puts it on top of the switch: every press meant for the
+/// notes folded the panel instead, and there was no way back to them at all.
+///
+/// Pressed rather than set, because setting the fact directly is exactly the path that passed while
+/// the control it belongs to could not be reached.
+void LocalGridViewTest::_theHelpSwitchTakesTheTapItIsGiven_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    Fact *const helpSetting = SettingsManager::instance()->flyViewSettings()->showLocalGridPlanHelp();
+    QVERIFY(helpSetting);
+    helpSetting->setRawValue(false);
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    const auto press = [](QQuickWindow &window, QQuickItem *item) {
+        const QPointF centre = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centre.toPoint());
+    };
+
+    QQmlComponent listComponent(&gridViewEngine);
+    listComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridMissionList { width: 300; height: 600 }
+    )", QUrl());
+    QVERIFY2(listComponent.isReady(), qPrintable(listComponent.errorString()));
+    const QScopedPointer<QObject> list(listComponent.create());
+    QVERIFY2(list, qPrintable(listComponent.errorString()));
+    list->setProperty("gridView", QVariant::fromValue(gridView.get()));
+    list->setProperty("collapsed", false);
+
+    QQuickWindow listWindow;
+    QVERIFY(_showInWindow(listWindow, list.get()));
+
+    auto *const listItem = qobject_cast<QQuickItem *>(list.get());
+    QVERIFY(listItem);
+    QQuickItem *const listToggle =
+        collectItemsNamed(listItem, QStringLiteral("localGrid_missionListHelpToggle")).value(0);
+    QVERIFY(listToggle);
+    QTRY_VERIFY_WITH_TIMEOUT(listToggle->width() > 0, TestTimeout::mediumMs());
+
+    press(listWindow, listToggle);
+    QTRY_VERIFY_WITH_TIMEOUT(helpSetting->rawValue().toBool(), TestTimeout::mediumMs());
+    QVERIFY2(!list->property("collapsed").toBool(), "the press folded the panel instead of answering");
+}
+
 /// The green disc says which item the aircraft is flying to; it does not say what altitude that leg
 /// holds or what speed it is being flown at, and those are inside the row. Following opens it, so
 /// the numbers that matter in the air arrive without the operator hunting for the disc on every leg.

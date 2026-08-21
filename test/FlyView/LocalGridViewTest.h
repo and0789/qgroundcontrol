@@ -90,6 +90,7 @@ private slots:
     void _theListFollowsTheItemBeingFlownTo_test();
     void _rowEditIconsAppearOnlyWhereTheEditIsAllowed_test();
     void _backgroundNotesWaitToBeAskedFor_test();
+    void _theHelpSwitchTakesTheTapItIsGiven_test();
     void _planEditMode_dropsTheArmedToolWhenItEnds_test();
     void _planEditMode_endsWhenTheGridIsHidden_test();
     void _planNeedsTakeoffFirst_clearsOnceTheTakeoffIsPlaced_test();

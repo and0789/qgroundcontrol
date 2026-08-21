@@ -169,6 +169,16 @@ Rectangle {
             Layout.fillWidth:   true
             implicitHeight:     headerRow.implicitHeight
 
+            // Declared before the row rather than after it, so the controls in the row are the ones
+            // on top. A mouse area covering the whole header and declared last takes every press in
+            // it, including the presses meant for the help switch -- which then folded the panel
+            // instead of answering, leaving the notes with no way back on.
+            QGCMouseArea {
+                objectName: "localGrid_missionListHeader"
+                fillItem:   parent
+                onClicked:  _root.collapsed = !_root.collapsed
+            }
+
             RowLayout {
                 id:                     headerRow
                 anchors.left:           parent.left
@@ -227,12 +237,6 @@ Rectangle {
                         onClicked:  _root._helpSetting.rawValue = !_root._helpSetting.rawValue
                     }
                 }
-            }
-
-            QGCMouseArea {
-                objectName: "localGrid_missionListHeader"
-                fillItem:   parent
-                onClicked:  _root.collapsed = !_root.collapsed
             }
         }
 
