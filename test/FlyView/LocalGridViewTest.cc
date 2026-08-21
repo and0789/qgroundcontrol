@@ -3897,6 +3897,61 @@ void LocalGridViewTest::_rowEditIconsAppearOnlyWhereTheEditIsAllowed_test()
              "the row that was closed must have taken its icons with it");
 }
 
+/// Start Mission with the plan mode still on left the tool strip showing the plan's inserts at the
+/// moment the aircraft left the ground. The strip reuses the positions the guided controls sit in --
+/// land and return step aside to make room -- so the operator watching the aircraft climb had a
+/// waypoint insert where the control that ends the flight belongs.
+///
+/// Arming is the line, whatever put the aircraft in the air: Start Mission, Take off, or an arm from
+/// the ground. And the button is held shut for as long as that lasts, so the mode cannot be switched
+/// straight back on over an aircraft that is flying.
+void LocalGridViewTest::_planEditMode_endsWhenTheAircraftArms_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent buttonComponent(&gridViewEngine);
+    buttonComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridPlanAction { }
+    )", QUrl());
+    QVERIFY2(buttonComponent.isReady(), qPrintable(buttonComponent.errorString()));
+    const QScopedPointer<QObject> button(buttonComponent.create());
+    QVERIFY2(button, qPrintable(buttonComponent.errorString()));
+    button->setProperty("gridView", QVariant::fromValue(gridView.get()));
+
+    // In the mode, with a tool in hand, which is where a plan is built from
+    gridView->setProperty("planEditMode", true);
+    gridView->setProperty("armedTool", QStringLiteral("waypoint"));
+    QVERIFY(gridView->property("planEditMode").toBool());
+    QVERIFY(button->property("enabled").toBool());
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+
+    QTRY_VERIFY_WITH_TIMEOUT(!gridView->property("planEditMode").toBool(), TestTimeout::mediumMs());
+    QCOMPARE(gridView->property("armedTool").toString(), QString());
+    QVERIFY2(!button->property("enabled").toBool(),
+             "the mode could be switched straight back on over an aircraft in the air");
+
+    // Back on the ground it is offered again, and it comes back off rather than remembering
+    vehicle()->setArmedShowError(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(button->property("enabled").toBool(), TestTimeout::mediumMs());
+    QVERIFY2(!gridView->property("planEditMode").toBool(),
+             "landing put the operator back in a mode they had not asked to be in");
+}
+
 /// Everything the plan panel holds is work done between flights. Upload is refused outright while the
 /// vehicle is flying a mission, Load and Clear would leave the grid drawing a pattern the aircraft is
 /// not flying, and neither after-flight control can be used in the air at all -- a position

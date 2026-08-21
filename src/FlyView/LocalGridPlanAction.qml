@@ -24,7 +24,10 @@ ToolStripAction {
     text:       qsTr("Plan")
     iconSource: "/res/waypoint.svg"
     visible:    QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
-    enabled:    gridView !== null
+    // Shut while the aircraft is armed. The grid drops the mode itself the moment that happens, and a
+    // button that could switch it straight back on would be offering a strip of plan inserts over an
+    // aircraft in the air -- with the controls that command it standing aside to make room.
+    enabled:    (gridView !== null) && !gridView.vehicleArmed
     checkable:  true
     // Not one of the armed tools, so it does not take part in their exclusive group: arming Waypoint
     // must not switch the mode off underneath it. checked itself is driven from FlyViewToolStrip,

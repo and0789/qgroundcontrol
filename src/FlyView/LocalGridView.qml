@@ -756,6 +756,20 @@ Item {
         }
     }
 
+    // And arming leaves it. Pressing Start Mission or Take off with the mode still on left the strip
+    // showing the plan's inserts at the moment the aircraft left the ground: the buttons that command
+    // it -- land, return -- were the ones standing aside, and the operator watching the aircraft was
+    // one tap away from adding a waypoint instead of ending the flight. The strip goes back to flying
+    // the aircraft, which is what is happening.
+    //
+    // The mode is not offered again until the aircraft is disarmed; LocalGridPlanAction holds its own
+    // button shut on the same condition, so nothing switches on and straight back off.
+    onVehicleArmedChanged: {
+        if (vehicleArmed) {
+            planEditMode = false
+        }
+    }
+
     /// True while a plan being built has no takeoff yet, which is the state the tool strip offers
     /// Take off in and nothing else.
     ///
