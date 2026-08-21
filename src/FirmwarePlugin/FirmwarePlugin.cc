@@ -112,6 +112,18 @@ QString FirmwarePlugin::missionCommandOverrides(QGCMAVLink::VehicleClass_t vehic
     }
 }
 
+bool FirmwarePlugin::navigatingWithoutGNSS(const Vehicle *vehicle) const
+{
+    if (!vehicle) {
+        return false;
+    }
+
+    // Without a firmware-specific way to ask the estimator what it is using, the presence of a GPS
+    // is the only signal available. It is a weak one -- it cannot tell a GPS the estimator ignores
+    // from one it navigates by -- so plugins that can read their estimator's sources override this.
+    return !static_cast<bool>(vehicle->sensorsPresentBits() & MAV_SYS_STATUS_SENSOR_GPS);
+}
+
 void FirmwarePlugin::setGuidedMode(Vehicle *vehicle, bool guidedMode) const
 {
     Q_UNUSED(vehicle);
@@ -174,6 +186,46 @@ void FirmwarePlugin::guidedModeChangeHeading(Vehicle *vehicle, const QGeoCoordin
 {
     Q_UNUSED(vehicle);
     QGC::showAppMessage(guided_mode_not_supported_by_vehicle);
+}
+
+bool FirmwarePlugin::guidedModeROI(Vehicle *vehicle, const QGeoCoordinate &roiCenterCoord, double relativeAltitudeMeters) const
+{
+    // MAVLink spec path: firmware honors the frame in the command
+    _sendROICommand(vehicle, roiCenterCoord, MAV_FRAME_GLOBAL_RELATIVE_ALT, static_cast<float>(relativeAltitudeMeters));
+    return true;
+}
+
+void FirmwarePlugin::_sendROICommand(Vehicle *vehicle, const QGeoCoordinate &coord, MAV_FRAME frame, float altitude) const
+{
+    qCDebug(FirmwarePluginLog) << "_sendROICommand: lat" << coord.latitude() << "lon" << coord.longitude()
+                               << "frame" << frame << "altitude" << altitude;
+
+    if (vehicle->capabilityBits() & MAV_PROTOCOL_CAPABILITY_COMMAND_INT) {
+        vehicle->sendMavCommandInt(
+            vehicle->defaultComponentId(),
+            MAV_CMD_DO_SET_ROI_LOCATION,
+            frame,
+            true,                           // show error if fails
+            static_cast<float>(qQNaN()),
+            static_cast<float>(qQNaN()),
+            static_cast<float>(qQNaN()),
+            static_cast<float>(qQNaN()),
+            coord.latitude(),
+            coord.longitude(),
+            altitude);
+    } else {
+        vehicle->sendMavCommand(
+            vehicle->defaultComponentId(),
+            MAV_CMD_DO_SET_ROI_LOCATION,
+            true,                           // show error if fails
+            static_cast<float>(qQNaN()),
+            static_cast<float>(qQNaN()),
+            static_cast<float>(qQNaN()),
+            static_cast<float>(qQNaN()),
+            static_cast<float>(coord.latitude()),
+            static_cast<float>(coord.longitude()),
+            altitude);
+    }
 }
 
 void FirmwarePlugin::startTakeoff(Vehicle*) const

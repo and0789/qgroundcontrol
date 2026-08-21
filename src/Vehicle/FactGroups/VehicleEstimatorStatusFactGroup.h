@@ -54,6 +54,11 @@ public:
     void handleMessage(Vehicle *vehicle, const mavlink_message_t &message) final;
 
 private:
+    /// ESTIMATOR_STATUS, the common dialect message PX4 sends
+    void _handleEstimatorStatus(const mavlink_message_t &message);
+    /// EKF_STATUS_REPORT, the ardupilotmega message ArduPilot sends in its place
+    void _handleEkfStatusReport(const mavlink_message_t &message);
+
     Fact _goodAttitudeEstimateFact = Fact(0, QStringLiteral("goodAttitudeEsimate"), FactMetaData::valueTypeBool);
     Fact _goodHorizVelEstimateFact = Fact(0, QStringLiteral("goodHorizVelEstimate"), FactMetaData::valueTypeBool);
     Fact _goodVertVelEstimateFact = Fact(0, QStringLiteral("goodVertVelEstimate"), FactMetaData::valueTypeBool);

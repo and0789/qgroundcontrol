@@ -12,9 +12,12 @@
 #include "VehicleGPS2FactGroup.h"
 #include "VehicleGPSFactGroup.h"
 #include "VehicleGPSAggregateFactGroup.h"
+#include "VehicleAirspeedSensorFactGroup.h"
 #include "VehicleHygrometerFactGroup.h"
 #include "VehicleLocalPositionFactGroup.h"
 #include "VehicleLocalPositionSetpointFactGroup.h"
+#include "OpticalFlowCalibrator.h"
+#include "VehicleOpticalFlowFactGroup.h"
 #include "VehicleRPMFactGroup.h"
 #include "VehicleSetpointFactGroup.h"
 #include "VehicleTemperatureFactGroup.h"
@@ -25,6 +28,7 @@
 #include "AudioOutput.h"
 #include "AutoPilotPlugin.h"
 #include "ComponentInformationManager.h"
+#include "HealthAndArmingCheckReport.h"
 #include "MAVLinkEventManager.h"
 #include "FirmwarePlugin.h"
 #include "FirmwarePluginManager.h"
@@ -150,6 +154,19 @@ Vehicle::Vehicle(LinkInterface*             link,
     _prearmErrorTimer.setInterval(_prearmErrorTimeoutMSecs);
     _prearmErrorTimer.setSingleShot(true);
 
+    // Whether the vehicle is refusing to arm is derived from three things that each change on their
+    // own schedule, so it is recomputed rather than worked out at the point of use
+    connect(this, &Vehicle::armedChanged,               this, &Vehicle::_updateArmingBlocked);
+    connect(this, &Vehicle::readyToFlyChanged,          this, &Vehicle::_updateArmingBlocked);
+    connect(this, &Vehicle::readyToFlyAvailableChanged, this, &Vehicle::_updateArmingBlocked);
+    connect(this, &Vehicle::prearmErrorChanged,         this, &Vehicle::_updateArmingBlocked);
+
+    // Asks the autopilot why while it is refusing to arm and has not said. Left to itself ArduPilot
+    // volunteers a reason once every thirty seconds, and ARMING_OPTIONS bit 0 switches even that off,
+    // so an operator can otherwise be told nothing for half a minute or nothing at all.
+    _prearmReasonRequestTimer.setInterval(_prearmReasonRequestIntervalMSecs);
+    connect(&_prearmReasonRequestTimer, &QTimer::timeout, this, &Vehicle::requestPrearmCheckReport);
+
     // Command queue timer is managed by MavCommandQueue itself.
 
     // MAV_TYPE_GENERIC is used by unit test for creating a vehicle which doesn't do the connect sequence. This
@@ -230,6 +247,18 @@ void Vehicle::_commonInit(LinkInterface* link)
 
     connect(_firmwarePlugin, &FirmwarePlugin::toolIndicatorsChanged, this, &Vehicle::toolIndicatorsChanged);
 
+    connect(this, &Vehicle::initialConnectComplete, this, &Vehicle::requestEstimatorOrigin);
+
+    // A correction the vehicle took is the operator having stated where it is standing. Hung off the
+    // result rather than off sending, because a correction the estimator refused has moved nothing:
+    // the frame is still where it drifted to, and saying otherwise would clear the one check that
+    // was about to catch it.
+    connect(this, &Vehicle::externalPositionEstimateResult, this, [this](bool accepted, const QString &) {
+        if (accepted) {
+            _setPositionConfirmedSinceLastFlight(true);
+        }
+    });
+
     connect(this, &Vehicle::coordinateChanged,      this, &Vehicle::_updateDistanceHeadingHome);
     connect(this, &Vehicle::coordinateChanged,      this, &Vehicle::_updateDistanceHeadingGCS);
     connect(this, &Vehicle::homePositionChanged,    this, &Vehicle::_updateDistanceHeadingHome);
@@ -292,6 +321,7 @@ void Vehicle::_commonInit(LinkInterface* link)
     _objectAvoidance = new VehicleObjectAvoidance(this, this);
 
     _autotune = _firmwarePlugin->createAutotune(this);
+    _opticalFlowCalibrator = new OpticalFlowCalibrator(this);
 
     // GeoFenceManager needs to access ParameterManager so make sure to create after
     _geoFenceManager = new GeoFenceManager(this);
@@ -319,8 +349,10 @@ void Vehicle::_commonInit(LinkInterface* link)
     _distanceSensorFactGroup        = new VehicleDistanceSensorFactGroup(this);
     _localPositionFactGroup         = new VehicleLocalPositionFactGroup(this);
     _localPositionSetpointFactGroup = new VehicleLocalPositionSetpointFactGroup(this);
+    _opticalFlowFactGroup           = new VehicleOpticalFlowFactGroup(this);
     _estimatorStatusFactGroup       = new VehicleEstimatorStatusFactGroup(this);
     _hygrometerFactGroup            = new VehicleHygrometerFactGroup(this);
+    _airspeedSensorFactGroup        = new VehicleAirspeedSensorFactGroup(this);
     _generatorFactGroup             = new VehicleGeneratorFactGroup(this);
     _efiFactGroup                   = new VehicleEFIFactGroup(this);
     _rpmFactGroup                   = new VehicleRPMFactGroup(this);
@@ -353,8 +385,10 @@ void Vehicle::_commonInit(LinkInterface* link)
     _addFactGroup(_distanceSensorFactGroup,    _distanceSensorFactGroupName);
     _addFactGroup(_localPositionFactGroup,     _localPositionFactGroupName);
     _addFactGroup(_localPositionSetpointFactGroup,_localPositionSetpointFactGroupName);
+    _addFactGroup(_opticalFlowFactGroup,       _opticalFlowFactGroupName);
     _addFactGroup(_estimatorStatusFactGroup,   _estimatorStatusFactGroupName);
     _addFactGroup(_hygrometerFactGroup,        _hygrometerFactGroupName);
+    _addFactGroup(_airspeedSensorFactGroup,    _airspeedSensorFactGroupName);
     _addFactGroup(_generatorFactGroup,         _generatorFactGroupName);
     _addFactGroup(_efiFactGroup,               _efiFactGroupName);
     _addFactGroup(_rpmFactGroup,               _rpmFactGroupName);
@@ -419,9 +453,11 @@ FactGroup* Vehicle::setpointFactGroup()             { return _setpointFactGroup;
 FactGroup* Vehicle::distanceSensorFactGroup()       { return _distanceSensorFactGroup; }
 FactGroup* Vehicle::localPositionFactGroup()        { return _localPositionFactGroup; }
 FactGroup* Vehicle::localPositionSetpointFactGroup() { return _localPositionSetpointFactGroup; }
+FactGroup* Vehicle::opticalFlowFactGroup()          { return _opticalFlowFactGroup; }
 FactGroup* Vehicle::estimatorStatusFactGroup()      { return _estimatorStatusFactGroup; }
 FactGroup* Vehicle::terrainFactGroup()              { return _terrainFactGroup; }
 FactGroup* Vehicle::hygrometerFactGroup()           { return _hygrometerFactGroup; }
+FactGroup* Vehicle::airspeedSensorFactGroup()       { return _airspeedSensorFactGroup; }
 FactGroup* Vehicle::generatorFactGroup()            { return _generatorFactGroup; }
 FactGroup* Vehicle::efiFactGroup()                  { return _efiFactGroup; }
 FactGroup* Vehicle::rpmFactGroup()                  { return _rpmFactGroup; }
@@ -588,6 +624,9 @@ void Vehicle::_mavlinkMessageReceived(LinkInterface* link, mavlink_message_t mes
     switch (message.msgid) {
     case MAVLINK_MSG_ID_HOME_POSITION:
         _handleHomePosition(message);
+        break;
+    case MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN:
+        _handleGpsGlobalOrigin(message);
         break;
     case MAVLINK_MSG_ID_HEARTBEAT:
         _handleHeartbeat(message);
@@ -1098,6 +1137,9 @@ void Vehicle::_handleSysStatus(mavlink_message_t& message)
         _onboardControlSensorsPresent = sysStatus.onboard_control_sensors_present;
         emit sensorsPresentBitsChanged(_onboardControlSensorsPresent);
         emit requiresGpsFixChanged();
+        // Firmware QGC cannot ask about its estimator sources answers navigatingWithoutGNSS from
+        // these bits, so they change the answer too.
+        emit navigatingWithoutGNSSChanged();
     }
     if (_onboardControlSensorsEnabled != sysStatus.onboard_control_sensors_enabled) {
         _onboardControlSensorsEnabled = sysStatus.onboard_control_sensors_enabled;
@@ -1204,6 +1246,81 @@ void Vehicle::_handleHomePosition(mavlink_message_t& message)
                                     homePos.longitude / 10000000.0,
                                     homePos.altitude / 1000.0);
     _setHomePosition(newHomePosition);
+}
+
+void Vehicle::_handleGpsGlobalOrigin(const mavlink_message_t& message)
+{
+    mavlink_gps_global_origin_t origin;
+    mavlink_msg_gps_global_origin_decode(&message, &origin);
+
+    // A vehicle without an origin reports zeros rather than staying silent on a direct request,
+    // so treat that as "no origin" instead of a point in the Gulf of Guinea.
+    QGeoCoordinate newOrigin;
+    if ((origin.latitude != 0) || (origin.longitude != 0)) {
+        newOrigin = QGeoCoordinate(origin.latitude / 1.0e7,
+                                   origin.longitude / 1.0e7,
+                                   origin.altitude / 1.0e3);
+    }
+
+    if (newOrigin != _estimatorOrigin) {
+        _estimatorOrigin = newOrigin;
+        emit estimatorOriginChanged(_estimatorOrigin);
+    }
+}
+
+bool Vehicle::navigatingWithoutGNSS() const
+{
+    return _firmwarePlugin && _firmwarePlugin->navigatingWithoutGNSS(this);
+}
+
+void Vehicle::_watchEstimatorSourceParameters()
+{
+    for (const QString &paramName : _firmwarePlugin->estimatorSourceParameterNames()) {
+        if (!_parameterManager->parameterExists(ParameterManager::defaultComponentId, paramName)) {
+            continue;
+        }
+        // Signal to signal, so the answer is recomputed on demand rather than cached here: the
+        // firmware plugin owns what these values mean, and only it can say what they add up to.
+        Fact *const sourceFact = _parameterManager->getParameter(ParameterManager::defaultComponentId, paramName);
+        (void) connect(sourceFact, &Fact::rawValueChanged, this, &Vehicle::navigatingWithoutGNSSChanged, Qt::UniqueConnection);
+    }
+
+    // The parameters have only now arrived, so anything that asked before this was answered from
+    // the fallback path and may have been told the opposite.
+    emit navigatingWithoutGNSSChanged();
+}
+
+void Vehicle::requestEstimatorOrigin()
+{
+    // Same restraint the component information requests observe: a high latency link cannot afford
+    // an extra round trip for something this optional, and a log replay has nobody to ask.
+    SharedLinkInterfacePtr sharedLink = vehicleLinkManager()->primaryLink().lock();
+    if (!sharedLink || sharedLink->linkConfiguration()->isHighLatency() || sharedLink->isLogReplay()) {
+        return;
+    }
+
+    // Forget what we knew before asking. An autopilot that has lost its origin -- rebooted, or
+    // replaced by a different vehicle on the same link -- says nothing at all: ArduPilot's
+    // send_gps_global_origin() simply returns when get_origin() fails. Keeping the previous answer
+    // would leave QGC reporting an origin that no longer exists, which is the exact false
+    // reassurance this property was added to prevent. A vehicle that still has one repopulates this
+    // within a round trip.
+    if (_estimatorOrigin.isValid()) {
+        _estimatorOrigin = QGeoCoordinate();
+        emit estimatorOriginChanged(_estimatorOrigin);
+    }
+
+    // The reply arrives as a normal GPS_GLOBAL_ORIGIN message and is picked up by the message
+    // handler, so nothing is needed here on success. A handler is still mandatory: the coordinator
+    // dereferences it unconditionally, and a null one would crash on the vehicle's answer.
+    auto resultHandler = [](void*, MAV_RESULT commandResult, RequestMessageResultHandlerFailureCode_t failureCode, const mavlink_message_t&) {
+        if ((commandResult != MAV_RESULT_ACCEPTED) || (failureCode != RequestMessageNoFailure)) {
+            // Expected on vehicles that never had an origin, and on firmware that cannot report
+            // one. Neither is worth troubling the user with -- the origin simply stays invalid.
+            qCDebug(VehicleLog) << "GPS_GLOBAL_ORIGIN request not answered, result:" << commandResult << "failureCode:" << failureCode;
+        }
+    };
+    requestMessage(resultHandler, nullptr, defaultComponentId(), MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN);
 }
 
 void Vehicle::_updateArmed(bool armed)
@@ -1670,6 +1787,7 @@ void Vehicle::_parametersReady(bool parametersReady)
     if (parametersReady) {
         disconnect(_parameterManager, &ParameterManager::parametersReadyChanged, this, &Vehicle::_parametersReady);
         _setupAutoDisarmSignalling();
+        _watchEstimatorSourceParameters();
     }
 
     _multirotor_speed_limits_available = _firmwarePlugin->mulirotorSpeedLimitsAvailable(this);
@@ -1802,7 +1920,22 @@ void Vehicle::_setFlying(bool flying)
 {
     if (_flying != flying) {
         _flying = flying;
+        if (!flying) {
+            // Touching down is what makes the last statement of position stale. The estimate crept
+            // over the flight that just ended, and it is the frame the next mission would be flown
+            // in -- so the aircraft has to be stood somewhere and said to be there again before it
+            // counts as known.
+            _setPositionConfirmedSinceLastFlight(false);
+        }
         emit flyingChanged(flying);
+    }
+}
+
+void Vehicle::_setPositionConfirmedSinceLastFlight(bool confirmed)
+{
+    if (_positionConfirmedSinceLastFlight != confirmed) {
+        _positionConfirmedSinceLastFlight = confirmed;
+        emit positionConfirmedSinceLastFlightChanged();
     }
 }
 
@@ -1966,32 +2099,32 @@ void Vehicle::guidedModeOrbit(const QGeoCoordinate& centerCoord, double radius, 
     }
 }
 
-void Vehicle::guidedModeROI(const QGeoCoordinate& centerCoord)
+bool Vehicle::guidedModeROI(const QGeoCoordinate& centerCoord, double relativeAltitudeMeters)
 {
     if (!centerCoord.isValid()) {
-        return;
+        return false;
     }
     if (!_vehicleSupports->roiMode()) {
         QGC::showAppMessage(QStringLiteral("ROI mode not supported by Vehicle."));
-        return;
+        return false;
     }
 
-    if (px4Firmware()) {
-        // PX4 ignores the coordinate frame in COMMAND_INT and treats the altitude as AMSL,
-        // so a terrain query is required before we can send the ROI command.
-        _terrainQueryCoordinator->roiWithTerrain(centerCoord);
-    } else {
-        // ArduPilot handles MAV_FRAME_GLOBAL_RELATIVE_ALT correctly, so altitude 0 relative to
-        // home is a reasonable default for a map click with no altitude info.
-        // Sanity check Ardupilot. Max altitude processed is 83000
-        if ((centerCoord.altitude() >= 83000) || (centerCoord.altitude() <= -83000)) {
-            return;
-        }
-        _terrainQueryCoordinator->sendROICommand(centerCoord, MAV_FRAME_GLOBAL_RELATIVE_ALT, static_cast<float>(centerCoord.altitude()));
+    if (!qIsFinite(relativeAltitudeMeters)) {
+        relativeAltitudeMeters = 0;
+    }
+
+    if (!_firmwarePlugin->guidedModeROI(this, centerCoord, relativeAltitudeMeters)) {
+        return false;
+    }
+
+    if (_roiRelativeAltitudeMeters != relativeAltitudeMeters) {
+        _roiRelativeAltitudeMeters = relativeAltitudeMeters;
+        emit roiRelativeAltitudeMetersChanged();
     }
 
     // This is picked by qml to display coordinate over map
     emit roiCoordChanged(centerCoord);
+    return true;
 }
 
 void Vehicle::stopGuidedModeROI()
@@ -2196,11 +2329,6 @@ int Vehicle::_findMavCommandListEntryIndex(int targetCompId, MAV_CMD command)
     return _mavCmdQueue->findEntryIndex(targetCompId, command);
 }
 
-void Vehicle::showCommandAckError(const mavlink_command_ack_t& ack)
-{
-    MavCommandQueue::showCommandAckError(ack);
-}
-
 void Vehicle::_handleCommandAck(mavlink_message_t& message)
 {
     mavlink_command_ack_t ack;
@@ -2317,6 +2445,83 @@ void Vehicle::rebootVehicle()
     handlerInfo.resultHandlerData   = this;
 
     sendMavCommandWithHandler(&handlerInfo, _defaultComponentId, MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN, 1);
+}
+
+void Vehicle::requestPrearmCheckReport()
+{
+    // Nothing to ask about, and ArduPilot answers TEMPORARILY_REJECTED in this state anyway
+    if (_armed) {
+        return;
+    }
+
+    // A stack that has already said it cannot do this is not going to change its mind
+    if (_prearmReportUnsupported) {
+        return;
+    }
+
+    // ArduPilot answers this by running its pre-arm checks with reporting forced on, which is the
+    // only way to make it name the failing check on demand -- the ARMING_OPTIONS switch that silences
+    // its periodic report does not reach this path.
+    //
+    // Errors are not shown. This is asked on the operator's behalf rather than at their request, and
+    // a question they did not put has no business reporting back that it went unanswered; an answer
+    // of "unsupported" is handled below by not asking again.
+    MavCmdAckHandlerInfo_t handlerInfo = {};
+    handlerInfo.resultHandler       = _prearmCheckRequestResultHandler;
+    handlerInfo.resultHandlerData   = this;
+
+    sendMavCommandWithHandler(&handlerInfo, _defaultComponentId, MAV_CMD_RUN_PREARM_CHECKS);
+}
+
+void Vehicle::_prearmCheckRequestResultHandler(void* resultHandlerData, int /*compId*/, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode)
+{
+    Vehicle* const vehicle = static_cast<Vehicle*>(resultHandlerData);
+    if (!vehicle) {
+        return;
+    }
+
+    // Only an outright "I do not have this command" stops the asking. A refusal for any other reason
+    // -- busy, armed by the time it arrived, no answer at all this once -- says nothing about whether
+    // asking again will work, and the whole point of asking on a timer is that a lost question is
+    // cheap to repeat.
+    if ((failureCode == MavCmdResultCommandResultOnly) && (ack.result == MAV_RESULT_UNSUPPORTED)) {
+        qCDebug(VehicleLog) << "Vehicle cannot report its pre-arm checks on request; will not ask again";
+        vehicle->_prearmReportUnsupported = true;
+        vehicle->_prearmReasonRequestTimer.stop();
+    }
+}
+
+void Vehicle::_updateArmingBlocked()
+{
+    // Firmware that reports its checks as structured events never sets prearmError -- QGC drops those
+    // status texts because the same content arrives in healthAndArmingCheckReport, which says all of
+    // this in more detail. Claiming a refusal here as well would be a second, worse verdict on one
+    // state.
+    const bool reportsAsEvents = _eventManager && healthAndArmingCheckReport()->supported();
+
+    // The check bit is the steady signal and is preferred, but a reason having arrived is itself
+    // proof the autopilot refused -- and a vehicle that does not publish the bit at all would
+    // otherwise be treated as willing while it is plainly saying no.
+    const bool checksFailing = _readyToFlyAvailable && !_readyToFly;
+    const bool blocked = !_armed && !reportsAsEvents && (checksFailing || !_prearmError.isEmpty());
+
+    if (blocked != _armingBlocked) {
+        _armingBlocked = blocked;
+        emit armingBlockedChanged(_armingBlocked);
+    }
+
+    // Ask only while refusing with nothing to show for it. A reason arriving stops the asking, and
+    // that reason expiring starts it again, which is what keeps one on screen rather than letting it
+    // blink out every thirty-five seconds.
+    const bool shouldAsk = _armingBlocked && _prearmError.isEmpty() && !_prearmReportUnsupported;
+    if (shouldAsk) {
+        if (!_prearmReasonRequestTimer.isActive()) {
+            _prearmReasonRequestTimer.start();
+            requestPrearmCheckReport();
+        }
+    } else {
+        _prearmReasonRequestTimer.stop();
+    }
 }
 
 void Vehicle::startCalibration(QGCMAVLink::CalibrationType calType)
@@ -3143,19 +3348,43 @@ void Vehicle::sendGripperAction(GRIPPER_ACTIONS gripperAction)
 
 void Vehicle::setEstimatorOrigin(const QGeoCoordinate& centerCoord)
 {
+    if (!centerCoord.isValid()) {
+        qCDebug(VehicleLog) << "setEstimatorOrigin: coordinate not valid, ignoring";
+        return;
+    }
+
+    // The map click this arrives from produces a 2D coordinate, so altitude() is NaN. Both the
+    // command and the legacy message carry that altitude verbatim, and an autopilot has to refuse
+    // a NaN (ArduPilot rejects it in GCS_MAVLINK::location_from_command_t and answers DENIED), so
+    // anchor it to a finite value before it goes out. Zero is the honest choice here: the origin
+    // altitude is only an AMSL reference for the estimator, and the terrain lookup doSetHome uses
+    // to resolve one needs a network round trip this feature cannot rely on -- it exists precisely
+    // for vehicles operating without GNSS, often off-grid.
+    QGeoCoordinate originCoord = centerCoord;
+    if (!qIsFinite(originCoord.altitude())) {
+        originCoord.setAltitude(0.0);
+    }
+
+    // Placing the origin is the operator saying where the aircraft is standing -- it goes on the
+    // point the aircraft launches from, which is the same statement a correction makes. Marked here
+    // rather than on the acknowledgement, which this path does not collect; a refused origin costs
+    // nothing, because the vehicle then has no origin at all and the estimator-origin check holds
+    // the flight on its own.
+    _setPositionConfirmedSinceLastFlight(true);
+
     // Prefer MAV_CMD_DO_SET_GLOBAL_ORIGIN (sent as COMMAND_INT, supersedes SET_GPS_GLOBAL_ORIGIN).
     sendMavCommandIntWithLambdaFallback(
-        [this, centerCoord]() {  // fallback: deprecated SET_GPS_GLOBAL_ORIGIN message
-            setEstimatorOrigin_SET_GPS_GLOBAL_ORIGIN(centerCoord);
+        [this, originCoord]() {  // fallback: deprecated SET_GPS_GLOBAL_ORIGIN message
+            setEstimatorOrigin_SET_GPS_GLOBAL_ORIGIN(originCoord);
         },
         defaultComponentId(),
         MAV_CMD_DO_SET_GLOBAL_ORIGIN,
         MAV_FRAME_GLOBAL,
-        false,                                          // showError
+        true,                                           // showError: a refused origin must not pass unnoticed
         0.0f, 0.0f, 0.0f, 0.0f,                         // param 1-4 empty
-        centerCoord.latitude(),                         // param5: latitude (deg) -> degE7
-        centerCoord.longitude(),                        // param6: longitude (deg) -> degE7
-        static_cast<float>(centerCoord.altitude())      // param7: altitude (m)
+        originCoord.latitude(),                         // param5: latitude (deg) -> degE7
+        originCoord.longitude(),                        // param6: longitude (deg) -> degE7
+        static_cast<float>(originCoord.altitude())      // param7: altitude (m)
     );
 }
 
@@ -3180,6 +3409,103 @@ void Vehicle::setEstimatorOrigin_SET_GPS_GLOBAL_ORIGIN(const QGeoCoordinate& cen
         static_cast<float>(qQNaN())
     );
     sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+}
+
+float Vehicle::_externalPositionTimestampSecs()
+{
+    // A time in QGC's own domain, which is what the command asks for: the autopilot learns the
+    // offset between that domain and its own rather than expecting the two to agree. Wrapped an
+    // order of magnitude inside what a 32 bit float still resolves to a millisecond, and the wrap
+    // itself is harmless here -- ArduPilot clamps the timestamp into the last five seconds before
+    // using it, and this command is sent by hand rather than streamed.
+    if (!_externalPositionTimer.isValid()) {
+        _externalPositionTimer.start();
+    }
+
+    constexpr qint64 wrapMSecs = 3600 * 1000;
+    return static_cast<float>((_externalPositionTimer.elapsed() % wrapMSecs) / 1000.0);
+}
+
+QString Vehicle::_externalPositionEstimateFailureText(const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode)
+{
+    switch (failureCode) {
+    case MavCmdResultFailureNoResponseToCommand:
+        return tr("The vehicle did not answer. Older firmware does not know this command at all.");
+    case MavCmdResultFailureDuplicateCommand:
+        return tr("A correction is already on its way to the vehicle.");
+    case MavCmdResultCommandResultOnly:
+        break;
+    }
+
+    switch (ack.result) {
+    case MAV_RESULT_UNSUPPORTED:
+        // AP_AHRS_POSITION_RESET_ENABLED is compiled out below 1MB of flash, which is where this
+        // lands on the smaller boards
+        return tr("This firmware cannot correct its position. The feature is left out of boards with 1 MB of flash.");
+    case MAV_RESULT_DENIED:
+        // ArduPilot's handler refuses anything but the global frame with no altitude. QGC sends
+        // exactly that, so reaching this means the firmware wants the command in another shape.
+        return tr("The vehicle refused the correction outright. It expects a global position with no altitude.");
+    case MAV_RESULT_FAILED:
+        // NavEKF3_core::setLatLng returning false. Of its three conditions, the aiding one is the
+        // one that bites: a filter that has fallen back to holding position has nothing to correct
+        // against and refuses.
+        return tr("The estimator would not take the correction. It needs an origin already set and must still be aiding — check whether it has fallen back to holding position.");
+    case MAV_RESULT_TEMPORARILY_REJECTED:
+        return tr("The vehicle is busy and refused the correction for now. Try again.");
+    default:
+        return tr("The vehicle refused the correction (result %1).").arg(ack.result);
+    }
+}
+
+void Vehicle::_externalPositionEstimateResultHandler(void* resultHandlerData, int compId, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode)
+{
+    Q_UNUSED(compId);
+
+    auto* const vehicle = static_cast<Vehicle*>(resultHandlerData);
+    if (!vehicle) {
+        return;
+    }
+
+    if ((failureCode == MavCmdResultCommandResultOnly) && (ack.result == MAV_RESULT_ACCEPTED)) {
+        emit vehicle->externalPositionEstimateResult(true, QString());
+        return;
+    }
+
+    const QString reason = _externalPositionEstimateFailureText(ack, failureCode);
+    qCDebug(VehicleLog) << "MAV_CMD_EXTERNAL_POSITION_ESTIMATE refused:" << reason
+                        << "result:" << ack.result << "failureCode:" << failureCode;
+    emit vehicle->externalPositionEstimateResult(false, reason);
+}
+
+void Vehicle::sendExternalPositionEstimate(const QGeoCoordinate& coordinate, float accuracyMetres)
+{
+    if (!coordinate.isValid()) {
+        qCDebug(VehicleLog) << "sendExternalPositionEstimate: coordinate not valid, ignoring";
+        emit externalPositionEstimateResult(false, tr("There is no position to send."));
+        return;
+    }
+
+    MavCmdAckHandlerInfo_t handlerInfo = {};
+    handlerInfo.resultHandler       = _externalPositionEstimateResultHandler;
+    handlerInfo.resultHandlerData   = this;
+
+    // The altitude has to be NaN and the frame global: ArduPilot's handler answers DENIED to
+    // anything else, and this command carries no height on purpose -- what has drifted is the
+    // horizontal frame, and the rangefinder or barometer is still holding the vertical.
+    sendMavCommandIntWithHandler(
+        &handlerInfo,
+        defaultComponentId(),
+        MAV_CMD_EXTERNAL_POSITION_ESTIMATE,
+        MAV_FRAME_GLOBAL,
+        _externalPositionTimestampSecs(),           // param1: when this position was true, our clock
+        0.0f,                                       // param2: no processing delay to declare
+        accuracyMetres,                             // param3: one standard deviation, NaN if unknown
+        0.0f,                                       // param4: empty
+        coordinate.latitude(),                      // param5: latitude
+        coordinate.longitude(),                     // param6: longitude
+        std::numeric_limits<float>::quiet_NaN()     // param7: altitude, which must be NaN
+    );
 }
 
 void Vehicle::pairRX(int rxType, int rxSubType)
@@ -3436,8 +3762,15 @@ void Vehicle::_textMessageReceived(MAV_COMPONENT componentid, MAV_SEVERITY sever
 
     bool skipSpoken = false;
     const bool ardupilotPrearm = text.startsWith(QStringLiteral("PreArm"));
+    // ArduPilot tags a refusal "Arm: " rather than "PreArm: " for the whole of an arming attempt.
+    // AP_Arming::arm() raises running_arming_checks before it runs the pre-arm checks, and
+    // check_failed() picks its prefix off that flag -- so the same failing check that is announced as
+    // "PreArm: ..." while the vehicle sits there is announced as "Arm: ..." the moment someone
+    // presses arm. Matching only the first name missed the reason in exactly the case where an
+    // operator has just asked for it and is standing waiting to be told.
+    const bool ardupilotArm = text.startsWith(QStringLiteral("Arm: "));
     const bool px4Prearm = text.startsWith(QStringLiteral("preflight"), Qt::CaseInsensitive) && (severity >= MAV_SEVERITY::MAV_SEVERITY_CRITICAL);
-    if (ardupilotPrearm || px4Prearm) {
+    if (ardupilotPrearm || ardupilotArm || px4Prearm) {
         if (_healthAndArmingChecksSupported(componentid)) {
             qCDebug(VehicleLog) << "Dropping preflight message (expected as event):" << text;
             return;
@@ -3556,6 +3889,10 @@ void Vehicle::_createMAVLinkEventManager()
     _eventManager = std::make_unique<MAVLinkEventManager>(this);
 
     (void) connect(_eventManager.get(), &MAVLinkEventManager::statusTextMessageFromEvent, this, &Vehicle::_onStatusTextFromEvent);
+
+    // Whether this firmware reports its checks as events decides whether armingBlocked may speak at
+    // all, and that is not known until the first report arrives
+    (void) connect(_eventManager->healthAndArmingCheckReport(), &HealthAndArmingCheckReport::updated, this, &Vehicle::_updateArmingBlocked);
 }
 
 void Vehicle::_handleEventMessage(const mavlink_message_t& msg)

@@ -1,6 +1,9 @@
 #include "SetEstimatorOriginTest.h"
 
+#include <QtCore/QRegularExpression>
+#include <QtCore/QtNumeric>
 #include <QtPositioning/QGeoCoordinate>
+#include <QtTest/QSignalSpy>
 
 #include "FirmwarePlugin.h"
 #include "MockLink.h"
@@ -11,6 +14,10 @@ using CommandSupportedResult = FirmwarePluginInstanceData::CommandSupportedResul
 
 // Arbitrary valid origin (Zurich) used for all cases.
 const QGeoCoordinate kOrigin(47.3977419, 8.5455938, 488.0);
+
+// What the Fly view map click actually hands to setEstimatorOrigin: same place, but built
+// from a screen position, so it carries no altitude at all and altitude() is NaN.
+const QGeoCoordinate kMapClickOrigin(47.3977419, 8.5455938);
 }
 
 /// When the command is already known to be unsupported, setEstimatorOrigin must skip the
@@ -44,6 +51,10 @@ void SetEstimatorOriginTest::_cachedSupported_sendsCommandIntOnly()
 
     _mockLink->clearReceivedMavCommandCounts();
     _mockLink->clearReceivedMavlinkMessageCounts();
+    // No fallback handler is installed on this path, so MockLink's NAK reaches the generic error
+    // reporting. setEstimatorOrigin asks for that reporting on purpose: an origin the vehicle
+    // refuses used to be swallowed whole, leaving the estimator silently without an origin.
+    expectAppMessage(QRegularExpression(QStringLiteral("command not supported")));
     _vehicle->setEstimatorOrigin(kOrigin);
 
     QVERIFY_TRUE_WAIT(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_GLOBAL_ORIGIN) == 1,
@@ -52,6 +63,7 @@ void SetEstimatorOriginTest::_cachedSupported_sendsCommandIntOnly()
     // The cached-supported path installs no fallback handler, so the vehicle's UNSUPPORTED ack
     // must not re-cache the command or trigger the legacy message.
     QVERIFY(instanceData->getCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN) == CommandSupportedResult::SUPPORTED);
+    verifyExpectedLogMessage();
 }
 
 /// With support unknown, setEstimatorOrigin probes with a COMMAND_INT. MockLink NAKs it with
@@ -83,6 +95,229 @@ void SetEstimatorOriginTest::_probeUnsupported_fallsBackAndCachesUnsupported()
     QVERIFY_TRUE_WAIT(_mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) == 1,
                       TestTimeout::longMs());
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_GLOBAL_ORIGIN), 0);
+}
+
+/// A map click carries no altitude, so centerCoord.altitude() is NaN. The COMMAND_INT must still
+/// go out with a finite param7: an autopilot rejects a NaN location outright (ArduPilot answers
+/// MAV_RESULT_DENIED from location_from_command_t), which left the origin silently unset.
+void SetEstimatorOriginTest::_mapClickCoordinate_commandCarriesFiniteAltitude()
+{
+    QVERIFY(_vehicle);
+    FirmwarePluginInstanceData* instanceData = _vehicle->firmwarePluginInstanceData();
+    QVERIFY(instanceData);
+
+    // Guard the premise: this is the coordinate shape the Fly view really produces.
+    QVERIFY(kMapClickOrigin.isValid());
+    QVERIFY(qIsNaN(kMapClickOrigin.altitude()));
+
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN, CommandSupportedResult::SUPPORTED);
+
+    _mockLink->clearReceivedMavCommandCounts();
+    _mockLink->clearReceivedMavlinkMessageCounts();
+    expectAppMessage(QRegularExpression(QStringLiteral("command not supported")));
+    _vehicle->setEstimatorOrigin(kMapClickOrigin);
+
+    QVERIFY_TRUE_WAIT(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_GLOBAL_ORIGIN) == 1,
+                      TestTimeout::longMs());
+
+    mavlink_message_t message{};
+    QVERIFY(_mockLink->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_COMMAND_INT, message));
+    mavlink_command_int_t commandInt{};
+    mavlink_msg_command_int_decode(&message, &commandInt);
+
+    QCOMPARE(commandInt.command, static_cast<uint16_t>(MAV_CMD_DO_SET_GLOBAL_ORIGIN));
+    QVERIFY(qIsFinite(commandInt.z));
+    // The position itself must survive the altitude substitution untouched.
+    QCOMPARE(commandInt.x, static_cast<int32_t>(kMapClickOrigin.latitude() * 1e7));
+    QCOMPARE(commandInt.y, static_cast<int32_t>(kMapClickOrigin.longitude() * 1e7));
+    verifyExpectedLogMessage();
+}
+
+/// The deprecated fallback message packs the altitude into an int32 of millimetres, where a NaN is
+/// undefined behaviour rather than an honest value. It must receive a finite altitude too.
+///
+/// Note on strength: unlike its COMMAND_INT sibling this case does not discriminate on every
+/// platform. Converting a NaN double to int32 is undefined, and arm64 happens to saturate it to
+/// the same 0 the fix produces, so the assertion below passes on this host even against the
+/// unfixed code. It is kept as a wire-format guard -- an altitude-less click must travel as 0 mm,
+/// not as some future non-zero substitute. The authoritative regression guard for the NaN bug is
+/// _mapClickCoordinate_commandCarriesFiniteAltitude, which fails on any platform without the fix.
+void SetEstimatorOriginTest::_mapClickCoordinate_legacyMessageCarriesFiniteAltitude()
+{
+    QVERIFY(_vehicle);
+    FirmwarePluginInstanceData* instanceData = _vehicle->firmwarePluginInstanceData();
+    QVERIFY(instanceData);
+
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN, CommandSupportedResult::UNSUPPORTED);
+
+    _mockLink->clearReceivedMavCommandCounts();
+    _mockLink->clearReceivedMavlinkMessageCounts();
+    _vehicle->setEstimatorOrigin(kMapClickOrigin);
+
+    QVERIFY_TRUE_WAIT(_mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) == 1,
+                      TestTimeout::longMs());
+
+    mavlink_message_t message{};
+    QVERIFY(_mockLink->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN, message));
+    mavlink_set_gps_global_origin_t origin{};
+    mavlink_msg_set_gps_global_origin_decode(&message, &origin);
+
+    QCOMPARE(origin.altitude, 0);
+    QCOMPARE(origin.latitude, static_cast<int32_t>(kMapClickOrigin.latitude() * 1e7));
+    QCOMPARE(origin.longitude, static_cast<int32_t>(kMapClickOrigin.longitude() * 1e7));
+}
+
+/// An invalid coordinate must be dropped rather than sent as a zeroed origin, which the vehicle
+/// would happily accept as a real location somewhere off West Africa.
+void SetEstimatorOriginTest::_invalidCoordinate_sendsNothing()
+{
+    QVERIFY(_vehicle);
+    FirmwarePluginInstanceData* instanceData = _vehicle->firmwarePluginInstanceData();
+    QVERIFY(instanceData);
+
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN, CommandSupportedResult::SUPPORTED);
+
+    _mockLink->clearReceivedMavCommandCounts();
+    _mockLink->clearReceivedMavlinkMessageCounts();
+
+    _vehicle->setEstimatorOrigin(QGeoCoordinate());
+
+    // Nothing is expected on the wire, so wait on a call that does send: once the valid origin
+    // has arrived, anything the invalid one might have queued would have arrived before it.
+    expectAppMessage(QRegularExpression(QStringLiteral("command not supported")));
+    _vehicle->setEstimatorOrigin(kMapClickOrigin);
+    QVERIFY_TRUE_WAIT(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_GLOBAL_ORIGIN) == 1,
+                      TestTimeout::longMs());
+
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_GLOBAL_ORIGIN), 1);
+    QCOMPARE(_mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN), 0);
+    verifyExpectedLogMessage();
+}
+
+/// Until the vehicle reports an origin, Vehicle::estimatorOrigin must stay invalid. A vehicle
+/// without one answers the request with zeros, and reading that as a real coordinate would put the
+/// origin in the Gulf of Guinea -- and make QGC claim an origin exists when none does.
+void SetEstimatorOriginTest::_vehicleWithoutOrigin_reportsInvalidCoordinate()
+{
+    QVERIFY(_vehicle);
+    QVERIFY(!_vehicle->estimatorOrigin().isValid());
+}
+
+/// Once an origin is set, the vehicle reports it and Vehicle must surface it. This is the state
+/// that decides whether a mission can fly at all: without an origin the vehicle has no home, a
+/// takeoff to an altitude relative to home never completes, and the mission stalls on its first
+/// item with nothing shown to the user.
+void SetEstimatorOriginTest::_originSetOnVehicle_isReportedBack()
+{
+    QVERIFY(_vehicle);
+    FirmwarePluginInstanceData* instanceData = _vehicle->firmwarePluginInstanceData();
+    QVERIFY(instanceData);
+    QVERIFY(!_vehicle->estimatorOrigin().isValid());
+
+    // Cached-unsupported drives the legacy SET_GPS_GLOBAL_ORIGIN message, which MockLink records.
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN, CommandSupportedResult::UNSUPPORTED);
+    _vehicle->setEstimatorOrigin(kOrigin);
+    QVERIFY_TRUE_WAIT(_mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) == 1,
+                      TestTimeout::longMs());
+
+    QSignalSpy originSpy(_vehicle, &Vehicle::estimatorOriginChanged);
+    _vehicle->requestEstimatorOrigin();
+
+    QVERIFY_TRUE_WAIT(_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
+    QCOMPARE(originSpy.count(), 1);
+    QVERIFY(qAbs(_vehicle->estimatorOrigin().latitude() - kOrigin.latitude()) < 0.0000001);
+    QVERIFY(qAbs(_vehicle->estimatorOrigin().longitude() - kOrigin.longitude()) < 0.0000001);
+}
+
+/// A vehicle that has lost its origin does not say so -- ArduPilot answers a request for
+/// GPS_GLOBAL_ORIGIN with silence when it has none. Requesting must therefore drop what was known
+/// first, or QGC keeps reporting an origin from a vehicle that rebooted or was replaced. Caught in
+/// SITL on 8 Aug: the panel read "Set" with a previous run's coordinate while the live vehicle had
+/// none, and the mission failed at takeoff with an ArduPilot internal error for an uninitialised
+/// current location.
+void SetEstimatorOriginTest::_requestAfterOriginLost_clearsStaleValue()
+{
+    QVERIFY(_vehicle);
+    FirmwarePluginInstanceData* instanceData = _vehicle->firmwarePluginInstanceData();
+    QVERIFY(instanceData);
+
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN, CommandSupportedResult::UNSUPPORTED);
+    _vehicle->setEstimatorOrigin(kOrigin);
+    QVERIFY_TRUE_WAIT(_mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) == 1,
+                      TestTimeout::longMs());
+    _vehicle->requestEstimatorOrigin();
+    QVERIFY_TRUE_WAIT(_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
+
+    // The vehicle loses its origin, exactly as a reboot would leave it.
+    _mockLink->clearEstimatorOrigin();
+
+    _vehicle->requestEstimatorOrigin();
+    QVERIFY_TRUE_WAIT(!_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
+}
+
+/// A statement of where the aircraft is standing covers exactly one flight.
+///
+/// An estimate carried forward by dead reckoning creeps over a flight, and landing does not undo the
+/// creep. The frame the next mission would be flown in is the frame the last one drifted into, so
+/// letting the statement survive the landing sends the second flight out on the first flight's
+/// answer. That failure is invisible from the ground: the aircraft reports itself exactly where the
+/// plan says it should be, and it is found by watching it fly the right shape in the wrong place.
+void SetEstimatorOriginTest::_statedPosition_coversOneFlightOnly()
+{
+    QVERIFY(_vehicle);
+    QVERIFY(_mockLink);
+
+    // Going flying builds QGCPressure, which warns on a host with no pressure backend. Nothing to do
+    // with the position being stated.
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Failed to connect to pressure backend")));
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Error Initializing Pressure Sensor")));
+
+    QVERIFY2(!_vehicle->positionConfirmedSinceLastFlight(),
+             "a vehicle QGC has just met has not been stood anywhere by this operator");
+
+    // Placing the origin puts it on the point the aircraft is launching from, which is the statement
+    _vehicle->setEstimatorOrigin(kOrigin);
+    QVERIFY(_vehicle->positionConfirmedSinceLastFlight());
+
+    // MockLink decides landed state from altitude above home, so a takeoff to 10 m is how it flies
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, false /* showError */,
+                             0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 10.0F /* altitude */);
+    QVERIFY_TRUE_WAIT(_vehicle->flying(), TestTimeout::longMs());
+    QVERIFY2(_vehicle->positionConfirmedSinceLastFlight(),
+             "the statement has to stand for the flight it was made for");
+
+    // And back to home altitude, which is how it lands
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, false /* showError */,
+                             0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F /* altitude */);
+    QVERIFY_TRUE_WAIT(!_vehicle->flying(), TestTimeout::longMs());
+    QVERIFY2(!_vehicle->positionConfirmedSinceLastFlight(),
+             "touching down is what makes the statement stale");
+}
+
+/// A correction the estimator refused has moved nothing: the frame is still where it drifted to.
+/// Counting the attempt would clear the one check that was about to catch it.
+void SetEstimatorOriginTest::_refusedCorrection_doesNotStateThePosition()
+{
+    QVERIFY(_vehicle);
+
+    QSignalSpy resultSpy(_vehicle, &Vehicle::externalPositionEstimateResult);
+    QVERIFY(resultSpy.isValid());
+
+    // MockLink has no implementation of the command, so what comes back is a real refusal
+    _vehicle->sendExternalPositionEstimate(kOrigin);
+    QVERIFY_SIGNAL_WAIT(resultSpy, TestTimeout::longMs());
+    QVERIFY2(!resultSpy.at(0).at(0).toBool(), "the premise of this test is a refusal");
+
+    QVERIFY(!_vehicle->positionConfirmedSinceLastFlight());
+
+    // The accepted answer is what states the position. Raised directly because MockLink has nothing
+    // to accept the command with; the path from sending to this answer is covered by
+    // VehicleExternalPositionEstimateTest.
+    QVERIFY(QMetaObject::invokeMethod(_vehicle, "externalPositionEstimateResult",
+                                      Q_ARG(bool, true), Q_ARG(QString, QString())));
+    QVERIFY(_vehicle->positionConfirmedSinceLastFlight());
 }
 
 UT_REGISTER_TEST(SetEstimatorOriginTest, TestLabel::Integration, TestLabel::Vehicle)

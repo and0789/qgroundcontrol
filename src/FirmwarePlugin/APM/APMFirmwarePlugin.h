@@ -17,6 +17,17 @@ struct APMCustomMode
     };
 };
 
+/// Values of the EK3_SRC<n>_POSXY and EK3_SRC<n>_VELXY parameters, which name where EKF3 takes its
+/// horizontal position and velocity from. Mirrors AP_NavEKF_Source::SourceXY in ArduPilot; only the
+/// values QGC reads are listed.
+enum class EK3SourceXY : int {
+    NONE    = 0,
+    GPS     = 3,
+    BEACON  = 4,
+    OPTFLOW = 5,
+    EXTNAV  = 6,
+};
+
 /// \brief This is the base class for all stack specific APM firmware plugins
 ///
 class APMFirmwarePlugin : public FirmwarePlugin
@@ -58,6 +69,8 @@ public:
     ParameterMetaData *_createParameterMetaData() override;
     QString getHobbsMeter(Vehicle *vehicle) const override;
     bool hasGripper(const Vehicle *vehicle) const override;
+    bool navigatingWithoutGNSS(const Vehicle *vehicle) const override;
+    QStringList estimatorSourceParameterNames() const override;
     const QVariantList &toolIndicators(const Vehicle *vehicle) override;
     double maximumEquivalentAirspeed(Vehicle *vehicle) const override;
     double minimumEquivalentAirspeed(Vehicle *vehicle) const override;

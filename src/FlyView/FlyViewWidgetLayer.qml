@@ -42,12 +42,15 @@ Item {
         leftEdgeTopInset:       toolStrip.leftEdgeTopInset
         leftEdgeCenterInset:    toolStrip.leftEdgeCenterInset
         leftEdgeBottomInset:    virtualJoystickMultiTouch.visible ? virtualJoystickMultiTouch.leftEdgeBottomInset : parentToolInsets.leftEdgeBottomInset
-        rightEdgeTopInset:      topRightPanel.rightEdgeTopInset
-        rightEdgeCenterInset:   topRightPanel.rightEdgeCenterInset
+        // Whichever of the two top right stacks is actually showing. They are alternatives, and
+        // reporting the hidden one's size left anything laying out against this edge overlapping the
+        // visible one -- the terrain progress bar landed on top of the local grid's readout.
+        rightEdgeTopInset:      topRightPanel.visible ? topRightPanel.rightEdgeTopInset : topRightColumnLayout.rightEdgeTopInset
+        rightEdgeCenterInset:   topRightPanel.visible ? topRightPanel.rightEdgeCenterInset : topRightColumnLayout.rightEdgeCenterInset
         rightEdgeBottomInset:   bottomRightRowLayout.rightEdgeBottomInset
         topEdgeLeftInset:       toolStrip.topEdgeLeftInset
         topEdgeCenterInset:     mapScale.topEdgeCenterInset
-        topEdgeRightInset:      topRightPanel.topEdgeRightInset
+        topEdgeRightInset:      topRightPanel.visible ? topRightPanel.topEdgeRightInset : topRightColumnLayout.topEdgeRightInset
         bottomEdgeLeftInset:    virtualJoystickMultiTouch.visible ? virtualJoystickMultiTouch.bottomEdgeLeftInset : parentToolInsets.bottomEdgeLeftInset
         bottomEdgeCenterInset:  bottomRightRowLayout.bottomEdgeCenterInset
         bottomEdgeRightInset:   virtualJoystickMultiTouch.visible ? virtualJoystickMultiTouch.bottomEdgeRightInset : bottomRightRowLayout.bottomEdgeRightInset
@@ -148,6 +151,7 @@ Item {
 
     FlyViewToolStrip {
         id:                     toolStrip
+        objectName:             "flyView_toolStrip"
         anchors.left:           parent.left
         anchors.top:            parent.top
         z:                      QGroundControl.zOrderWidgets
@@ -161,6 +165,13 @@ Item {
             preFlightChecklistLoader.item.open()
         }
 
+        onDisplayOpticalFlowCalibration: {
+            if (!opticalFlowCalibrationLoader.active) {
+                opticalFlowCalibrationLoader.active = true
+            }
+            opticalFlowCalibrationLoader.item.open()
+        }
+
         property real topEdgeLeftInset:     visible ? y + height : 0
         property real leftEdgeTopInset:     visible ? x + width : 0
         property real leftEdgeCenterInset:  leftEdgeTopInset
@@ -169,6 +180,13 @@ Item {
     VehicleWarnings {
         anchors.centerIn:   parent
         z:                  QGroundControl.zOrderTopMost
+        // Not over the local grid, where both halves of this banner are wrong. The pre-arm reason is
+        // already on the grid's own panel and stays there for as long as the vehicle is refusing,
+        // where this copy expires after thirty-five seconds; and a missing GPS lock is the condition
+        // that view exists to fly in, so announcing it there is a warning about working as intended.
+        // It lands dead centre either way, which on the grid is where the origin and the vehicle are
+        // drawn -- so it covers the one thing it is standing in front of.
+        visible:            !QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
     }
 
     MapScale {
@@ -178,9 +196,21 @@ Item {
         anchors.top:        parent.top
         mapControl:         _mapControl
         autoHide:           true
-        visible:            !ScreenTools.isTinyScreen && QGroundControl.corePlugin.options.flyView.showMapScale && QGCViewer3DManager.displayMode !== QGCViewer3DManager.View3D && mapControl.pipState.state === mapControl.pipState.fullState
+        // Hidden with the map it measures. The local grid carries its own scale bar in ground metres,
+        // and leaving this one up would put two different scales on screen, one of them describing a
+        // map that is not being shown.
+        visible:            !ScreenTools.isTinyScreen && QGroundControl.corePlugin.options.flyView.showMapScale && QGCViewer3DManager.displayMode !== QGCViewer3DManager.View3D && mapControl.pipState.state === mapControl.pipState.fullState && !QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
 
         property real topEdgeCenterInset: visible ? y + height : 0
+    }
+
+    NonGpsStatusPanel {
+        id:                 nonGpsStatusPanel
+        anchors.left:       toolStrip.right
+        anchors.leftMargin: _toolsMargin
+        anchors.top:        mapScale.visible ? mapScale.bottom : parent.top
+        anchors.topMargin:  _toolsMargin
+        z:                  QGroundControl.zOrderWidgets
     }
 
     Viewer3DScaleBar {
@@ -202,6 +232,18 @@ Item {
     Component {
         id: preFlightChecklistPopup
         FlyViewPreFlightChecklistPopup {
+        }
+    }
+
+    Loader {
+        id: opticalFlowCalibrationLoader
+        sourceComponent: opticalFlowCalibrationDialog
+        active: false
+    }
+
+    Component {
+        id: opticalFlowCalibrationDialog
+        OpticalFlowCalibrationDialog {
         }
     }
 }

@@ -21,9 +21,16 @@ Item {
     readonly property bool _is3DMode:       QGCViewer3DManager.displayMode === QGCViewer3DManager.View3D
     readonly property bool _keepSceneAlive: QGroundControl.settingsManager.viewer3DSettings.keepSceneAlive.rawValue
 
+    /// The local grid replaces the map rather than sitting over it. A vehicle navigating without
+    /// GNSS puts no meaningful position on a world map, and showing both invites reading the wrong
+    /// one -- the map would keep drawing a plausible aircraft wherever the estimator's drift had
+    /// carried it.
+    readonly property bool _isLocalGridMode: QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue && !_is3DMode
+
     // These should only be used by MainRootWindow
     property var planController:    _planController
     property var guidedController:  _guidedController
+    readonly property alias gridView: localGridView
 
     PlanMasterController {
         id:                     _planController
@@ -74,14 +81,29 @@ Item {
 
         FlyViewMap {
             id:                     mapControl
+            objectName:             "flyViewMap"
             planMasterController:   _planController
             rightPanelWidth:        ScreenTools.defaultFontPixelHeight * 9
             pipView:                _pipView
             pipMode:                !_mainWindowIsMap
             toolInsets:             customOverlay.totalToolInsets
             mapName:                "FlightDisplayView"
-            enabled:                !_is3DMode
-            visible:                !_is3DMode
+            enabled:                !_is3DMode && !_isLocalGridMode
+            visible:                !_is3DMode && !_isLocalGridMode
+        }
+
+        LocalGridView {
+            id:                 localGridView
+            objectName:         "localGridView"
+            anchors.fill:       parent
+            vehicle:            _activeVehicle
+            missionController:  _missionController
+            planMasterController: _planController
+            toolInsets:         customOverlay.totalToolInsets
+            topEdgeOffset:      toolbar.height
+            z:                  _fullItemZorder
+            enabled:            _isLocalGridMode
+            visible:            _isLocalGridMode
         }
 
         FlyViewVideo {
@@ -150,6 +172,7 @@ Item {
         //-- Guided value slider (e.g. altitude)
         GuidedValueSlider {
             id:                 guidedValueSlider
+            objectName:         "guidedValueSlider"
             anchors.right:      parent.right
             anchors.top:        parent.top
             anchors.bottom:     parent.bottom

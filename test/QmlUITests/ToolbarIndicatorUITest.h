@@ -23,6 +23,8 @@ public:
 private slots:
     void _testPX4Indicators();
     void _testAPMCopterIndicators();
+    void _rebootIsOfferedOnlyWithTheVehicleOnTheGround_test();
+    void _holdingRebootRestartsTheVehicle_test();
 
 private:
     /// Shared implementation: connect a MockLink via \a factory and cycle
@@ -35,4 +37,8 @@ private:
     /// \a expectExpand is true (failing if the button is absent), then close
     /// it with Escape.  Returns true on success.
     bool _exerciseIndicator(QQuickItem *indicatorItem, const QString &indicatorName, bool expectExpand);
+
+    /// Open the vehicle status drawer and return its reboot button, or nullptr
+    /// (after recording a failure) if the drawer or the button never appears.
+    QQuickItem *_openDrawerAndFindReboot();
 };

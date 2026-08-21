@@ -58,6 +58,7 @@ Item {
     readonly property string emergencyStopMessage:              qsTr("WARNING: THIS WILL STOP ALL MOTORS. IF VEHICLE IS CURRENTLY IN THE AIR IT WILL CRASH.")
     readonly property string takeoffMessage:                    qsTr("Takeoff and hold position")
     readonly property string startMissionMessage:               qsTr("Takeoff and start the current mission")
+    readonly property string startMissionNoOriginMessage:       qsTr("This vehicle has no estimator origin, so it has no home and cannot resolve an altitude relative to it. An auto takeoff will climb and then hang on the first mission item without reporting anything. Click the map and choose 'Set Estimator Origin' first.")
     readonly property string mvStartMissionMessage:             qsTr("Takeoff and start the current mission for selected vehicles")
     readonly property string continueMissionMessage:            qsTr("Continue the mission from the current waypoint")
     readonly property string resumeMissionUploadFailMessage:    qsTr("Upload of resume mission failed. Confirm to retry upload")
@@ -140,8 +141,19 @@ Item {
     property bool showLandAbort:            _guidedActionsEnabled && _vehicleFlying && _fixedWingOnApproach
     property bool showGotoLocation:         _guidedActionsEnabled && _vehicleFlying
     property bool showSetHome:              _guidedActionsEnabled
-    property bool showSetEstimatorOrigin:   _activeVehicle && !(_activeVehicle.sensorsPresentBits & MAVLinkEnums.MAV_SYS_STATUS_SENSOR_GPS)
+    // Asks the estimator what it navigates by rather than whether a GPS is fitted. A GNSS-denied
+    // aircraft normally carries one anyway to log ground truth, and keying off its presence hid
+    // this action on exactly the vehicles that cannot fly without it.
+    property bool showSetEstimatorOrigin:   _activeVehicle && _activeVehicle.navigatingWithoutGNSS
     property bool showChangeHeading:        _guidedActionsEnabled && _vehicleFlying
+
+    /// A vehicle flying without GNSS gets no estimator origin on its own, and without one it has no
+    /// home. A mission altitude expressed relative to home then cannot be resolved, auto takeoff
+    /// never reports completion, and the mission stalls on its first item -- silently, with the
+    /// aircraft hovering. Warn before that costs a flight rather than after.
+    property bool _missionNeedsEstimatorOrigin: _activeVehicle
+                                                && _activeVehicle.navigatingWithoutGNSS
+                                                && !_activeVehicle.estimatorOrigin.isValid
 
     property string changeSpeedTitle:   _vehicleInFwdFlight ? changeAirspeedTitle : changeCruiseSpeedTitle
     property string changeSpeedMessage: _vehicleInFwdFlight ? changeAirspeedMessage : changeCruiseSpeedMessage
@@ -231,6 +243,14 @@ Item {
                 _flyViewSettings.guidedMinimumAltitude.value,
                 _flyViewSettings.guidedMaximumAltitude.value,
                 _activeVehicle.altitudeRelative.value,
+                qsTr("Alt (rel)"))
+        } else if (actionCode === actionROI) {
+            // ROI targets a point on the ground by default, so start at 0 above home
+            guidedValueSlider.setupSlider(
+                GuidedValueSlider.SliderType.Altitude,
+                0,
+                _flyViewSettings.guidedMaximumAltitude.value,
+                0,
                 qsTr("Alt (rel)"))
         }
     }
@@ -432,7 +452,7 @@ Item {
         case actionStartMission:
             showImmediate = false
             confirmDialog.title = startMissionTitle
-            confirmDialog.message = startMissionMessage
+            confirmDialog.message = _missionNeedsEstimatorOrigin ? startMissionNoOriginMessage : startMissionMessage
             confirmDialog.hideTrigger = Qt.binding(function() { return !showStartMission })
             break;
         case actionMVStartMission:
@@ -514,6 +534,7 @@ Item {
             confirmDialog.title = roiTitle
             confirmDialog.message = roiMessage
             confirmDialog.hideTrigger = Qt.binding(function() { return !showROI })
+            guidedValueSlider.visible = true
             break;
         case actionChangeSpeed:
             confirmDialog.title = changeSpeedTitle
@@ -652,9 +673,13 @@ Item {
                 selectedVehicles.get(i).pauseVehicle()
             }
             break
-        case actionROI:
-            _activeVehicle.guidedModeROI(actionData)
+        case actionROI: {
+            const roiRelativeAltitudeMeters = _unitsConversion.appSettingsVerticalDistanceUnitsToMeters(sliderOutputValue)
+            if (!_activeVehicle.guidedModeROI(actionData, roiRelativeAltitudeMeters)) {
+                return false
+            }
             break
+        }
         case actionChangeSpeed:
             if (_activeVehicle) {
                 // We need to convert back to m/s as that is what mavlink standard uses for MAV_CMD_DO_CHANGE_SPEED

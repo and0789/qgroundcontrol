@@ -28,6 +28,7 @@ ColumnLayout {
         subEditConfig.enableCamera = enableCamera.checked
         subEditConfig.enableGimbal = enableGimbal.checked
         subEditConfig.enableProximity = enableProximity.checked
+        subEditConfig.enableAirspeed = enableAirspeed.checked
         subEditConfig.incrementVehicleId = incrementVehicleId.checked
         subEditConfig.cameraCaptureVideo = cameraCaptureVideo.checked
         subEditConfig.cameraCaptureImage = cameraCaptureImage.checked
@@ -91,6 +92,13 @@ ColumnLayout {
         Layout.fillWidth: true
         text: qsTr("Enable Proximity Sensors")
         checked: subEditConfig.enableProximity
+    }
+
+    QGCCheckBoxSlider {
+        id: enableAirspeed
+        Layout.fillWidth: true
+        text: qsTr("Enable Airspeed Sensor")
+        checked: subEditConfig.enableAirspeed
     }
 
     QGCCheckBoxSlider {

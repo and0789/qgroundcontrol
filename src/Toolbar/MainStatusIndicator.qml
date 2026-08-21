@@ -245,6 +245,32 @@ RowLayout {
                 }
             }
 
+            // Directly under the arm control, because this is the answer to why that control did not
+            // work. The toolbar has been saying "Not Ready" and the sensor list below has been saying
+            // "Pre-Arm Check: Error", and neither of them has ever said which check -- so an operator
+            // opening this drawer to find out was told that something was wrong and left to guess
+            // what. Cause and effect one under the other, rather than the effect here and the cause
+            // three views away in the parameter editor's message log.
+            SettingsGroupLayout {
+                objectName:         "mainStatus_armingBlockedGroup"
+                heading:            qsTr("Will Not Arm")
+                visible:            _activeVehicle && _activeVehicle.armingBlocked
+
+                QGCLabel {
+                    objectName:         "mainStatus_armingBlockedReason"
+                    Layout.fillWidth:   true
+                    // Capped and wrapped. A layout takes its width from the longest line a child
+                    // would draw unwrapped, and these are whole sentences from the autopilot -- left
+                    // alone one would set the width of the whole drawer.
+                    Layout.maximumWidth: ScreenTools.defaultFontPixelWidth * 50
+                    wrapMode:           Text.WordWrap
+                    color:              qgcPal.colorOrange
+                    text:               (_activeVehicle && (_activeVehicle.prearmError !== ""))
+                                            ? _activeVehicle.prearmError
+                                            : qsTr("Asking the autopilot which check is failing…")
+                }
+            }
+
             SettingsGroupLayout {
                 //Layout.fillWidth:   true
                 heading:            qsTr("Vehicle Messages")
@@ -292,6 +318,40 @@ RowLayout {
                 Repeater {
                     model:      _activeVehicle ? _activeVehicle.healthAndArmingCheckReport.problemsForCurrentMode : null
                     delegate:   listdelegate
+                }
+            }
+
+            // Last on the panel, and on its own. Everything above says what the vehicle is doing and
+            // what it believes is wrong with itself; this is the blunt remedy for the faults none of
+            // that can clear -- a parameter that only takes effect on restart, an estimator that will
+            // not re-initialise, an origin the autopilot refuses to be given a second time. Diagnosis
+            // above, remedy below, rather than an action floating at the top with its reasons under it.
+            //
+            // Deliberately not up beside Arm. Those are the two controls here that change what the
+            // vehicle is allowed to do, and putting them a thumb's width apart is how a reboot gets
+            // sent instead of a disarm. This is far enough down the drawer to be reached on purpose,
+            // and held rather than clicked for the same reason the arm control is.
+            SettingsGroupLayout {
+                heading:            qsTr("Reboot Vehicle")
+                headingDescription: _armed
+                                        ? qsTr("Only while the vehicle is disarmed.")
+                                        : qsTr("The autopilot restarts and QGC disconnects until it comes back.")
+
+                QGCDelayButton {
+                    objectName:         "mainStatus_rebootButton"
+                    Layout.fillWidth:   true
+                    // Offered only on the ground. ArduPilot refuses this while armed and QGC would
+                    // report the refusal, but an enabled button that can only fail is a button that
+                    // teaches the operator nothing -- the heading says why it is out instead.
+                    enabled:            _activeVehicle && !_armed
+                    text:               qsTr("Reboot")
+
+                    onActivated: {
+                        _activeVehicle.rebootVehicle()
+                        // The vehicle is closed out from under this drawer the moment the reboot is
+                        // accepted, so it cannot be left standing over a vehicle that no longer exists
+                        mainWindow.closeIndicatorDrawer()
+                    }
                 }
             }
 

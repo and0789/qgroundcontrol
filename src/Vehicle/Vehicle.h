@@ -36,6 +36,7 @@ class EscStatusFactGroupListModel;
 class GimbalController;
 class RadioStatusFactGroup;
 class TerrainFactGroup;
+class VehicleAirspeedSensorFactGroup;
 class VehicleClockFactGroup;
 class VehicleDistanceSensorFactGroup;
 class VehicleEFIFactGroup;
@@ -47,12 +48,14 @@ class VehicleGPSAggregateFactGroup;
 class VehicleHygrometerFactGroup;
 class VehicleLocalPositionFactGroup;
 class VehicleLocalPositionSetpointFactGroup;
+class VehicleOpticalFlowFactGroup;
 class VehicleRPMFactGroup;
 class VehicleSetpointFactGroup;
 class VehicleTemperatureFactGroup;
 class VehicleVibrationFactGroup;
 class VehicleWindFactGroup;
 class Autotune;
+class OpticalFlowCalibrator;
 class ComponentInformationManager;
 class MAVLinkEventManager;
 class FirmwarePlugin;
@@ -92,6 +95,7 @@ class Vehicle : public VehicleFactGroup, public VehicleTypes
     Q_MOC_INCLUDE("AutoPilotPlugin.h")
     Q_MOC_INCLUDE("Autotune.h")
     Q_MOC_INCLUDE("GimbalController.h")
+    Q_MOC_INCLUDE("OpticalFlowCalibrator.h")
     Q_MOC_INCLUDE("LinkInterface.h")
     Q_MOC_INCLUDE("MAVLinkLogManager.h")
     Q_MOC_INCLUDE("ParameterManager.h")
@@ -146,6 +150,7 @@ public:
     Q_PROPERTY(AutoPilotPlugin*     autopilotPlugin             MEMBER _autopilotPlugin                                             CONSTANT)
     Q_PROPERTY(QGeoCoordinate       coordinate                  READ coordinate                                                     NOTIFY coordinateChanged)
     Q_PROPERTY(QGeoCoordinate       homePosition                READ homePosition                                                   NOTIFY homePositionChanged)
+    Q_PROPERTY(QGeoCoordinate       estimatorOrigin             READ estimatorOrigin                                                NOTIFY estimatorOriginChanged)
     Q_PROPERTY(QGeoCoordinate       armedPosition               READ armedPosition                                                  NOTIFY armedPositionChanged)
     Q_PROPERTY(bool                 armed                       READ armed                      WRITE setArmedShowError             NOTIFY armedChanged)
     Q_PROPERTY(bool                 autoDisarm                  READ autoDisarm                                                     NOTIFY autoDisarmChanged)
@@ -171,6 +176,7 @@ public:
     Q_PROPERTY(bool                 sub                         READ sub                                                            NOTIFY vehicleTypeChanged)
     Q_PROPERTY(VehicleSupports*     supports                    READ supports                                                       CONSTANT)
     Q_PROPERTY(QString              prearmError                 READ prearmError                WRITE setPrearmError                NOTIFY prearmErrorChanged)
+    Q_PROPERTY(bool                 armingBlocked               READ armingBlocked                                                  NOTIFY armingBlockedChanged)
     Q_PROPERTY(int                  motorCount                  READ motorCount                                                     CONSTANT)
     Q_PROPERTY(bool                 coaxialMotors               READ coaxialMotors                                                  CONSTANT)
     Q_PROPERTY(bool                 xConfigMotors               READ xConfigMotors                                                  CONSTANT)
@@ -204,12 +210,15 @@ public:
     Q_PROPERTY(GimbalController*    gimbalController            READ gimbalController                                               CONSTANT)
     Q_PROPERTY(bool                 hasGripper                  READ hasGripper                                                     NOTIFY hasGripperChanged)
     Q_PROPERTY(bool                 isROIEnabled                READ isROIEnabled                                                   NOTIFY isROIEnabledChanged)
+    Q_PROPERTY(double               roiRelativeAltitudeMeters   READ roiRelativeAltitudeMeters                                      NOTIFY roiRelativeAltitudeMetersChanged)
     Q_PROPERTY(CheckList            checkListState              READ checkListState             WRITE setCheckListState             NOTIFY checkListStateChanged)
     Q_PROPERTY(bool                 readyToFlyAvailable         READ readyToFlyAvailable                                            NOTIFY readyToFlyAvailableChanged)  ///< true: readyToFly signalling is available on this vehicle
     Q_PROPERTY(bool                 readyToFly                  READ readyToFly                                                     NOTIFY readyToFlyChanged)
     Q_PROPERTY(QObject*             sysStatusSensorInfo         READ sysStatusSensorInfo                                            CONSTANT)
     Q_PROPERTY(bool                 allSensorsHealthy           READ allSensorsHealthy                                              NOTIFY allSensorsHealthyChanged)    //< true: all sensors in SYS_STATUS reported as healthy
     Q_PROPERTY(bool                 requiresGpsFix              READ requiresGpsFix                                                 NOTIFY requiresGpsFixChanged)
+    Q_PROPERTY(bool                 navigatingWithoutGNSS       READ navigatingWithoutGNSS                                          NOTIFY navigatingWithoutGNSSChanged)
+    Q_PROPERTY(bool                 positionConfirmedSinceLastFlight READ positionConfirmedSinceLastFlight                          NOTIFY positionConfirmedSinceLastFlightChanged)
     Q_PROPERTY(double               loadProgress                READ loadProgress                                                   NOTIFY loadProgressChanged)
     Q_PROPERTY(bool                 initialConnectComplete      READ isInitialConnectComplete                                       NOTIFY initialConnectComplete)
 
@@ -229,6 +238,7 @@ public:
     Q_PROPERTY(VehicleLinkManager*      vehicleLinkManager  READ vehicleLinkManager CONSTANT)
     Q_PROPERTY(VehicleObjectAvoidance*  objectAvoidance     READ objectAvoidance    CONSTANT)
     Q_PROPERTY(Autotune*                autotune            READ autotune           CONSTANT)
+    Q_PROPERTY(OpticalFlowCalibrator*   opticalFlowCalibrator READ opticalFlowCalibrator CONSTANT)
     Q_PROPERTY(RemoteIDManager*         remoteIDManager     READ remoteIDManager    CONSTANT)
 
     // FactGroup object model properties
@@ -247,7 +257,9 @@ public:
     Q_PROPERTY(FactGroup*           distanceSensors READ distanceSensorFactGroup    CONSTANT)
     Q_PROPERTY(FactGroup*           localPosition   READ localPositionFactGroup     CONSTANT)
     Q_PROPERTY(FactGroup*           localPositionSetpoint READ localPositionSetpointFactGroup CONSTANT)
+    Q_PROPERTY(FactGroup*           opticalFlow     READ opticalFlowFactGroup       CONSTANT)
     Q_PROPERTY(FactGroup*           hygrometer      READ hygrometerFactGroup        CONSTANT)
+    Q_PROPERTY(FactGroup*           airspeedSensor  READ airspeedSensorFactGroup    CONSTANT)
     Q_PROPERTY(FactGroup*           generator       READ generatorFactGroup         CONSTANT)
     Q_PROPERTY(FactGroup*           efi             READ efiFactGroup               CONSTANT)
     Q_PROPERTY(FactGroup*           radioStatus     READ radioStatusFactGroup       CONSTANT)
@@ -323,9 +335,11 @@ public:
     ///     @param amslAltitude Desired vehicle altitude
     Q_INVOKABLE void guidedModeOrbit(const QGeoCoordinate& centerCoord, double radius, double amslAltitude);
 
-    /// Command vehicle to keep given point as ROI
-    ///     @param centerCoord ROI coordinates
-    Q_INVOKABLE void guidedModeROI(const QGeoCoordinate& centerCoord);
+    /// Command vehicle to set a Region Of Interest at the specified location.
+    ///     @param centerCoord ROI location (altitude within the coordinate is ignored)
+    ///     @param relativeAltitudeMeters ROI altitude in meters above home
+    /// @return true: ROI command sent, false: unable to send
+    Q_INVOKABLE bool guidedModeROI(const QGeoCoordinate &centerCoord, double relativeAltitudeMeters);
     Q_INVOKABLE void stopGuidedModeROI();
 
     /// Command vehicle to pause at current location. If vehicle supports guide mode, vehicle will be left
@@ -354,11 +368,38 @@ public:
     /// Reboot vehicle
     Q_INVOKABLE void rebootVehicle();
 
+    /// Ask the autopilot to run its pre-arm checks now and say what is failing.
+    ///
+    /// The answer comes back as ordinary status text, which is the path a refusal reason already
+    /// takes to the UI. Nothing is sent while armed: the checks are meaningless then and ArduPilot
+    /// rejects the command outright.
+    Q_INVOKABLE void requestPrearmCheckReport();
+
     Q_INVOKABLE void sendPlan(QString planFile);
     Q_INVOKABLE void setEstimatorOrigin(const QGeoCoordinate& centerCoord);
 
     /// Fallback for setEstimatorOrigin which sends the deprecated SET_GPS_GLOBAL_ORIGIN message.
     void setEstimatorOrigin_SET_GPS_GLOBAL_ORIGIN(const QGeoCoordinate& centerCoord);
+
+    /// Tells the vehicle where it actually is, for an estimator whose frame has slid away from the
+    /// ground beneath it.
+    ///
+    /// This is not a second origin -- the origin cannot be changed once set, and this does not try
+    /// to. It resets the filter's own position within the frame the origin already anchors, which
+    /// is what an aircraft navigating on optical flow needs after its estimate has crept: without
+    /// it the only remedy is a power cycle.
+    ///
+    /// Answered on externalPositionEstimateResult rather than by a generic error dialog. The
+    /// refusals carry the diagnosis -- firmware built without the feature, an estimator that has
+    /// stopped aiding and cannot take a correction -- and a message saying only that a command
+    /// failed throws all of that away.
+    ///
+    ///     @param coordinate       Where the vehicle really is
+    ///     @param accuracyMetres   One standard deviation of how well that is known, NaN if unknown
+    Q_INVOKABLE void sendExternalPositionEstimate(const QGeoCoordinate& coordinate, float accuracyMetres = std::numeric_limits<float>::quiet_NaN());
+
+    /// Records the estimator origin reported by the vehicle.
+    void _handleGpsGlobalOrigin(const mavlink_message_t& message);
 
     /// Used to check if running current version is equal or higher than the one being compared.
     //  returns 1 if current > compare, 0 if current == compare, -1 if current < compare
@@ -450,6 +491,32 @@ public:
 
     QGeoCoordinate homePosition();
 
+    /// The estimator origin the vehicle is currently using, or an invalid coordinate when it has
+    /// none. Vehicles flying without GNSS have no origin until one is set, and until then they
+    /// cannot resolve a mission altitude that is relative to home -- an auto takeoff started in
+    /// that state climbs and then never reports completion, stalling the mission on its first item.
+    QGeoCoordinate estimatorOrigin() const { return _estimatorOrigin; }
+
+    /// True while the operator has said where the vehicle is standing and it has not flown since.
+    ///
+    /// An aircraft navigating on optical flow carries its position forward by dead reckoning, so the
+    /// estimate creeps -- and landing does not undo the creep. The frame the next mission is flown
+    /// in is the frame the last one drifted into, and because the plan is drawn against the origin,
+    /// a frame that has slid puts every waypoint out by the same distance in the same direction. The
+    /// pattern is right and the ground track is not, with nothing on screen to say so: the aircraft
+    /// reports itself exactly where the plan says it should be.
+    ///
+    /// Set by stating a position -- either the origin, which is placed where the aircraft stands, or
+    /// a correction sent with sendExternalPositionEstimate and accepted. Cleared the moment the
+    /// vehicle touches down, so the statement covers one flight and is made again before the next.
+    bool positionConfirmedSinceLastFlight() const { return _positionConfirmedSinceLastFlight; }
+
+    /// Asks the vehicle to report its estimator origin. ArduPilot emits GPS_GLOBAL_ORIGIN when the
+    /// origin is first set and whenever it is requested, so QGC asks once the initial connection
+    /// completes to learn about an origin that was set before we connected. Callable again to
+    /// refresh, since the vehicle gives no other notification that its origin has gone away.
+    Q_INVOKABLE void requestEstimatorOrigin();
+
     bool armed              () const{ return _armed; }
     void setArmed           (bool armed, bool showError);
     void setArmedShowError  (bool armed) { setArmed(armed, true); }
@@ -475,6 +542,17 @@ public:
     void setGuidedMode(bool guidedMode);
 
     QString prearmError() const { return _prearmError; }
+
+    /// True while the autopilot is refusing to arm.
+    ///
+    /// Two things say so and neither is enough alone. SYS_STATUS carries a pre-arm check bit on
+    /// every frame, so it holds the refusal for as long as it lasts but never gives a reason;
+    /// prearmError is the reason, but it is a message rather than a state and QGC lets it go again
+    /// after 35 seconds. Either one being true is a refusal.
+    ///
+    /// Always false for firmware that reports its checks as structured events, which never sets
+    /// prearmError and states all of this in healthAndArmingCheckReport instead.
+    bool armingBlocked() const { return _armingBlocked; }
     void setPrearmError(const QString& prearmError);
 
     QmlObjectListModel* cameraTriggerPoints ();
@@ -537,6 +615,13 @@ public:
     bool            allSensorsHealthy           () const{ return _allSensorsHealthy; }
     QObject*        sysStatusSensorInfo         ();
     bool            requiresGpsFix              () const { return static_cast<bool>(_onboardControlSensorsPresent & MAV_SYS_STATUS_SENSOR_GPS); }
+
+    /// True when this vehicle's estimator is not using GNSS for horizontal position, and so needs
+    /// an estimator origin set by hand before it has a home to fly a mission against. Distinct from
+    /// requiresGpsFix, which only reports whether a GPS is fitted -- a GNSS-denied aircraft
+    /// commonly carries one purely to log ground truth.
+    bool            navigatingWithoutGNSS       () const;
+
     bool            hilMode                     () const { return _base_mode & MAV_MODE_FLAG_HIL_ENABLED; }
     Actuators*      actuators                   () const { return _actuators; }
     VehicleSigningController* signingController() { return _signingController; }
@@ -560,9 +645,11 @@ public:
     FactGroup* distanceSensorFactGroup      ();
     FactGroup* localPositionFactGroup       ();
     FactGroup* localPositionSetpointFactGroup();
+    FactGroup* opticalFlowFactGroup         ();
     FactGroup* estimatorStatusFactGroup     ();
     FactGroup* terrainFactGroup             ();
     FactGroup* hygrometerFactGroup          ();
+    FactGroup* airspeedSensorFactGroup      ();
     FactGroup* generatorFactGroup           ();
     FactGroup* efiFactGroup                 ();
     FactGroup* radioStatusFactGroup         ();
@@ -581,9 +668,8 @@ public:
     ComponentInformationManager*    compInfoManager     () { return _componentInformationManager; }
     VehicleObjectAvoidance*         objectAvoidance     () { return _objectAvoidance; }
     Autotune*                       autotune            () const { return _autotune; }
+    OpticalFlowCalibrator*          opticalFlowCalibrator() const { return _opticalFlowCalibrator; }
     RemoteIDManager*                remoteIDManager     () { return _remoteIDManager; }
-
-    static void showCommandAckError(const mavlink_command_ack_t& ack);
 
     /// Sends the specified MAV_CMD to the vehicle. If no Ack is received command will be retried. If a sendMavCommand is already in progress
     /// the command will be queued and sent when the previous command completes.
@@ -718,6 +804,7 @@ public:
 
     void _setFlying(bool flying);
     void _setLanding(bool landing);
+    void _setPositionConfirmedSinceLastFlight(bool confirmed);
     void _setHomePosition(QGeoCoordinate& homeCoord);
 
     /// Vehicle is about to be deleted
@@ -732,6 +819,9 @@ public:
     float       mavlinkLossPercent      () const{ return _mavlinkLossPercent; }      /// Running loss rate
 
     bool        isROIEnabled            () const{ return _isROIEnabled; }
+
+    /// Last commanded ROI altitude in meters above home. Used to preserve the altitude when the ROI is re-positioned.
+    double      roiRelativeAltitudeMeters() const{ return _roiRelativeAltitudeMeters; }
 
     CheckList   checkListState          () { return _checkListState; }
     void        setCheckListState       (CheckList cl)  { _checkListState = cl; emit checkListStateChanged(); }
@@ -752,6 +842,16 @@ signals:
     void coordinateChanged              (QGeoCoordinate coordinate);
     void mavlinkMessageReceived         (const mavlink_message_t& message);
     void homePositionChanged            (const QGeoCoordinate& homePosition);
+    void estimatorOriginChanged         (const QGeoCoordinate& estimatorOrigin);
+
+    /// The vehicle's answer to sendExternalPositionEstimate.
+    ///     @param accepted True when the correction was applied
+    ///     @param reason   Why it was not, in words the operator can act on; empty when accepted
+    void externalPositionEstimateResult  (bool accepted, const QString& reason);
+
+    /// Raised when the operator states where the vehicle is, and again when it lands and that
+    /// statement stops covering the next flight.
+    void positionConfirmedSinceLastFlightChanged();
     void armedPositionChanged();
     void armedChanged                   (bool armed);
     void flightModeChanged              (const QString& flightMode);
@@ -761,6 +861,7 @@ signals:
     void inFwdFlightChanged             ();
     void vtolInFwdFlightChanged         (bool vtolInFwdFlight);
     void prearmErrorChanged             (const QString& prearmError);
+    void armingBlockedChanged           (bool armingBlocked);
     void soloFirmwareChanged            (bool soloFirmware);
     void defaultCruiseSpeedChanged      (double cruiseSpeed);
     void defaultHoverSpeedChanged       (double hoverSpeed);
@@ -785,6 +886,7 @@ signals:
     void readyToFlyChanged              (bool readyToFy);
     void allSensorsHealthyChanged       (bool allSensorsHealthy);
     void requiresGpsFixChanged          ();
+    void navigatingWithoutGNSSChanged   ();
     void haveMRSpeedLimChanged          ();
     void haveFWSpeedLimChanged          ();
     void hasGripperChanged              ();
@@ -824,6 +926,7 @@ signals:
     void mavlinkStatusChanged           ();
 
     void isROIEnabledChanged            ();
+    void roiRelativeAltitudeMetersChanged();
     void roiCoordChanged                (const QGeoCoordinate& centerCoord);
     void initialConnectComplete         ();
 
@@ -860,6 +963,12 @@ private slots:
 
 private:
     void _activeVehicleChanged          (Vehicle* newActiveVehicle);
+
+    /// Re-reports navigatingWithoutGNSS and keeps it live by watching the estimator source
+    /// parameters it is read from. Those get edited during bring-up, and a stale answer decides
+    /// whether the operator is offered the estimator origin controls at all.
+    void _watchEstimatorSourceParameters();
+
     void _handlePing                    (LinkInterface* link, mavlink_message_t& message);
     void _handleHomePosition            (mavlink_message_t& message);
     void _handleHeartbeat               (mavlink_message_t& message);
@@ -904,6 +1013,15 @@ private:
     QString _formatMavCommand           (MAV_CMD command, float param1);
 
     static void _rebootCommandResultHandler(void* resultHandlerData, int compId, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode);
+    static void _externalPositionEstimateResultHandler(void* resultHandlerData, int compId, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode);
+
+    /// Why the vehicle would not take a position correction, in words the operator can act on
+    static QString _externalPositionEstimateFailureText(const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode);
+
+    /// A monotonic time in QGC's own domain for MAV_CMD_EXTERNAL_POSITION_ESTIMATE
+    float _externalPositionTimestampSecs();
+
+    QElapsedTimer _externalPositionTimer;
 
     // The following methods should only be called by unit tests
     void _deleteGimbalController();
@@ -931,7 +1049,13 @@ private:
 
     QGeoCoordinate  _coordinate;
     QGeoCoordinate  _homePosition;
+    QGeoCoordinate  _estimatorOrigin;
     QGeoCoordinate  _armedPosition;
+
+    /// Starts false: a vehicle QGC has just met has not been stood anywhere by this operator, and
+    /// an estimate that has been running while nobody was watching is exactly the one worth
+    /// restating.
+    bool            _positionConfirmedSinceLastFlight = false;
 
     qreal           _initialGCSPressure = 0.;
     qreal           _initialGCSTemperature = 0.;
@@ -965,12 +1089,23 @@ private:
     QTimer              _prearmErrorTimer;
     static const int    _prearmErrorTimeoutMSecs = 35 * 1000;   ///< Take away prearm error after 35 seconds
 
+    bool                _armingBlocked = false;
+    /// Asks the autopilot for a reason while it is refusing to arm without having given one
+    QTimer              _prearmReasonRequestTimer;
+    /// Set once the vehicle answers that it cannot run its checks on request, so we stop asking
+    bool                _prearmReportUnsupported = false;
+    static const int    _prearmReasonRequestIntervalMSecs = 10 * 1000;
+
+    void _updateArmingBlocked();
+    static void _prearmCheckRequestResultHandler(void* resultHandlerData, int compId, const mavlink_command_ack_t& ack, MavCmdResultFailureCode_t failureCode);
+
     bool                _initialPlanRequestComplete = false;
 
     ParameterManager*               _parameterManager               = nullptr;
     ComponentInformationManager*    _componentInformationManager    = nullptr;
     VehicleObjectAvoidance*         _objectAvoidance                = nullptr;
     Autotune*                       _autotune                       = nullptr;
+    OpticalFlowCalibrator*          _opticalFlowCalibrator          = nullptr;
     GimbalController*               _gimbalController               = nullptr;
     VehicleSupports*                _vehicleSupports                = nullptr;
 
@@ -1011,6 +1146,7 @@ private:
     bool                _heardFrom = false;
 
     bool                _isROIEnabled   = false;
+    double              _roiRelativeAltitudeMeters = 0;
 \
     bool _checkLatestStableFWDone = false;
     int _firmwareMajorVersion = versionNotSetValue;
@@ -1083,9 +1219,11 @@ public:
     const QString _distanceSensorFactGroupName =     QStringLiteral("distanceSensor");
     const QString _localPositionFactGroupName =      QStringLiteral("localPosition");
     const QString _localPositionSetpointFactGroupName = QStringLiteral("localPositionSetpoint");
+    const QString _opticalFlowFactGroupName =        QStringLiteral("opticalFlow");
     const QString _estimatorStatusFactGroupName =    QStringLiteral("estimatorStatus");
     const QString _terrainFactGroupName =            QStringLiteral("terrain");
     const QString _hygrometerFactGroupName =         QStringLiteral("hygrometer");
+    const QString _airspeedSensorFactGroupName =     QStringLiteral("airspeedSensor");
     const QString _generatorFactGroupName =          QStringLiteral("generator");
     const QString _efiFactGroupName =                QStringLiteral("efi");
     const QString _rpmFactGroupName =                QStringLiteral("rpm");
@@ -1103,8 +1241,10 @@ public:
     VehicleDistanceSensorFactGroup*     _distanceSensorFactGroup    = nullptr;
     VehicleLocalPositionFactGroup*      _localPositionFactGroup     = nullptr;
     VehicleLocalPositionSetpointFactGroup* _localPositionSetpointFactGroup = nullptr;
+    VehicleOpticalFlowFactGroup*        _opticalFlowFactGroup       = nullptr;
     VehicleEstimatorStatusFactGroup*    _estimatorStatusFactGroup   = nullptr;
     VehicleHygrometerFactGroup*         _hygrometerFactGroup        = nullptr;
+    VehicleAirspeedSensorFactGroup*     _airspeedSensorFactGroup    = nullptr;
     VehicleGeneratorFactGroup*          _generatorFactGroup         = nullptr;
     VehicleEFIFactGroup*                _efiFactGroup               = nullptr;
     VehicleRPMFactGroup*                _rpmFactGroup               = nullptr;

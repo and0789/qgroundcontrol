@@ -167,6 +167,8 @@ Qt*-linux*.tar.*
 # Local Development Tools
 # ------------------------------------------------------------------------------
 
+/profiler/
+
 # AI Assistants
 .claude/
 .gemini/
@@ -176,6 +178,7 @@ Qt*-linux*.tar.*
 # Python tooling caches
 .ruff_cache/
 .pytest_cache/
+pytest-of-*/
 .import_linter_cache/
 .venv/
 
@@ -188,3 +191,9 @@ Qt*-linux*.tar.*
 .tool-versions
 .python-version
 !tools/.python-version
+
+# Local SITL helper and MAVProxy artefacts: machine-specific paths, not shared
+sitl-lapangan.sh
+mav.parm
+mav.tlog
+mav.tlog.raw

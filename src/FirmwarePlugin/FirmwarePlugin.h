@@ -200,6 +200,12 @@ public:
     /// Command vehicle to rotate towards specified location.
     virtual void guidedModeChangeHeading(Vehicle *vehicle, const QGeoCoordinate &headingCoord) const;
 
+    /// Command vehicle to set a Region Of Interest at the specified location.
+    ///     @param roiCenterCoord ROI location (altitude within the coordinate is ignored)
+    ///     @param relativeAltitudeMeters ROI altitude in meters above home
+    /// @return true: ROI command sent, false: unable to send
+    virtual bool guidedModeROI(Vehicle *vehicle, const QGeoCoordinate &roiCenterCoord, double relativeAltitudeMeters) const;
+
     /// @return The minimum takeoff altitude (relative) for guided takeoff.
     virtual double minimumTakeoffAltitudeMeters(Vehicle* /*vehicle*/) const { return 3.048; }
 
@@ -214,6 +220,18 @@ public:
 
     /// @return Return true if the GCS has enabled Grip_enable option
     virtual bool hasGripper(const Vehicle* /*vehicle*/) const { return false; }
+
+    /// @return true when the vehicle's estimator is not using GNSS for horizontal position.
+    ///
+    /// A vehicle in that state gets no estimator origin on its own, so it has no home and cannot
+    /// resolve an altitude relative to one until an origin is set by hand. Asking whether a GPS is
+    /// fitted answers a different question: a GNSS-denied research aircraft often carries one for
+    /// ground truth logging while the estimator ignores it entirely.
+    virtual bool navigatingWithoutGNSS(const Vehicle *vehicle) const;
+
+    /// @return Names of the parameters whose value navigatingWithoutGNSS() reads, so Vehicle can
+    /// watch them and re-report when the operator changes the estimator's sources.
+    virtual QStringList estimatorSourceParameterNames() const { return QStringList(); }
 
     /// @return Return true if we have received the ground speed limits for the mulirotor.
     virtual bool mulirotorSpeedLimitsAvailable(Vehicle* /*vehicle*/) const { return false; }
@@ -399,6 +417,9 @@ protected:
     /// Arms the vehicle with validation and retries
     ///     @return: true - vehicle armed, false - vehicle failed to arm
     bool _armVehicleAndValidate(Vehicle *vehicle) const;
+
+    /// Build + send MAV_CMD_DO_SET_ROI_LOCATION (COMMAND_INT when the vehicle supports it).
+    void _sendROICommand(Vehicle *vehicle, const QGeoCoordinate &coord, MAV_FRAME frame, float altitude) const;
 
     /// Sets the vehicle to the specified flight mode with validation and retries
     ///     @return: true - vehicle in specified flight mode, false - flight mode change failed

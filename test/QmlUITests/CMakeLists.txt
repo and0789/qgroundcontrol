@@ -30,8 +30,20 @@ target_sources(${CMAKE_PROJECT_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/PX4AirframeSetupUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/AppCloseWarningUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/AppCloseWarningUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/SetEstimatorOriginUITest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/SetEstimatorOriginUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewLocalGridUITest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewLocalGridUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridPositionCorrectionUITest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridPositionCorrectionUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridResponsiveLayoutTest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridResponsiveLayoutTest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridTestSupport.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/LocalGridTestSupport.h
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewProximityRadarUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewProximityRadarUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewROIUITest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewROIUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewGeoUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewGeoUITest.h
         # Manual perf benchmark: standalone-registered, deliberately NOT added
@@ -64,7 +76,13 @@ add_qgc_test(APMSensorsCalibrationUITest LABELS Integration NoSanitizer TIMEOUT 
 add_qgc_test(APMFreshFlashUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(PX4AirframeSetupUITest LABELS Integration NoSanitizer StockUI TIMEOUT 120)
 add_qgc_test(AppCloseWarningUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(FlyViewLocalGridUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(SetEstimatorOriginUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(LocalGridPositionCorrectionUITest LABELS Integration NoSanitizer TIMEOUT 180)
+add_qgc_test(LocalGridResponsiveLayoutTest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(FlyViewProximityRadarUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(FlyViewROIUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(FlyViewROIAPMUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(NTRIPSettingsUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(OnboardLogUITest LABELS Integration NoSanitizer TIMEOUT 180)
 add_qgc_test(ParameterDiffDialogUITest LABELS Integration NoSanitizer TIMEOUT 180)

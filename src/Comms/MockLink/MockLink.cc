@@ -69,6 +69,7 @@ MockLink::MockLink(SharedLinkConfigurationPtr &config, QObject *parent)
     , _enableCamera(_mockConfig->enableCamera())
     , _enableGimbal(_mockConfig->enableGimbal())
     , _enableProximity(_mockConfig->enableProximity())
+    , _enableAirspeed(_mockConfig->enableAirspeed())
     , _failureMode(_mockConfig->failureMode())
     , _stayMavlinkV1(_mockConfig->stayMavlinkV1())
     , _ftpCapability(_mockConfig->ftpCapability())
@@ -329,6 +330,10 @@ void MockLink::run1HzTasks()
         _sendDistanceSensors();
     }
 
+    if (_enableAirspeed) {
+        _sendAirspeed();
+    }
+
     _sendEscInfo();
     _sendEscStatus();
     _sendRadioStatus();
@@ -342,8 +347,8 @@ void MockLink::run1HzTasks()
         _sendRCChannels();
     }
 
-    if (_sendHomePositionDelayCount > 0) {
-        // We delay home position for better testing
+    if (_sendHomePositionDelayCount > 0 && !QGC::runningUnitTests()) {
+        // We delay home position to simulate a real vehicle, but not during unit tests to keep them fast
         _sendHomePositionDelayCount--;
     } else {
         _sendHomePosition();
@@ -756,14 +761,23 @@ void MockLink::_sendHighLatency2()
 
 void MockLink::_sendSysStatus()
 {
+    uint32_t sensorsPresent = MAV_SYS_STATUS_SENSOR_GPS;
+    uint32_t sensorsEnabled = 0;
+    // Health stays clear for the pre-arm check: present and enabled says the autopilot runs the
+    // check, and the health bit being down is how it says the check is failing
+    if (_prearmCheckFailing) {
+        sensorsPresent |= MAV_SYS_STATUS_PREARM_CHECK;
+        sensorsEnabled |= MAV_SYS_STATUS_PREARM_CHECK;
+    }
+
     mavlink_message_t msg{};
     (void) mavlink_msg_sys_status_pack_chan(
         _vehicleSystemId,
         _vehicleComponentId,
         _outgoingMavlinkChannel,
         &msg,
-        MAV_SYS_STATUS_SENSOR_GPS,  // onboard_control_sensors_present
-        0,                          // onboard_control_sensors_enabled
+        sensorsPresent,             // onboard_control_sensors_present
+        sensorsEnabled,             // onboard_control_sensors_enabled
         0,                          // onboard_control_sensors_health
         250,                        // load
         4200 * 4,                   // voltage_battery
@@ -911,6 +925,35 @@ void MockLink::_sendVibration()
         1,       // clipping_0
         2,       // clipping_0
         3        // clipping_0
+    );
+    respondWithMavlinkMessage(msg);
+}
+
+void MockLink::_sendAirspeed()
+{
+    // Swept rather than fixed. A reading that never moves is exactly what a dead sensor looks like,
+    // so a mock that sends one constant number cannot show that the panel reading it is live.
+    const double sweep = std::sin(_runningTime.elapsed() / 5000.0);
+    const float airspeedMetersPerSecond = static_cast<float>(3.0 + (2.0 * sweep));
+
+    // Derived from the speed above rather than picked separately, using q = 1/2 rho v^2 at sea level
+    // density. The autopilot works one from the other, and a mock whose two numbers disagreed would
+    // let a unit or scaling mistake in the panel pass unnoticed.
+    const float rawPressurePascals = 0.5f * 1.225f * airspeedMetersPerSecond * airspeedMetersPerSecond;
+
+    mavlink_message_t msg{};
+    (void) mavlink_msg_airspeed_pack_chan(
+        _vehicleSystemId,
+        _vehicleComponentId,
+        _outgoingMavlinkChannel,
+        &msg,
+        0,                          // id: first sensor
+        airspeedMetersPerSecond,
+        2500,                       // temperature, centi-degrees C
+        rawPressurePascals,
+        // Healthy, and not the estimator's source -- which is what a multirotor with ARSPD_USE at
+        // zero reports, and the state the panel has a line of its own for.
+        0
     );
     respondWithMavlinkMessage(msg);
 }
@@ -1110,6 +1153,9 @@ void MockLink::_handleIncomingMavlinkMsg(const mavlink_message_t &msg)
         break;
     case MAVLINK_MSG_ID_COMMAND_INT:
         _handleCommandInt(msg);
+        break;
+    case MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN:
+        _handleSetGpsGlobalOrigin(msg);
         break;
     case MAVLINK_MSG_ID_MANUAL_CONTROL:
         _handleManualControl(msg);
@@ -1926,10 +1972,27 @@ void MockLink::_handleCommandLong(const mavlink_message_t &msg)
     case MAV_CMD_COMPONENT_ARM_DISARM:
         if (request.param1 == 0.0f) {
             _mavBaseMode &= ~MAV_MODE_FLAG_SAFETY_ARMED;
+            commandResult = MAV_RESULT_ACCEPTED;
+        } else if (_prearmCheckFailing && (request.param2 != kForceArmMagic)) {
+            // Refusing to arm is what a failing pre-arm check is for. Force arming is the one way
+            // past it, the same as on a real vehicle.
+            commandResult = MAV_RESULT_FAILED;
         } else {
             _mavBaseMode |= MAV_MODE_FLAG_SAFETY_ARMED;
+            commandResult = MAV_RESULT_ACCEPTED;
         }
-        commandResult = MAV_RESULT_ACCEPTED;
+        break;
+    case MAV_CMD_RUN_PREARM_CHECKS:
+        // Only ArduPilot implements this. It runs the checks with reporting forced on and names the
+        // failing one in ordinary status text -- the same path a volunteered reason travels. Every
+        // other stack falls through to the UNSUPPORTED default, which is the answer QGC reads as
+        // "stop asking".
+        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+            commandResult = MAV_RESULT_ACCEPTED;
+            if (_prearmCheckFailing) {
+                sendStatusTextMessage(MAV_SEVERITY_CRITICAL, QString::fromLatin1(kPrearmCheckFailureText));
+            }
+        }
         break;
     case MAV_CMD_PREFLIGHT_CALIBRATION:
         _handlePreFlightCalibration(request);
@@ -2076,11 +2139,19 @@ void MockLink::_handleCommandInt(const mavlink_message_t &msg)
     mavlink_command_int_t request{};
     mavlink_msg_command_int_decode(&msg, &request);
 
-    // MockLink does not implement any COMMAND_INT commands yet, so it reports them as
-    // unsupported (mirroring the COMMAND_LONG default for unrecognized commands). This
-    // lets unit tests exercise "try command, fall back to legacy message" code paths
+    // Unrecognized commands are reported as unsupported (mirroring the COMMAND_LONG default).
+    // This lets unit tests exercise "try command, fall back to legacy message" code paths
     // such as Vehicle::setEstimatorOrigin.
-    const uint8_t commandResult = MAV_RESULT_UNSUPPORTED;
+    uint8_t commandResult = MAV_RESULT_UNSUPPORTED;
+
+    switch (request.command) {
+    case MAV_CMD_DO_SET_ROI_LOCATION:
+        // Unit test support: accept ROI commands so tests can verify Vehicle::guidedModeROI
+        commandResult = MAV_RESULT_ACCEPTED;
+        break;
+    default:
+        break;
+    }
 
     mavlink_message_t commandAck{};
     (void) mavlink_msg_command_ack_pack_chan(
@@ -2146,6 +2217,7 @@ void MockLink::_respondWithAutopilotVersion()
 
     const uint8_t customVersion[8]{};
     const uint64_t capabilities = MAV_PROTOCOL_CAPABILITY_MAVLINK2 | MAV_PROTOCOL_CAPABILITY_MISSION_FENCE | MAV_PROTOCOL_CAPABILITY_MISSION_RALLY | MAV_PROTOCOL_CAPABILITY_MISSION_INT
+        | MAV_PROTOCOL_CAPABILITY_COMMAND_INT   // matches modern PX4/ArduPilot so tests exercise the preferred COMMAND_INT path
         | ((_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) ? MAV_PROTOCOL_CAPABILITY_TERRAIN : 0)
         | (_ftpCapability ? MAV_PROTOCOL_CAPABILITY_FTP : 0);
 
@@ -2500,6 +2572,7 @@ MockLink *MockLink::_startMockLinkWorker(const QString &configName, MAV_AUTOPILO
     mockConfig->setEnableCamera(options.testFlag(MockConfiguration::OptionEnableCamera));
     mockConfig->setEnableGimbal(options.testFlag(MockConfiguration::OptionEnableGimbal));
     mockConfig->setEnableProximity(options.testFlag(MockConfiguration::OptionEnableProximity));
+    mockConfig->setEnableAirspeed(options.testFlag(MockConfiguration::OptionEnableAirspeed));
     mockConfig->setPreloadMission(options.testFlag(MockConfiguration::OptionPreloadMission));
     mockConfig->setStayMavlinkV1(options.testFlag(MockConfiguration::OptionStayMavlinkV1));
     mockConfig->setApmStartFreshParams(options.testFlag(MockConfiguration::OptionAPMStartFreshParams));
@@ -3000,7 +3073,39 @@ void MockLink::_handleRequestMessage(const mavlink_command_long_t &request, bool
     case MAVLINK_MSG_ID_AVAILABLE_MODES:
         _handleRequestMessageAvailableModes(request, accepted);
         break;
+    case MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN:
+        _handleRequestMessageGpsGlobalOrigin(accepted);
+        break;
     }
+}
+
+void MockLink::_handleSetGpsGlobalOrigin(const mavlink_message_t &msg)
+{
+    mavlink_set_gps_global_origin_t request{};
+    mavlink_msg_set_gps_global_origin_decode(&msg, &request);
+
+    _estimatorOriginLat = request.latitude;
+    _estimatorOriginLon = request.longitude;
+    _estimatorOriginAlt = request.altitude;
+}
+
+void MockLink::_handleRequestMessageGpsGlobalOrigin(bool &accepted)
+{
+    accepted = true;
+
+    // Mirrors ArduPilot: a vehicle with no origin still answers, reporting zeros. That distinction
+    // matters to QGC, which must tell "no origin yet" apart from "vehicle never replied".
+    mavlink_message_t message{};
+    (void) mavlink_msg_gps_global_origin_pack_chan(
+        _vehicleSystemId,
+        _vehicleComponentId,
+        _outgoingMavlinkChannel,
+        &message,
+        _estimatorOriginLat,
+        _estimatorOriginLon,
+        _estimatorOriginAlt,
+        0);   // time_usec
+    respondWithMavlinkMessage(message);
 }
 
 void MockLink::_sendGeneralMetaData()

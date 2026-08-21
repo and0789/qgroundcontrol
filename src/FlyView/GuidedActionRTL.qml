@@ -4,7 +4,7 @@ import QGroundControl.FlyView
 GuidedToolStripAction {
     text:       _guidedController.rtlTitle
     iconSource: "/res/rtl.svg"
-    visible:    true
+    visible:    !_planEditMode
     enabled:    _guidedController.showRTL
     actionID:   _guidedController.actionRTL
 }

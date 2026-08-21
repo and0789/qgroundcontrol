@@ -14,6 +14,7 @@ class MockConfiguration : public LinkConfiguration
     Q_PROPERTY(bool enableCamera                         READ enableCamera                        WRITE setEnableCamera                        NOTIFY enableCameraChanged)
     Q_PROPERTY(bool enableGimbal                        READ enableGimbal                        WRITE setEnableGimbal                        NOTIFY enableGimbalChanged)
     Q_PROPERTY(bool enableProximity                      READ enableProximity                     WRITE setEnableProximity                     NOTIFY enableProximityChanged)
+    Q_PROPERTY(bool enableAirspeed                       READ enableAirspeed                      WRITE setEnableAirspeed                      NOTIFY enableAirspeedChanged)
     Q_PROPERTY(bool gimbalHasRollAxis                   READ gimbalHasRollAxis                   WRITE setGimbalHasRollAxis                   NOTIFY gimbalHasRollAxisChanged)
     Q_PROPERTY(bool gimbalHasPitchAxis                  READ gimbalHasPitchAxis                  WRITE setGimbalHasPitchAxis                  NOTIFY gimbalHasPitchAxisChanged)
     Q_PROPERTY(bool gimbalHasYawAxis                    READ gimbalHasYawAxis                    WRITE setGimbalHasYawAxis                    NOTIFY gimbalHasYawAxisChanged)
@@ -49,6 +50,7 @@ public:
         OptionStayMavlinkV1       = 1 << 5,
         OptionAPMStartFreshParams = 1 << 6,
         OptionFtpCapability       = 1 << 7,
+        OptionEnableAirspeed      = 1 << 8,
     };
     Q_DECLARE_FLAGS(Options, Option)
     Q_FLAG(Options)
@@ -95,6 +97,8 @@ public:
     void setEnableGimbal(bool enableGimbal) { _enableGimbal = enableGimbal; emit enableGimbalChanged(); }
     bool enableProximity() const { return _enableProximity; }
     void setEnableProximity(bool enableProximity) { _enableProximity = enableProximity; emit enableProximityChanged(); }
+    bool enableAirspeed() const { return _enableAirspeed; }
+    void setEnableAirspeed(bool enableAirspeed) { _enableAirspeed = enableAirspeed; emit enableAirspeedChanged(); }
 
     bool gimbalHasRollAxis() const { return _gimbalHasRollAxis; }
     void setGimbalHasRollAxis(bool value) { _gimbalHasRollAxis = value; emit gimbalHasRollAxisChanged(); }
@@ -179,6 +183,7 @@ signals:
     void enableCameraChanged();
     void enableGimbalChanged();
     void enableProximityChanged();
+    void enableAirspeedChanged();
     void gimbalHasRollAxisChanged();
     void gimbalHasPitchAxisChanged();
     void gimbalHasYawAxisChanged();
@@ -206,6 +211,7 @@ private:
     bool _enableCamera = false;
     bool _enableGimbal = false;
     bool _enableProximity = false;
+    bool _enableAirspeed = false;
     FailureMode_t _failureMode = FailNone;
     bool _incrementVehicleId = true;
     uint16_t _boardVendorId = 0;
@@ -243,6 +249,7 @@ private:
     static constexpr const char *_enableCameraKey = "EnableCamera";
     static constexpr const char *_enableGimbalKey = "EnableGimbal";
     static constexpr const char *_enableProximityKey = "EnableProximity";
+    static constexpr const char *_enableAirspeedKey = "EnableAirspeed";
     static constexpr const char *_gimbalHasRollAxisKey = "GimbalHasRollAxis";
     static constexpr const char *_gimbalHasPitchAxisKey = "GimbalHasPitchAxis";
     static constexpr const char *_gimbalHasYawAxisKey = "GimbalHasYawAxis";

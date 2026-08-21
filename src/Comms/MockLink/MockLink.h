@@ -63,6 +63,30 @@ public:
     ///     @param severity MAV_SEVERITY value
     void sendStatusTextMessage(uint8_t severity, const QString &text);
 
+    /// Test API: report the autopilot's pre-arm check as present, enabled and failing — the state a
+    /// vehicle sits in when it will not arm.
+    ///
+    /// Off by default, and that default is a third state rather than the opposite of this one: the
+    /// stock mock does not publish the bit at all, which is not the same as publishing it healthy.
+    ///
+    /// A failing check refuses the arm command as well, the way a real autopilot does. The bit and
+    /// the refusal are one state, and a mock that reported the first while accepting arm would let a
+    /// test pass over a vehicle that cannot exist.
+    void setPrearmCheckFailing(bool failing) { _prearmCheckFailing = failing; }
+
+    /// Whether this mock carries an airspeed sensor and so sends the AIRSPEED message.
+    ///
+    /// Settable while connected, unlike the option it starts from, because the interesting half of
+    /// the behaviour it drives is what the UI does when a sensor stops reporting -- and a link that
+    /// could only be configured at construction could never show that happening.
+    void setAirspeedEnabled(bool enabled) { _enableAirspeed = enabled; }
+
+    /// The failing check this mock names when it is asked why it will not arm.
+    ///
+    /// Sent under the "PreArm: " prefix ArduPilot uses while the vehicle is sitting there, as
+    /// opposed to the "Arm: " it switches to once somebody has pressed arm.
+    static constexpr const char *kPrearmCheckFailureText = "PreArm: Need Position Estimate";
+
     /// Test API: places the simulated vehicle into the given pose during calibration
     void setCalibrationPose(MockLinkPX4Calibration::Pose pose) const { _mockLinkPX4Calibration->setPose(pose); }
 
@@ -108,6 +132,9 @@ public:
     int receivedRequestMessageCount(uint32_t messageId) const { return _receivedRequestMessageCountMap.value(messageId, 0); }
     void clearReceivedMavlinkMessageCounts() { _receivedMavlinkMessageCountMap.clear(); _lastReceivedMavlinkMessageMap.clear(); _hashCheckRequestCount = 0; _missionItemHandler->clearRequestListCounts(); }
     int receivedMavlinkMessageCount(uint32_t messageId) const { return _receivedMavlinkMessageCountMap.value(messageId, 0); }
+
+    /// Drops the recorded estimator origin, as an autopilot reboot would.
+    void clearEstimatorOrigin() { _estimatorOriginLat = 0; _estimatorOriginLon = 0; _estimatorOriginAlt = 0; }
     /// Returns the last received message with the given id. Returns false if none received.
     bool lastReceivedMavlinkMessage(uint32_t messageId, mavlink_message_t &message) const {
         if (!_lastReceivedMavlinkMessageMap.contains(messageId)) {
@@ -287,6 +314,8 @@ private:
     void _handleSetupSigning(const mavlink_message_t &msg);
     void _sendParamError(int componentId, const char *paramId, int16_t paramIndex, uint8_t errorCode);
     void _handleRequestMessage(const mavlink_command_long_t &request, bool &accepted, bool &noAck);
+    void _handleSetGpsGlobalOrigin(const mavlink_message_t &msg);
+    void _handleRequestMessageGpsGlobalOrigin(bool &accepted);
     void _handleRequestMessageAutopilotVersion(const mavlink_command_long_t &request, bool &accepted);
     void _handleRequestMessageDebug(const mavlink_command_long_t &request, bool &accepted, bool &noAck);
     void _handleRequestMessageAvailableModes(const mavlink_command_long_t &request, bool &accepted);
@@ -302,6 +331,7 @@ private:
     void _sendBatteryStatus();
     void _sendNamedValueFloats();
     void _sendDistanceSensors();
+    void _sendAirspeed();
     void _sendChunkedStatusText(uint16_t chunkId, bool missingChunks);
     void _sendStatusTextMessages();
     void _respondWithAutopilotVersion();
@@ -349,6 +379,9 @@ private:
     const bool _enableCamera = false;
     const bool _enableGimbal = false;
     const bool _enableProximity = false;
+    /// Not const, unlike its neighbours: a test turns this off mid-connection to watch the UI drop
+    /// a sensor that has stopped reporting.
+    bool _enableAirspeed = false;
     const MockConfiguration::FailureMode_t _failureMode = MockConfiguration::FailNone;
     const bool _stayMavlinkV1 = false;  ///< Test-only: never upgrade outgoing traffic to MAVLink v2
     const bool _ftpCapability = false;  ///< Test-only: advertise MAV_PROTOCOL_CAPABILITY_FTP
@@ -393,6 +426,9 @@ private:
     static constexpr int kTestParamRequestListBatch = 25;
     static constexpr int32_t _batteryMaxTimeRemaining = 15 * 60;
     int8_t _battery1PctRemaining = 100;
+    bool _prearmCheckFailing = false;
+    /// param2 of MAV_CMD_COMPONENT_ARM_DISARM that says arm regardless of the checks
+    static constexpr float kForceArmMagic = 2989.0f;
     int32_t _battery1TimeRemaining = _batteryMaxTimeRemaining;
     MAV_BATTERY_CHARGE_STATE _battery1ChargeState = MAV_BATTERY_CHARGE_STATE_OK;
     int8_t _battery2PctRemaining = 100;
@@ -493,6 +529,12 @@ private:
     QMap<int, QMap<int, int>> _receivedRequestMessageByCompAndMsgCountMap;
     QMap<uint32_t, int> _receivedMavlinkMessageCountMap;
     QMap<uint32_t, mavlink_message_t> _lastReceivedMavlinkMessageMap;
+
+    // Estimator origin as the vehicle knows it. Zero means "no origin", matching a real vehicle
+    // that has not been given one.
+    int32_t _estimatorOriginLat = 0;
+    int32_t _estimatorOriginLon = 0;
+    int32_t _estimatorOriginAlt = 0;
     QMap<int, QMap<QString, QVariant>> _mapParamName2Value;
     QMap<int, QMap<QString, MAV_PARAM_TYPE>> _mapParamName2MavParamType;
 

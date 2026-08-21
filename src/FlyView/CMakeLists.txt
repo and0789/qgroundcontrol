@@ -49,9 +49,42 @@ qt_add_qml_module(FlyViewModule
         GuidedActionTakeoff.qml
         GuidedToolStripAction.qml
         GuidedValueSlider.qml
+        LocalGridAirspeed.qml
+        LocalGridAltitudeLimit.qml
+        LocalGridClickPanel.qml
+        LocalGridEstimatorHealth.qml
+        LocalGridMissionActions.qml
+        LocalGridMissionItemRow.qml
+        LocalGridMissionList.qml
+        LocalGridMissionStats.qml
+        LocalGridOriginDrift.qml
+        LocalGridOriginMarker.qml
+        LocalGridPlanAction.qml
+        LocalGridPlanLandAction.qml
+        LocalGridPlanReturnAction.qml
+        LocalGridPlanRoiAction.qml
+        LocalGridPlanShapeAction.qml
+        LocalGridPlanTakeoffAction.qml
+        LocalGridPlanWaypointAction.qml
+        LocalGridPositionCorrection.qml
+        LocalGridProjection.qml
+        LocalGridReadout.qml
+        LocalGridScaleBar.qml
+        LocalGridShowAction.qml
+        LocalGridTrail.qml
+        LocalGridTransform.qml
+        LocalGridView.qml
+        LocalGridWaypoint.qml
+        LocalGridWaypointEditor.qml
         MultiRotorChecklist.qml
         MultiVehicleList.qml
+        NonGpsAidingReason.qml
+        NonGpsFlowHealth.qml
+        NonGpsStatusPanel.qml
+        NonGpsStatusShowAction.qml
         ObstacleDistanceOverlay.qml
+        OpticalFlowCalibrationDialog.qml
+        OpticalFlowCalibrationShowAction.qml
         ObstacleDistanceOverlayMap.qml
         ObstacleDistanceOverlayVideo.qml
         OnScreenCameraTrackingController.qml
@@ -59,13 +92,19 @@ qt_add_qml_module(FlyViewModule
         PreFlightBatteryCheck.qml
         PreFlightCheckList.qml
         PreFlightCheckListShowAction.qml
+        PreFlightEkfNavigationCheck.qml
+        PreFlightEstimatorOriginCheck.qml
         PreFlightGPSCheck.qml
+        PreFlightOpticalFlowCheck.qml
+        PreFlightPositionConfirmedCheck.qml
+        PreFlightRangefinderCheck.qml
         PreFlightRCCheck.qml
         PreFlightSensorsHealthCheck.qml
         PreFlightSoundCheck.qml
         ProximityRadarValues.qml
         ProximityRadarVideoView.qml
         RoverChecklist.qml
+        SetEstimatorOriginDialog.qml
         SubChecklist.qml
         TelemetryValuesBar.qml
         TerrainProgress.qml
