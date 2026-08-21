@@ -29,6 +29,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         MultiVehicleManagerTest.h
         NavigatingWithoutGNSSTest.cc
         NavigatingWithoutGNSSTest.h
+        PX4ExternalFlightModesTest.cc
+        PX4ExternalFlightModesTest.h
         RemoteIDManagerTest.cc
         RemoteIDManagerTest.h
         RequestMessageTest.cc
@@ -77,6 +79,7 @@ add_qgc_test(MavCommandQueueReentrancyTest LABELS Integration Vehicle)
 add_qgc_test(MultiVehicleManagerTest LABELS Integration Vehicle)
 add_qgc_test(NavigatingWithoutGNSSTest LABELS Integration Vehicle)
 add_qgc_test(NavigatingWithoutGNSSFallbackTest LABELS Integration Vehicle)
+add_qgc_test(PX4ExternalFlightModesTest LABELS Unit Vehicle)
 add_qgc_test(RemoteIDManagerTest LABELS Integration Vehicle)
 add_qgc_test(RequestMessageTest LABELS Integration Vehicle TIMEOUT ${QGC_TEST_TIMEOUT_EXTENDED})
 add_qgc_test(SendMavCommandWithHandlerTest LABELS Integration Vehicle)
