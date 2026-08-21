@@ -113,6 +113,14 @@
             "keywords": "non-gps,gps denied,local grid,ned,dead reckoning"
         },
         {
+            "name": "showLocalGridPlanHelp",
+            "shortDesc": "Show the background notes on the local grid's mission item editor.",
+            "type": "bool",
+            "default": false,
+            "label": "Show local grid plan help",
+            "keywords": "non-gps,local grid,help,mission item"
+        },
+        {
             "name": "showNonGpsStatusPanel",
             "shortDesc": "Show the non-GPS status panel on the fly view map.",
             "type": "bool",

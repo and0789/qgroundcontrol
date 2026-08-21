@@ -33,7 +33,14 @@ Item {
 
     /// How far the pointer must travel before a press becomes a move rather than a pick. Without it
     /// every selection nudges the waypoint it selected.
-    property real dragThreshold: ScreenTools.defaultFontPixelWidth
+    ///
+    /// Measured against the size of a finger rather than the size of a letter. A font width is
+    /// around a millimetre and a half on a phone, and a finger never holds still to within that --
+    /// so on a touch screen every attempt to select a waypoint was already a drag by the time the
+    /// press was released, and the plan moved a little each time it was read. Half a touch target is
+    /// the honest line: a press that has not travelled half the size of the control it started on
+    /// has not left it, and is still a tap.
+    property real dragThreshold: ScreenTools.minTouchPixels / 2
 
     signal selected()
     /// Emitted continuously while dragging, in metres north and east of the origin
@@ -63,11 +70,23 @@ Item {
         }
     }
 
-    MouseArea {
-        anchors.fill:       parent
-        // A little beyond the marker, so it can still be grabbed on a trackpad at arm's length in
-        // the field
-        anchors.margins:    -ScreenTools.defaultFontPixelWidth / 2
+    // QGCMouseArea rather than a plain one, which is the whole of the fix here: given a fillItem it
+    // already grows the press area to ScreenTools.minTouchPixels on a touch build, and it draws the
+    // area when showTouchAreas is on so the result can be looked at rather than trusted. Every other
+    // control on this grid was already using it -- the panel headers, the row's delete icon -- and
+    // this marker, the one thing on the grid that is aimed at most often, was the exception.
+    //
+    // The disc itself is deliberately not grown with it. The two are different problems: a marker
+    // has to stay small enough that a twenty-metre pattern still reads as a pattern rather than as a
+    // row of overlapping blobs, while the area that takes the press has to be reachable by a gloved
+    // finger. Sizing them together forced a choice between a legible grid and a usable one.
+    //
+    // Where two markers sit closer together than a touch target their areas overlap, and the one
+    // drawn on top takes the press -- which is the selected one, since selection raises z. The way
+    // out is the same as on any map: zoom in, and they separate.
+    QGCMouseArea {
+        objectName:         "localGrid_waypointTouchArea"
+        fillItem:           parent
         preventStealing:    true
 
         property real _pressX:      0

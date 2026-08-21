@@ -19,5 +19,6 @@ protected slots:
 
 private slots:
     void _originMarkerCorrectsThePositionToTheOrigin_test();
+    void _standingOnTheOriginIsOnePressNotADialog_test();
     void _correctionIsLockedWhileArmed_test();
 };

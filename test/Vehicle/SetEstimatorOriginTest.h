@@ -30,4 +30,6 @@ private slots:
     void _vehicleWithoutOrigin_reportsInvalidCoordinate();
     void _originSetOnVehicle_isReportedBack();
     void _requestAfterOriginLost_clearsStaleValue();
+    void _statedPosition_coversOneFlightOnly();
+    void _refusedCorrection_doesNotStateThePosition();
 };

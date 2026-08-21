@@ -172,7 +172,11 @@ repos:
     rev: v1.48.0
     hooks:
       - id: typos
-        args: []  # Empty args disables auto-fix mode
+        # --force-exclude makes [files] extend-exclude in .typos.toml apply to the paths
+        # pre-commit hands over explicitly; without it the foreign-language doc directories
+        # listed there are still checked, and every non-English word reads as a typo.
+        # Auto-fix stays off either way: that is --write-changes, which is not passed.
+        args: ['--force-exclude']
         files: \.(md|markdown|txt|rst)$|^docs/
 
   - repo: local
@@ -197,7 +201,7 @@ repos:
         name: cmake-format (check)
         entry: cmake-format --check
         language: python
-        additional_dependencies: ['cmakelang==0.6.13']
+        additional_dependencies: ['cmakelang==0.6.13', 'pyyaml==6.0.3']
         files: (CMakeLists\.txt|\.cmake)$
         exclude: ^(build/|libs/)
 
@@ -205,7 +209,7 @@ repos:
         name: cmake-lint
         entry: cmake-lint
         language: python
-        additional_dependencies: ['cmakelang==0.6.13']
+        additional_dependencies: ['cmakelang==0.6.13', 'pyyaml==6.0.3']
         files: (CMakeLists\.txt|\.cmake)$
         exclude: ^(build/|libs/)
 

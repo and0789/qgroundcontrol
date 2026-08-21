@@ -59,6 +59,17 @@ Rectangle {
     readonly property real _margins:    ScreenTools.defaultFontPixelHeight / 4
     readonly property real _iconSize:   ScreenTools.defaultFontPixelHeight
 
+    /// How much width one header icon reserves, which on a touch screen is more than it draws.
+    ///
+    /// QGCMouseArea listens outwards to ScreenTools.minTouchPixels on mobile, and three icons a half
+    /// space apart are closer together than that: the areas overlap, and the last one declared wins
+    /// the tap. That last one is delete. Reserving the touch width in the layout instead keeps every
+    /// tap inside the icon it landed on -- the glyph still draws at icon height, centred in the
+    /// wider box, because the image fits itself to the height.
+    readonly property real _iconTouchSize: ScreenTools.isMobile
+                                            ? Math.max(_iconSize, ScreenTools.minTouchPixels)
+                                            : _iconSize
+
     /// Which row is open is said by the header strip alone, not by colouring the whole row.
     ///
     /// The editor is seven fields tall, so highlighting the row flooded a third of the panel with
@@ -196,12 +207,62 @@ Rectangle {
                     onActivated: (index) => _root._applyType(index)
                 }
 
+                // The two edits made while a pattern is built one leg at a time -- split the leg
+                // after this item, or repeat this one -- as icons on the row's own header rather
+                // than as a row of full-width buttons under the editor. Icon-sized and on the open
+                // row alone, the same rule the delete control beside them follows.
+                QGCColoredImage {
+                    objectName:             "localGrid_rowInsertAfterButton"
+                    Layout.preferredWidth:  _root._iconTouchSize
+                    Layout.preferredHeight: _root._iconSize
+                    Layout.alignment:       Qt.AlignVCenter
+                    sourceSize.height:      _root._iconSize
+                    fillMode:               Image.PreserveAspectFit
+                    mipmap:                 true
+                    smooth:                 true
+                    source:                 "/InstrumentValueIcons/add-outline.svg"
+                    color:                  _root._textColor
+                    // The plan's last flown-through item has no leg after it to split, so the control
+                    // is dropped there rather than shown doing nothing
+                    visible:                _root.isCurrentItem && _root.gridView
+                                                && _root.gridView.hasLegAfter(_root.visualItemIndex)
+
+                    QGCMouseArea {
+                        objectName: "localGrid_rowInsertAfterTouchArea"
+                        fillItem:   parent
+                        onClicked:  _root.gridView.insertWaypointBetween(_root.visualItemIndex)
+                    }
+                }
+
+                QGCColoredImage {
+                    objectName:             "localGrid_rowDuplicateButton"
+                    Layout.preferredWidth:  _root._iconTouchSize
+                    Layout.preferredHeight: _root._iconSize
+                    Layout.alignment:       Qt.AlignVCenter
+                    sourceSize.height:      _root._iconSize
+                    fillMode:               Image.PreserveAspectFit
+                    mipmap:                 true
+                    smooth:                 true
+                    source:                 "/InstrumentValueIcons/duplicate.svg"
+                    color:                  _root._textColor
+                    // Not offered for the takeoff: only a plan's first item may be one, and the same
+                    // rule that refuses a second takeoff refuses a duplicate of it
+                    visible:                _root.isCurrentItem && _root.gridView
+                                                && !_root.gridView.waypointIsPinned(_root.visualItemIndex)
+
+                    QGCMouseArea {
+                        objectName: "localGrid_rowDuplicateTouchArea"
+                        fillItem:   parent
+                        onClicked:  _root.gridView.duplicateItem(_root.visualItemIndex)
+                    }
+                }
+
                 // On the trailing edge, away from the leading edge the row is tapped on to open and
                 // close it. A delete control under the thumb that is already opening rows is one
                 // gloved mis-tap away from taking a waypoint out of the plan.
                 QGCColoredImage {
                     objectName:             "localGrid_rowDeleteButton"
-                    Layout.preferredWidth:  _root._iconSize
+                    Layout.preferredWidth:  _root._iconTouchSize
                     Layout.preferredHeight: _root._iconSize
                     Layout.alignment:       Qt.AlignVCenter
                     sourceSize.height:      _root._iconSize
@@ -214,7 +275,12 @@ Rectangle {
                     // waiting for a gloved finger, and the Plan view holds to the same rule.
                     visible:                _root.isCurrentItem
 
+                    // Grown to a full touch target only now that a delete can be taken back. Held at
+                    // icon size through 6a on purpose: making a destructive control easier to hit
+                    // before undo existed would have traded a target that is hard to hit for one
+                    // that is easy to hit by accident, with nothing to undo it.
                     QGCMouseArea {
+                        objectName: "localGrid_rowDeleteTouchArea"
                         fillItem:   parent
                         onClicked:  _root.removeRequested()
                     }

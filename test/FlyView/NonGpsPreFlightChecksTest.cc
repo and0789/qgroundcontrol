@@ -5,8 +5,12 @@
 #include <QtQml/QQmlEngine>
 #include <QtTest/QTest>
 
+#include <QtPositioning/QGeoCoordinate>
+
 #include "Fact.h"
 #include "FactGroup.h"
+#include "FirmwarePlugin.h"
+#include "MockLink.h"
 #include "ParameterManager.h"
 #include "Vehicle.h"
 
@@ -48,6 +52,54 @@ void sendDownwardRangefinder(Vehicle *vehicle, double metres)
     mavlink_message_t message{};
     (void) mavlink_msg_distance_sensor_encode(vehicle->id(), MAV_COMP_ID_AUTOPILOT1, &message, &distanceSensor);
     vehicle->getFactGroup(QStringLiteral("distanceSensor"))->handleMessage(vehicle, message);
+}
+
+/// Gives the vehicle an estimator origin, the way the operator does from the fly view map.
+///
+/// Cached-unsupported drives the legacy message, which MockLink records as the vehicle's origin.
+bool setEstimatorOrigin(Vehicle *vehicle, MockLink *mockLink, const QGeoCoordinate &origin)
+{
+    FirmwarePluginInstanceData *const instanceData = vehicle->firmwarePluginInstanceData();
+    if (!instanceData) {
+        return false;
+    }
+
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN,
+                                      FirmwarePluginInstanceData::CommandSupportedResult::UNSUPPORTED);
+    vehicle->setEstimatorOrigin(origin);
+    if (!QTest::qWaitFor([mockLink]() {
+            return mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) >= 1;
+        }, TestTimeout::longMs())) {
+        return false;
+    }
+
+    // Asked again between waits rather than once. The origin comes back as a single
+    // GPS_GLOBAL_ORIGIN, and one that goes missing on a link still busy with a full parameter set
+    // costs the whole timeout -- which fails the test for its own noise rather than for the thing it
+    // is checking. Seen twice while this suite was being written.
+    for (int attempt = 0; attempt < 3; attempt++) {
+        vehicle->requestEstimatorOrigin();
+        if (QTest::qWaitFor([vehicle]() { return vehicle->estimatorOrigin().isValid(); },
+                            TestTimeout::mediumMs())) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Flies the vehicle and puts it back down. MockLink decides landed state from altitude above home,
+/// so a takeoff to height and a takeoff back to home altitude is the whole flight it can model.
+bool flyAndLand(Vehicle *vehicle)
+{
+    vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, false /* showError */,
+                            0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 10.0F /* altitude */);
+    if (!QTest::qWaitFor([vehicle]() { return vehicle->flying(); }, TestTimeout::longMs())) {
+        return false;
+    }
+
+    vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, false /* showError */,
+                            0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F /* altitude */);
+    return QTest::qWaitFor([vehicle]() { return !vehicle->flying(); }, TestTimeout::longMs());
 }
 
 void sendEkfStatus(Vehicle *vehicle, uint16_t flags)
@@ -172,6 +224,7 @@ void NonGpsPreFlightChecksTest::_vehicleWithGNSS_checksAreHiddenAndPassing_test(
     PreFlightCheckFixture fixture(vehicle());
     const QStringList checkTypes = {
         QStringLiteral("PreFlightEstimatorOriginCheck"),
+        QStringLiteral("PreFlightPositionConfirmedCheck"),
         QStringLiteral("PreFlightOpticalFlowCheck"),
         QStringLiteral("PreFlightRangefinderCheck"),
         QStringLiteral("PreFlightEkfNavigationCheck"),
@@ -301,6 +354,76 @@ void NonGpsPreFlightChecksTest::_gpsCheck_doesNotBlockAGnssDeniedVehicle_test()
     // A GNSS vehicle keeps the check it always had
     setPositionSource(vehicle(), kSourceGps);
     QVERIFY(check->property("manualText").toString().isEmpty());
+}
+
+/// The row must stay out of the way until there is an origin. Without one there is nothing to state
+/// a position inside, and PreFlightEstimatorOriginCheck is already saying so -- two rows failing over
+/// the same missing origin is what teaches an operator to click past both.
+///
+/// Placing the origin is itself a statement of where the aircraft is standing, so the row appears
+/// already satisfied rather than appearing and immediately demanding something that was just done.
+void NonGpsPreFlightChecksTest::_positionConfirmedCheck_waitsForAnOrigin_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+    setPositionSource(vehicle(), kSourceNone);
+    QVERIFY(vehicle()->navigatingWithoutGNSS());
+    QVERIFY(!vehicle()->estimatorOrigin().isValid());
+
+    PreFlightCheckFixture fixture(vehicle());
+    CREATE_CHECK(fixture, QStringLiteral("PreFlightPositionConfirmedCheck"), check);
+
+    QVERIFY2(!check->property("visible").toBool(), "without an origin the origin check speaks alone");
+    QVERIFY(!check->property("telemetryFailure").toBool());
+
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), QGeoCoordinate(47.3977419, 8.5455938, 488.0)));
+
+    QVERIFY(check->property("visible").toBool());
+    QVERIFY2(!check->property("telemetryFailure").toBool(),
+             "placing the origin is the operator saying where the aircraft is standing");
+}
+
+/// The check the operator meets between two flights. The aircraft has landed, the statement of where
+/// it was standing has stopped covering anything, and the row says so with no way to click past it.
+///
+/// This is the flight that used to go out on the last flight's answer: the estimate crept while the
+/// first mission was flown, the frame it drifted into is the one the second mission would be flown
+/// in, and nothing on screen said so because the aircraft reports itself exactly where the plan says
+/// it should be.
+void NonGpsPreFlightChecksTest::_positionNotStatedSinceFlying_failsWithoutOverride_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+    setPositionSource(vehicle(), kSourceNone);
+
+    // Going flying builds QGCPressure, which warns on a host with no pressure backend
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Failed to connect to pressure backend")));
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Error Initializing Pressure Sensor")));
+
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), QGeoCoordinate(47.3977419, 8.5455938, 488.0)));
+
+    PreFlightCheckFixture fixture(vehicle());
+    CREATE_CHECK(fixture, QStringLiteral("PreFlightPositionConfirmedCheck"), check);
+    QVERIFY(!check->property("telemetryFailure").toBool());
+
+    QVERIFY(flyAndLand(vehicle()));
+
+    QVERIFY(check->property("visible").toBool());
+    QVERIFY2(check->property("telemetryFailure").toBool(),
+             "a statement of position covers the flight it was made for and no more");
+    QVERIFY2(!check->property("allowTelemetryFailureOverride").toBool(),
+             "clicking past this is the same as not having stated the position at all");
+
+    QVERIFY(QMetaObject::invokeMethod(check, "reset"));
+    QVERIFY(check->property("failed").toBool());
+    QVERIFY(!check->property("passed").toBool());
+
+    // Stating it again is what clears the row, and it is one click on the grid
+    QVERIFY(QMetaObject::invokeMethod(vehicle(), "externalPositionEstimateResult",
+                                      Q_ARG(bool, true), Q_ARG(QString, QString())));
+    QVERIFY(!check->property("telemetryFailure").toBool());
 }
 
 UT_REGISTER_TEST(NonGpsPreFlightChecksTest, TestLabel::Integration, TestLabel::Vehicle)

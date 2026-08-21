@@ -56,8 +56,16 @@ qt_add_qml_module(FlyViewModule
         LocalGridMissionActions.qml
         LocalGridMissionItemRow.qml
         LocalGridMissionList.qml
+        LocalGridMissionStats.qml
         LocalGridOriginDrift.qml
         LocalGridOriginMarker.qml
+        LocalGridPlanAction.qml
+        LocalGridPlanLandAction.qml
+        LocalGridPlanReturnAction.qml
+        LocalGridPlanRoiAction.qml
+        LocalGridPlanShapeAction.qml
+        LocalGridPlanTakeoffAction.qml
+        LocalGridPlanWaypointAction.qml
         LocalGridPositionCorrection.qml
         LocalGridProjection.qml
         LocalGridReadout.qml
@@ -88,6 +96,7 @@ qt_add_qml_module(FlyViewModule
         PreFlightEstimatorOriginCheck.qml
         PreFlightGPSCheck.qml
         PreFlightOpticalFlowCheck.qml
+        PreFlightPositionConfirmedCheck.qml
         PreFlightRangefinderCheck.qml
         PreFlightRCCheck.qml
         PreFlightSensorsHealthCheck.qml

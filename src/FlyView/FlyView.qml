@@ -30,6 +30,7 @@ Item {
     // These should only be used by MainRootWindow
     property var planController:    _planController
     property var guidedController:  _guidedController
+    readonly property alias gridView: localGridView
 
     PlanMasterController {
         id:                     _planController

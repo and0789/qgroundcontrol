@@ -1,6 +1,7 @@
 #include "LocalGridViewTest.h"
 
 #include <cmath>
+#include <iterator>
 
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QtNumeric>
@@ -58,7 +59,12 @@ constexpr const char *kMissionControllerStub = R"(
         // -- a plain object would take the value silently and the move would never appear.
         property Component itemComponent: Component {
             QtObject {
+                id: missionItem
                 property bool specifiesCoordinate: true
+                // False for every plain waypoint and landing: the aircraft is routed through them,
+                // so a leg is measured through them and the polyline is drawn through them. True for
+                // an ROI, which carries a real coordinate without ever being flown to.
+                property bool isStandaloneCoordinate: false
                 property var  coordinate
                 property int  sequenceNumber: 0
                 // The last mission sequence number this one item occupies. A waypoint carrying a
@@ -86,6 +92,38 @@ constexpr const char *kMissionControllerStub = R"(
                     property bool specifyFlightSpeed: false
                     property Fact flightSpeed: Fact { }
                 }
+
+                // Where the command tree publishes an item's editable parameters, in the two lists
+                // it sorts them into: the plain ones here, the ones it marks advanced beside them.
+                // Only the shape the grid reads off a QmlObjectListModel -- a count and a get().
+                //
+                // Left empty for tests to fill through publishItemFact rather than filled per
+                // command here. Which parameters a command publishes, which list each falls into,
+                // and what each is named are the command tree's answers; a stand-in that made them
+                // up would be asserting its own guess instead of the search the grid does.
+                property QtObject textFieldFacts: QtObject {
+                    property var facts: []
+                    readonly property int count: facts.length
+                    function get(index) { return facts[index] }
+                }
+
+                property QtObject textFieldFactsAdvanced: QtObject {
+                    property var facts: []
+                    readonly property int count: facts.length
+                    function get(index) { return facts[index] }
+                }
+
+                // What the real item does when its command is written: the command tree decides all
+                // over again what the item is, and a CONDITION_YAW carries no position at all. It
+                // matters here because the grid inserts one as a plain item and gives it its command
+                // afterwards -- an item left claiming a coordinate would be drawn on the grid and
+                // measured into the leg beside it.
+                onCommandChanged: {
+                    if (command === 115) {
+                        specifiesCoordinate = false
+                        commandName = "Wait for Yaw"
+                    }
+                }
             }
         }
 
@@ -98,7 +136,35 @@ constexpr const char *kMissionControllerStub = R"(
                 sequenceNumber: sequenceNumber
             }))
             items = list
+            // Left pointing at the item just added, the same place a freshly built real plan leaves
+            // it (MissionController::_initAllVisualItems ends by calling setCurrentPlanViewSeqNum
+            // against its own last item). Tests that build a fixture plan through a run of addItem
+            // calls before ever touching the grid's own insert functions get the same starting point
+            // a real plan would hand them, rather than the -1 this stub starts at before anything
+            // has been added.
+            currentPlanViewVIIndex = list.length - 1
+            currentPlanViewSeqNum = sequenceNumber
         }
+
+        // Splices a ready-made item into the list at a visual item index, or appends it when the
+        // index names no position (-1, or past the end) -- the same two cases
+        // MissionController::_insertSimpleMissionItemWorker handles. Used only by the insert
+        // functions below; addItem above stays a plain append for the many tests that build a plan
+        // by hand and choose their own sequence numbers.
+        function _insertAt(item, index) {
+            var list = items.slice()
+            if ((index < 0) || (index > list.length)) {
+                list.push(item)
+            } else {
+                list.splice(index, 0, item)
+            }
+            items = list
+        }
+
+        // Sequence numbers handed to items this stub inserts itself, kept well clear of the ones
+        // tests assign by hand through addItem/addHomeItem so a lookup by number can never confuse
+        // the two.
+        property int _nextAutoSequenceNumber: 1000
 
         // MissionController always keeps the settings item, which carries the planned home position
         // as its coordinate, at the front of the list
@@ -110,6 +176,11 @@ constexpr const char *kMissionControllerStub = R"(
                 homePosition: true
             }))
             items = list
+            // Same reasoning as addItem above: a plan holding only its home item leaves current
+            // pointed at that one item, which is what makes the next insert land after it (index 1)
+            // rather than in front of it.
+            currentPlanViewVIIndex = 0
+            currentPlanViewSeqNum = 0
         }
 
         // The sequence number the vehicle is flying to. MissionController reads this off the
@@ -126,9 +197,45 @@ constexpr const char *kMissionControllerStub = R"(
         /// which the runner counts as a failure.
         property real progressPct: 0
 
+        /// What MissionController's flight-status calculation produces. Real properties on the real
+        /// controller and not gated behind the plan view, so the grid's totals panel reads them in
+        /// flight -- which means the stand-in has to carry them or every binding on them reads
+        /// undefined and QML says so on each rebuild.
+        ///
+        /// Set by tests rather than derived from the items here: reproducing QGC's own distance and
+        /// speed integration would be testing a copy of it instead of what the grid does with it.
+        property real missionTotalDistance: 0
+        property real missionTime: 0
+
         readonly property var visualItems: QtObject {
             readonly property int count: items.length
             function get(index) { return items[index] }
+        }
+
+        // Where an insert lands, and the flags every insert button on the grid and on the tool
+        // strip's Plan panel reads. Mirrors MissionController::setCurrentPlanViewSeqNum in shape
+        // (search by exact sequenceNumber match, -1 when the plan is empty) without its rules for
+        // *why* an insert would be refused -- those are covered by the plain bools below instead,
+        // which tests set directly rather than deriving from plan shape the way the real one does.
+        property int currentPlanViewSeqNum: -1
+        property int currentPlanViewVIIndex: -1
+        signal planViewStateChanged()
+        signal visualItemsReset()
+
+        function setCurrentPlanViewSeqNum(sequenceNumber, force) {
+            if (!force && (sequenceNumber === currentPlanViewSeqNum)) {
+                return
+            }
+            currentPlanViewSeqNum = sequenceNumber
+            var viIndex = -1
+            for (var i = 0; i < items.length; i++) {
+                if (items[i].sequenceNumber === sequenceNumber) {
+                    viIndex = i
+                    break
+                }
+            }
+            currentPlanViewVIIndex = viIndex
+            planViewStateChanged()
         }
 
         // Returns the item it made, the way MissionController does, so a caller that adjusts the
@@ -139,14 +246,25 @@ constexpr const char *kMissionControllerStub = R"(
             lastCoordinate = coordinate
             lastIndex = index
             insertCount++
-            addItem(coordinate, items.length + 1)
-            lastInsertedItem = items[items.length - 1]
-            return lastInsertedItem
+            const item = itemComponent.createObject(null, {
+                coordinate: coordinate,
+                sequenceNumber: _nextAutoSequenceNumber
+            })
+            _nextAutoSequenceNumber++
+            _insertAt(item, index)
+            lastInsertedItem = item
+            if (makeCurrentItem) {
+                setCurrentPlanViewSeqNum(item.sequenceNumber, true)
+            }
+            return item
         }
 
         // MissionController gates its own insert strip on these, and so does the grid
         property bool isInsertTakeoffValid: true
         property bool isInsertLandValid: true
+        property bool isInsertROIValid: true
+        property bool isROIActive: false
+        property bool flyThroughCommandsAllowed: true
 
         property int takeoffCount: 0
         property int landCount: 0
@@ -169,15 +287,24 @@ constexpr const char *kMissionControllerStub = R"(
             // the plan's home position. Modelled here because it is the reason the grid places the
             // takeoff a second time afterwards: home is where the vehicle reported it launched
             // from, which is not necessarily where the estimator is counting from.
-            //
-            // Appended like any other insertion. Without this the plan looks empty to the grid,
-            // which keeps treating the next item as the first one.
-            addItem(takeoffLandsOn ? takeoffLandsOn : coordinate, items.length + 1)
-            const item = items[items.length - 1]
-            item.isTakeoffItem = true
-            item.commandName = "Takeoff"
-            item.specifiesCoordinate = takeoffSpecifiesCoordinate
+            const item = itemComponent.createObject(null, {
+                coordinate: takeoffLandsOn ? takeoffLandsOn : coordinate,
+                sequenceNumber: _nextAutoSequenceNumber,
+                // MAV_CMD_NAV_TAKEOFF. Carried like the landing's own command below, because a
+                // takeoff's param1 is not a waypoint's: anything that decides what to offer per item
+                // reads the command, and an item left claiming to be a waypoint would be offered a
+                // waypoint's fields.
+                command: 22,
+                isTakeoffItem: true,
+                commandName: "Takeoff",
+                specifiesCoordinate: takeoffSpecifiesCoordinate
+            })
+            _nextAutoSequenceNumber++
+            _insertAt(item, index)
             lastInsertedItem = item
+            if (makeCurrentItem) {
+                setCurrentPlanViewSeqNum(item.sequenceNumber, true)
+            }
             return item
         }
 
@@ -185,8 +312,60 @@ constexpr const char *kMissionControllerStub = R"(
             lastCoordinate = coordinate
             lastIndex = index
             landCount++
-            addItem(coordinate, items.length + 1)
-            return items[items.length - 1]
+            const item = itemComponent.createObject(null, {
+                coordinate: coordinate,
+                sequenceNumber: _nextAutoSequenceNumber,
+                command: 21,
+                commandName: "Land"
+            })
+            _nextAutoSequenceNumber++
+            _insertAt(item, index)
+            lastInsertedItem = item
+            if (makeCurrentItem) {
+                setCurrentPlanViewSeqNum(item.sequenceNumber, true)
+            }
+            return item
+        }
+
+        property int roiCount: 0
+        property int cancelRoiCount: 0
+
+        function insertROIMissionItem(coordinate, index, makeCurrentItem) {
+            lastCoordinate = coordinate
+            lastIndex = index
+            roiCount++
+            const item = itemComponent.createObject(null, {
+                coordinate: coordinate,
+                sequenceNumber: _nextAutoSequenceNumber,
+                isStandaloneCoordinate: true,
+                commandName: "ROI"
+            })
+            _nextAutoSequenceNumber++
+            _insertAt(item, index)
+            lastInsertedItem = item
+            if (makeCurrentItem) {
+                setCurrentPlanViewSeqNum(item.sequenceNumber, true)
+            }
+            return item
+        }
+
+        function insertCancelROIMissionItem(index, makeCurrentItem) {
+            lastIndex = index
+            cancelRoiCount++
+            const item = itemComponent.createObject(null, {
+                coordinate: QtPositioning.coordinate(),
+                sequenceNumber: _nextAutoSequenceNumber,
+                specifiesCoordinate: false,
+                isStandaloneCoordinate: true,
+                commandName: "Cancel ROI"
+            })
+            _nextAutoSequenceNumber++
+            _insertAt(item, index)
+            lastInsertedItem = item
+            if (makeCurrentItem) {
+                setCurrentPlanViewSeqNum(item.sequenceNumber, true)
+            }
+            return item
         }
 
         property int removedIndex: -99
@@ -288,6 +467,36 @@ QObject *stubSpeedSection(QObject *stub, int index)
         makeFactDouble(section->property("flightSpeed").value<QObject *>());
     }
     return section;
+}
+
+/// Publishes a parameter on a stub item under the name the command tree gives it, and hands the
+/// fact back so a test can set what the operator would type into it.
+///
+/// Named from here because a Fact publishes its name read-only: the real one takes it from the
+/// metadata the command tree built it with, which is exactly the path a stub item does not have. The
+/// name is the whole point of the exercise -- the grid finds this parameter by asking for it by
+/// name, because the position it sits at in the list depends on which other parameters this firmware
+/// and vehicle publish.
+///     @param listName "textFieldFacts" or "textFieldFactsAdvanced", which is the tree's own choice
+///            per parameter: NAV_WAYPOINT's Hold is marked advanced, CONDITION_YAW's Heading is not
+Fact *publishItemFact(QObject *item, const char *listName, const QString &factName)
+{
+    if (!item) {
+        return nullptr;
+    }
+
+    QObject *const list = item->property(listName).value<QObject *>();
+    if (!list) {
+        return nullptr;
+    }
+
+    // Parented to the item, so the fact lives exactly as long as the item publishing it and no
+    // engine ever takes ownership of it
+    auto *const fact = new Fact(0, factName, FactMetaData::valueTypeDouble, item);
+    QVariantList facts = list->property("facts").toList();
+    facts.append(QVariant::fromValue(static_cast<QObject *>(fact)));
+    list->setProperty("facts", facts);
+    return fact;
 }
 
 /// Feeds the vehicle an EKF_STATUS_REPORT, the message ArduPilot reports estimator health in
@@ -752,8 +961,9 @@ void LocalGridViewTest::_waypointPlacedInMetres_reachesThePlanAsACoordinate_test
     // second insertion and the coordinate asserted below is the one it carried
     QCOMPARE(stub->property("takeoffCount").toInt(), 1);
     QCOMPARE(stub->property("insertCount").toInt(), 1);
-    // -1 appends, which is what clicking past the end of a route means
-    QCOMPARE(stub->property("lastIndex").toInt(), -1);
+    // 1: right after the takeoff this same call just placed at index 0. Bagian 3 made every insert
+    // land after whichever item the controller calls current, rather than always past the end.
+    QCOMPARE(stub->property("lastIndex").toInt(), 1);
 
     const QGeoCoordinate inserted = stub->property("lastCoordinate").value<QGeoCoordinate>();
     QVERIFY(inserted.isValid());
@@ -1327,6 +1537,136 @@ void LocalGridViewTest::_altitudeCanBeAppliedToEveryItem_test()
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointAltitudes", Qt::DirectConnection,
                                       Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, qQNaN())));
     QCOMPARE(changed.toInt(), 0);
+}
+
+/// A landing's altitude is never flown. ArduPilot's do_land() zeroes the one it is given and refills
+/// it from the vehicle's current altitude, so the aircraft arrives over the landing point at
+/// whatever height the leg before it was flown at. Left carrying a number of its own the item is a
+/// field that changes nothing -- and the plan's profile is drawn from that number, so the last leg
+/// showed a climb or a dive the aircraft would not fly.
+void LocalGridViewTest::_landingTakesTheAltitudeOfTheItemBeforeIt_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+
+    for (int i = 0; i < 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(
+            stub.get(), "addItem", Qt::DirectConnection,
+            Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0 * (i + 1), 0.0))),
+            Q_ARG(QVariant, i + 1)));
+    }
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    const auto altitudeFact = [&gridView](int index) -> QObject * {
+        QVariant fact;
+        if (!QMetaObject::invokeMethod(gridView.get(), "waypointAltitudeFact", Qt::DirectConnection,
+                                       Q_RETURN_ARG(QVariant, fact), Q_ARG(QVariant, index))) {
+            return nullptr;
+        }
+        return fact.value<QObject *>();
+    };
+
+    QObject *const firstAltitude = altitudeFact(0);
+    QObject *const secondAltitude = altitudeFact(1);
+    QVERIFY(firstAltitude);
+    QVERIFY(secondAltitude);
+    firstAltitude->setProperty("rawValue", 7.0);
+    secondAltitude->setProperty("rawValue", 3.0);
+
+    const auto isLanding = [&gridView](int index) {
+        QVariant landing;
+        return QMetaObject::invokeMethod(gridView.get(), "waypointIsLanding", Qt::DirectConnection,
+                                         Q_RETURN_ARG(QVariant, landing), Q_ARG(QVariant, index))
+                && landing.toBool();
+    };
+    QVERIFY(!isLanding(1));
+
+    // Turning the last waypoint of a pattern into a landing is the common edit, and it is where the
+    // altitude stops being the operator's to set
+    QVariant changed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointCommand", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, 1),
+                                      Q_ARG(QVariant, static_cast<int>(MAV_CMD_NAV_LAND))));
+    QVERIFY(changed.toBool());
+    QVERIFY(isLanding(1));
+    QVERIFY2(qFuzzyCompare(secondAltitude->property("rawValue").toDouble(), 7.0),
+             "a landing must be flown at the height of the leg that reaches it");
+
+    // And it keeps following that leg when the waypoint before it is retyped
+    firstAltitude->setProperty("rawValue", 4.0);
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "syncLandingAltitudes", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved)));
+    QCOMPARE(moved.toInt(), 1);
+    QCOMPARE(secondAltitude->property("rawValue").toDouble(), 4.0);
+
+    // Already in step, so nothing to do. Reported rather than assumed: the panel calls this on every
+    // altitude edit, and a walk that always claims a change would fight the field being typed into.
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "syncLandingAltitudes", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved)));
+    QCOMPARE(moved.toInt(), 0);
+
+    // A landing with nothing before it has no leg to take a height from, and is left alone rather
+    // than zeroed: the aircraft is on the ground there either way, and rewriting it would be a
+    // change the operator did not ask for and cannot see the reason for.
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointCommand", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, 0),
+                                      Q_ARG(QVariant, static_cast<int>(MAV_CMD_NAV_LAND))));
+    QVERIFY(changed.toBool());
+    QCOMPARE(firstAltitude->property("rawValue").toDouble(), 4.0);
+}
+
+/// A grey "Add takeoff at origin" is not an explanation. The operator who cannot tell a refusal from
+/// a stuck click is the one who closes QGC to get the option back -- which is exactly what a plan
+/// still mirroring the flight before it produced. The grid answers which of the two states it is in
+/// so the panel can say so.
+void LocalGridViewTest::_gridSaysWhetherThePlanAlreadyHasATakeoff_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVERIFY(gridView->property("planIsEmpty").toBool());
+    QVERIFY(!gridView->property("planHasTakeoff").toBool());
+
+    // A waypoint on an empty plan gains a takeoff underneath it, so both answers move together
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 25.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(!gridView->property("planIsEmpty").toBool());
+    QVERIFY2(gridView->property("planHasTakeoff").toBool(),
+             "a plan that gained a takeoff must say so, or the refusal cannot be explained");
+
+    // A plan holding only waypoints is the other refusal: a takeoff can only go first, and this one
+    // has items already. Told apart because the way out of the two is not the same.
+    MAKE_GRID_VIEW(plainGridView);
+    QQmlComponent plainStubComponent(&gridViewEngine);
+    QString plainStubError;
+    const QScopedPointer<QObject> plainStub(createMissionControllerStub(plainStubComponent, plainStubError));
+    QVERIFY2(plainStub, qPrintable(plainStubError));
+    QVERIFY(QMetaObject::invokeMethod(
+        plainStub.get(), "addItem", Qt::DirectConnection,
+        Q_ARG(QVariant, QVariant::fromValue(origin.atDistanceAndAzimuth(20.0, 0.0))), Q_ARG(QVariant, 1)));
+    plainGridView->setProperty("missionController", QVariant::fromValue(plainStub.get()));
+
+    QVERIFY(!plainGridView->property("planIsEmpty").toBool());
+    QVERIFY(!plainGridView->property("planHasTakeoff").toBool());
 }
 
 /// The regression this exists for. A warning shown only for the selected item is not a warning: the
@@ -3103,4 +3443,2031 @@ void LocalGridViewTest::_planAnchorOutlivesTheView_test()
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
     QCOMPARE(flyViewSettings->localGridPlanAnchorVehicleId()->rawValue().toUInt(), 0U);
     QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 0.0);
+}
+
+// ============================================================================
+// Bagian 3: mission-creation parity (Lampiran D)
+// ============================================================================
+
+/// A pattern is not always built end to end: an operator reviewing item 2 of 4 needs a new item to
+/// land after item 2, not appended past item 4. This is the whole point of tying insertion to
+/// MissionController's own current-item bookkeeping instead of always inserting at -1.
+void LocalGridViewTest::_insertAfterSelectedItem_landsInTheMiddleOfThePlan_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    // takeoff, wp(10,0), wp(20,0) -- built end to end, the way a pattern normally is
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    const int firstWaypointVisualIndex = points.property(1).property(QStringLiteral("index")).toInt();
+
+    // Select the first waypoint, not the last item, then place a new one
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, firstWaypointVisualIndex)));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 15.0), Q_ARG(QVariant, 5.0)));
+    QVERIFY(added.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 4);
+    // takeoff, wp(10,0), the new wp(15,5), wp(20,0) -- in that order
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 10.0) < 0.05);
+    QVERIFY(qAbs(points.property(2).property(QStringLiteral("north")).toNumber() - 15.0) < 0.05);
+    QVERIFY(qAbs(points.property(2).property(QStringLiteral("east")).toNumber() - 5.0) < 0.05);
+    QVERIFY(qAbs(points.property(3).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05);
+}
+
+/// Replaces _selectNewestItem, which picked the newest item off the end of the plan -- correct only
+/// while every insert landed there. Once an insert can land anywhere, following the controller's own
+/// current item is the only version of this that opens the item just placed rather than whatever
+/// happens to sit last.
+void LocalGridViewTest::_insertAfterSelectedItem_selectsTheNewItemNotTheLastOne_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int firstWaypointVisualIndex = points.property(1).property(QStringLiteral("index")).toInt();
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, firstWaypointVisualIndex)));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 15.0), Q_ARG(QVariant, 5.0)));
+    QVERIFY(placed.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 4);
+    const int newItemVisualIndex = points.property(2).property(QStringLiteral("index")).toInt();
+    const int lastItemVisualIndex = points.property(3).property(QStringLiteral("index")).toInt();
+
+    QVERIFY2(gridView->property("selectedWaypointIndex").toInt() == newItemVisualIndex,
+             "the item just placed must be the one selected");
+    QVERIFY2(gridView->property("selectedWaypointIndex").toInt() != lastItemVisualIndex,
+             "picking the newest item off the end of the plan is exactly the bug this replaces");
+}
+
+/// The takeoff is pinned to the origin, and the rule that keeps anything else from landing in front
+/// of it falls out of the same mechanism that makes mid-plan insertion work at all: the smallest
+/// insert index the controller can ever hand back is one past the takeoff itself.
+void LocalGridViewTest::_nothingCanBeInsertedBeforeTheTakeoff_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int takeoffVisualIndex = points.property(0).property(QStringLiteral("index")).toInt();
+    QVERIFY(points.property(0).property(QStringLiteral("isPinned")).toBool());
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, takeoffVisualIndex)));
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 30.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(placed.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    QVERIFY2(points.property(0).property(QStringLiteral("isPinned")).toBool(),
+             "the takeoff must stay the plan's first item even when it is the one selected");
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 30.0) < 0.05);
+}
+
+/// "Land here" builds a plain waypoint and swaps its command afterward, so it never goes through
+/// insertLandItem and never picks up isInsertLandValid's own refusal on its own. Without
+/// canInsertLandHere it would happily insert a landing in the middle of a pattern with legs after it
+/// the aircraft would never fly.
+void LocalGridViewTest::_landHere_refusesAMidPlanSpot_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QVERIFY2(gridView->property("canInsertLandHere").toBool(),
+             "landing past the end of the plan must still be offered");
+
+    // Select the first waypoint, mimicking what the real controller's isInsertLandValid computes
+    // for any item that is not the plan's last fly-through one
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int firstWaypointVisualIndex = points.property(1).property(QStringLiteral("index")).toInt();
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, firstWaypointVisualIndex)));
+    stub->setProperty("isInsertLandValid", false);
+
+    QVERIFY2(!gridView->property("canInsertLandHere").toBool(),
+             "landing here must be refused once it would not land past the end of the plan");
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, QStringLiteral("landHere")),
+                                      Q_ARG(QVariant, 5.0), Q_ARG(QVariant, 5.0)));
+    QVERIFY2(!placed.toBool(), "a refused landing must not be inserted");
+    QCOMPARE(stub->property("insertCount").toInt(), 2);
+}
+
+/// An armed tool places at the point already selected, which is the entire reason to arm one
+/// instead of opening the click panel every time. Clearing the selection before placing would turn
+/// every click after the first back into a silent append.
+void LocalGridViewTest::_armedTool_placesAfterTheSelectionWithoutClearingIt_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int firstWaypointVisualIndex = points.property(1).property(QStringLiteral("index")).toInt();
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, firstWaypointVisualIndex)));
+    QCOMPARE(gridView->property("selectedWaypointIndex").toInt(), firstWaypointVisualIndex);
+
+    gridView->setProperty("armedTool", QStringLiteral("waypoint"));
+
+    QVariant placedTool;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "placeArmedTool", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placedTool),
+                                      Q_ARG(QVariant, 15.0), Q_ARG(QVariant, 5.0)));
+    QVERIFY(placedTool.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 4);
+    // takeoff, wp(10,0), the placed one, wp(20,0) -- landed right after the selection, not appended
+    QVERIFY(qAbs(points.property(2).property(QStringLiteral("north")).toNumber() - 15.0) < 0.05);
+    QVERIFY(qAbs(points.property(3).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05);
+    QCOMPARE(gridView->property("armedTool").toString(), QStringLiteral("waypoint"));
+}
+
+/// Four quick clicks with the tool still armed is how a pattern gets built on a grid with no map to
+/// click a drop panel open on for each one. Each placement has to continue from the one before it,
+/// not from wherever the operator's selection happened to be when the tool was first armed.
+void LocalGridViewTest::_armedTool_chainsSeveralPlacementsInARow_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    gridView->setProperty("armedTool", QStringLiteral("waypoint"));
+
+    // The box pattern the project's own mission script flies, placed as four quick clicks
+    const double cornerNorth[] = {20.0, 20.0, 0.0, 0.0};
+    const double cornerEast[]  = {0.0, 20.0, 20.0, 0.0};
+    for (int i = 0; i < 4; i++) {
+        QVariant placed;
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "placeArmedTool", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, cornerNorth[i]), Q_ARG(QVariant, cornerEast[i])));
+        QVERIFY(placed.toBool());
+    }
+
+    // A takeoff plus the four corners, in the order they were clicked -- not reordered, and not
+    // appended past a selection that never moved once the tool was armed
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 5);
+    for (int i = 0; i < 4; i++) {
+        const QJSValue point = points.property(i + 1);
+        QVERIFY(qAbs(point.property(QStringLiteral("north")).toNumber() - cornerNorth[i]) < 0.05);
+        QVERIFY(qAbs(point.property(QStringLiteral("east")).toNumber() - cornerEast[i]) < 0.05);
+    }
+}
+
+/// The editor is a column of numbers read at a flight line, and it used to carry a paragraph of
+/// background between every two of them. Those notes are still true and still reachable -- the
+/// header carries one switch for all of them -- but they are not what the panel opens saying.
+///
+/// The switch governs background only. A note that reports what has happened to the item in hand,
+/// like an altitude the ceiling has just pulled down, is not the operator's to switch off.
+void LocalGridViewTest::_backgroundNotesWaitToBeAskedFor_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    Fact *const helpSetting = SettingsManager::instance()->flyViewSettings()->showLocalGridPlanHelp();
+    QVERIFY(helpSetting);
+    helpSetting->setRawValue(false);
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QQmlComponent listComponent(&gridViewEngine);
+    listComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridMissionList { width: 300; height: 600 }
+    )", QUrl());
+    QVERIFY2(listComponent.isReady(), qPrintable(listComponent.errorString()));
+
+    const QScopedPointer<QObject> list(listComponent.create());
+    QVERIFY2(list, qPrintable(listComponent.errorString()));
+    list->setProperty("gridView", QVariant::fromValue(gridView.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, list.get()));
+
+    // The waypoint, opened, which is the only state any of these notes appear in
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, points.property(1).property(QStringLiteral("index")).toInt())));
+
+    // Walked as items rather than as QObjects: the rows come out of a Repeater, which gives its
+    // delegates a parent item and no QObject parent at all
+    auto *const listItem = qobject_cast<QQuickItem *>(list.get());
+    QVERIFY(listItem);
+    const auto hintVisible = [listItem]() {
+        const QList<QQuickItem *> found = collectItemsNamed(listItem, QStringLiteral("localGrid_dragHint"));
+        return !found.isEmpty() && found.first()->isVisible();
+    };
+    const auto hintBuilt = [listItem]() {
+        return !collectItemsNamed(listItem, QStringLiteral("localGrid_dragHint")).isEmpty();
+    };
+
+    QTRY_VERIFY_WITH_TIMEOUT(hintBuilt(), TestTimeout::mediumMs());
+    QVERIFY2(!hintVisible(), "the editor opened carrying background nobody asked for");
+
+    helpSetting->setRawValue(true);
+    QTRY_VERIFY_WITH_TIMEOUT(hintVisible(), TestTimeout::mediumMs());
+
+    // And the switch is in the header, where it is on screen whether or not a row is open
+    QVERIFY2(!collectItemsNamed(listItem, QStringLiteral("localGrid_missionListHelpToggle")).isEmpty(),
+             "there is no way back to the notes the editor stopped showing");
+
+    helpSetting->setRawValue(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!hintVisible(), TestTimeout::mediumMs());
+}
+
+/// Insert-after and duplicate are the only way to reach those edits now that the row carries them as
+/// header icons rather than a row of buttons, so their presence on the open row is worth pinning --
+/// and their absence where the plan forbids them: the takeoff may not be duplicated, since only a
+/// plan's first item may be one.
+void LocalGridViewTest::_rowEditIconsAppearOnlyWhereTheEditIsAllowed_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QQmlComponent listComponent(&gridViewEngine);
+    listComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridMissionList { width: 300; height: 600 }
+    )", QUrl());
+    QVERIFY2(listComponent.isReady(), qPrintable(listComponent.errorString()));
+
+    const QScopedPointer<QObject> list(listComponent.create());
+    QVERIFY2(list, qPrintable(listComponent.errorString()));
+    list->setProperty("gridView", QVariant::fromValue(gridView.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, list.get()));
+
+    auto *const listItem = qobject_cast<QQuickItem *>(list.get());
+    QVERIFY(listItem);
+
+    // Every row builds its own pair of icons and hides them unless it is the open one, so the
+    // question is always which row is offering the edit -- asking the list for the first icon of a
+    // given name answers for the takeoff, whichever row happens to be open.
+    const auto shownOn = [listItem](int visualItemIndex, const QString &name) {
+        const QList<QQuickItem *> rows = collectItemsNamed(listItem, QStringLiteral("localGrid_missionItemRow"));
+        for (QQuickItem *const row : rows) {
+            if (row->property("visualItemIndex").toInt() != visualItemIndex) {
+                continue;
+            }
+            const QList<QQuickItem *> found = collectItemsNamed(row, name);
+            return !found.isEmpty() && found.first()->isVisible();
+        }
+        return false;
+    };
+    const auto shownAnywhere = [listItem](const QString &name) {
+        const QList<QQuickItem *> found = collectItemsNamed(listItem, name);
+        for (QQuickItem *const item : found) {
+            if (item->isVisible()) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int takeoffIndex  = points.property(0).property(QStringLiteral("index")).toInt();
+    const int waypointIndex = points.property(1).property(QStringLiteral("index")).toInt();
+
+    // Nothing open: no edit icons anywhere in the list
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearWaypointSelection", Qt::DirectConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(!shownAnywhere(QStringLiteral("localGrid_rowDuplicateButton")), TestTimeout::mediumMs());
+    QVERIFY(!shownAnywhere(QStringLiteral("localGrid_rowInsertAfterButton")));
+
+    // The waypoint opened: it may be duplicated and, sitting at the end of the plan, may not be
+    // insert-split (nothing follows it)
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, waypointIndex)));
+    QTRY_VERIFY_WITH_TIMEOUT(shownOn(waypointIndex, QStringLiteral("localGrid_rowDuplicateButton")),
+                             TestTimeout::mediumMs());
+    QVERIFY2(!shownOn(waypointIndex, QStringLiteral("localGrid_rowInsertAfterButton")),
+             "the plan's last flown-through item has no leg after it to split");
+
+    // The takeoff opened: it is the one item that may not be duplicated, and the leg to the waypoint
+    // below it is the one that may be split
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, takeoffIndex)));
+    QTRY_VERIFY_WITH_TIMEOUT(shownOn(takeoffIndex, QStringLiteral("localGrid_rowInsertAfterButton")),
+                             TestTimeout::mediumMs());
+    QVERIFY2(!shownOn(takeoffIndex, QStringLiteral("localGrid_rowDuplicateButton")),
+             "only a plan's first item may be a takeoff, so a copy of it is refused");
+    QVERIFY2(!shownAnywhere(QStringLiteral("localGrid_rowDuplicateButton")),
+             "the row that was closed must have taken its icons with it");
+}
+
+/// Start Mission with the plan mode still on left the tool strip showing the plan's inserts at the
+/// moment the aircraft left the ground. The strip reuses the positions the guided controls sit in --
+/// land and return step aside to make room -- so the operator watching the aircraft climb had a
+/// waypoint insert where the control that ends the flight belongs.
+///
+/// Arming is the line, whatever put the aircraft in the air: Start Mission, Take off, or an arm from
+/// the ground. And the button is held shut for as long as that lasts, so the mode cannot be switched
+/// straight back on over an aircraft that is flying.
+void LocalGridViewTest::_planEditMode_endsWhenTheAircraftArms_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent buttonComponent(&gridViewEngine);
+    buttonComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridPlanAction { }
+    )", QUrl());
+    QVERIFY2(buttonComponent.isReady(), qPrintable(buttonComponent.errorString()));
+    const QScopedPointer<QObject> button(buttonComponent.create());
+    QVERIFY2(button, qPrintable(buttonComponent.errorString()));
+    button->setProperty("gridView", QVariant::fromValue(gridView.get()));
+
+    // In the mode, with a tool in hand, which is where a plan is built from
+    gridView->setProperty("planEditMode", true);
+    gridView->setProperty("armedTool", QStringLiteral("waypoint"));
+    QVERIFY(gridView->property("planEditMode").toBool());
+    QVERIFY(button->property("enabled").toBool());
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+
+    QTRY_VERIFY_WITH_TIMEOUT(!gridView->property("planEditMode").toBool(), TestTimeout::mediumMs());
+    QCOMPARE(gridView->property("armedTool").toString(), QString());
+    QVERIFY2(!button->property("enabled").toBool(),
+             "the mode could be switched straight back on over an aircraft in the air");
+
+    // Back on the ground it is offered again, and it comes back off rather than remembering
+    vehicle()->setArmedShowError(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(button->property("enabled").toBool(), TestTimeout::mediumMs());
+    QVERIFY2(!gridView->property("planEditMode").toBool(),
+             "landing put the operator back in a mode they had not asked to be in");
+}
+
+/// Everything the plan panel holds is work done between flights. Upload is refused outright while the
+/// vehicle is flying a mission, Load and Clear would leave the grid drawing a pattern the aircraft is
+/// not flying, and neither after-flight control can be used in the air at all -- a position
+/// correction is a step change the position controller flies straight out, and moving the plan under
+/// an aircraft already flying it changes where it is going mid-flight.
+///
+/// So the panel goes, rather than standing there refusing. The resume warning inside it has always
+/// stood itself down this way; this is the rest of the panel following it, and it comes back the
+/// moment the aircraft is disarmed.
+void LocalGridViewTest::_thePlanPanelStandsDownWhileArmed_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    plan->setProperty("missionController", QVariant::fromValue(stub.get()));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    // A pattern to move, so the section has something to offer in the first place
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    const auto shown = [gridItem](const QString &name) {
+        const QList<QQuickItem *> found = collectItemsNamed(gridItem, name);
+        return !found.isEmpty() && found.first()->isVisible();
+    };
+
+    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_missionActions")), TestTimeout::mediumMs());
+    QVERIFY(shown(QStringLiteral("localGrid_afterFlightSection")));
+    QVERIFY(shown(QStringLiteral("localGrid_standOnOriginButton")));
+    QVERIFY(shown(QStringLiteral("localGrid_flyFromHereButton")));
+    QVERIFY(shown(QStringLiteral("localGrid_uploadMissionButton")));
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+
+    QTRY_VERIFY_WITH_TIMEOUT(!shown(QStringLiteral("localGrid_missionActions")), TestTimeout::mediumMs());
+    QVERIFY2(!shown(QStringLiteral("localGrid_afterFlightSection")),
+             "a control that cannot be used in the air was still on the grid in the air");
+    QVERIFY2(!shown(QStringLiteral("localGrid_standOnOriginButton")), "and so was the button in it");
+    QVERIFY2(!shown(QStringLiteral("localGrid_flyFromHereButton")), "and the one under that");
+
+    // The plan's own file and transfer controls go with them: none of them is something to reach for
+    // over an aircraft that is flying
+    QVERIFY(!shown(QStringLiteral("localGrid_uploadMissionButton")));
+    QVERIFY(!shown(QStringLiteral("localGrid_downloadMissionButton")));
+    QVERIFY(!shown(QStringLiteral("localGrid_clearMissionButton")));
+
+    vehicle()->setArmedShowError(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_afterFlightSection")), TestTimeout::mediumMs());
+    QVERIFY2(shown(QStringLiteral("localGrid_flyFromHereButton")),
+             "the section is named for the moment it came back for");
+    QVERIFY(shown(QStringLiteral("localGrid_uploadMissionButton")));
+}
+
+/// Folded away, the readout has to stay something an operator can find and aim at. It did not: the
+/// panel is sized from what it holds, and with the numbers hidden the header contributed no width of
+/// its own, so the whole thing collapsed to a stub the width of its chevron -- title gone, summary
+/// gone, and nothing left on the grid to say what the stub was or that pressing it brought the
+/// numbers back.
+void LocalGridViewTest::_theFoldedReadoutStaysWideEnoughToFind_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+
+    QQmlComponent readoutComponent(&gridViewEngine);
+    readoutComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridReadout { }
+    )", QUrl());
+    QVERIFY2(readoutComponent.isReady(), qPrintable(readoutComponent.errorString()));
+
+    const QScopedPointer<QObject> readout(readoutComponent.create());
+    QVERIFY2(readout, qPrintable(readoutComponent.errorString()));
+    readout->setProperty("gridView", QVariant::fromValue(gridView.get()));
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, readout.get()));
+
+    auto *const readoutItem = qobject_cast<QQuickItem *>(readout.get());
+    QVERIFY(readoutItem);
+    QQuickItem *const title =
+        collectItemsNamed(readoutItem, QStringLiteral("localGrid_readoutTitle")).value(0);
+    QVERIFY(title);
+
+    // Open first, which is where telemetry leaves it, so the fold below is the operator's own
+    readout->setProperty("collapsed", false);
+    QTRY_VERIFY_WITH_TIMEOUT(title->implicitWidth() > 0, TestTimeout::mediumMs());
+    const qreal openWidth = readoutItem->width();
+    QVERIFY(openWidth > 0);
+
+    readout->setProperty("collapsed", true);
+    QTRY_VERIFY_WITH_TIMEOUT(readoutItem->width() < openWidth, TestTimeout::mediumMs());
+
+    QVERIFY2(readoutItem->width() >= title->implicitWidth(),
+             "the folded panel is narrower than its own name, so there is nothing on the grid to aim at");
+    QVERIFY(title->isVisible());
+}
+
+/// The switch that puts the background notes back is inside the mission list's header, and the whole
+/// of that header is a click target that folds the panel. The header's own mouse area was declared
+/// after the row holding the switch, which puts it on top of the switch: every press meant for the
+/// notes folded the panel instead, and there was no way back to them at all.
+///
+/// Pressed rather than set, because setting the fact directly is exactly the path that passed while
+/// the control it belongs to could not be reached.
+void LocalGridViewTest::_theHelpSwitchTakesTheTapItIsGiven_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    Fact *const helpSetting = SettingsManager::instance()->flyViewSettings()->showLocalGridPlanHelp();
+    QVERIFY(helpSetting);
+    helpSetting->setRawValue(false);
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    const auto press = [](QQuickWindow &window, QQuickItem *item) {
+        const QPointF centre = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centre.toPoint());
+    };
+
+    QQmlComponent listComponent(&gridViewEngine);
+    listComponent.setData(R"(
+        import QtQuick
+        import QGroundControl.FlyView
+
+        LocalGridMissionList { width: 300; height: 600 }
+    )", QUrl());
+    QVERIFY2(listComponent.isReady(), qPrintable(listComponent.errorString()));
+    const QScopedPointer<QObject> list(listComponent.create());
+    QVERIFY2(list, qPrintable(listComponent.errorString()));
+    list->setProperty("gridView", QVariant::fromValue(gridView.get()));
+    list->setProperty("collapsed", false);
+
+    QQuickWindow listWindow;
+    QVERIFY(_showInWindow(listWindow, list.get()));
+
+    auto *const listItem = qobject_cast<QQuickItem *>(list.get());
+    QVERIFY(listItem);
+    QQuickItem *const listToggle =
+        collectItemsNamed(listItem, QStringLiteral("localGrid_missionListHelpToggle")).value(0);
+    QVERIFY(listToggle);
+    QTRY_VERIFY_WITH_TIMEOUT(listToggle->width() > 0, TestTimeout::mediumMs());
+
+    press(listWindow, listToggle);
+    QTRY_VERIFY_WITH_TIMEOUT(helpSetting->rawValue().toBool(), TestTimeout::mediumMs());
+    QVERIFY2(!list->property("collapsed").toBool(), "the press folded the panel instead of answering");
+}
+
+/// The green disc says which item the aircraft is flying to; it does not say what altitude that leg
+/// holds or what speed it is being flown at, and those are inside the row. Following opens it, so
+/// the numbers that matter in the air arrive without the operator hunting for the disc on every leg.
+///
+/// It has to lose every argument with the operator. Opening any item by hand suspends it, and only
+/// closing that item hands the panel back -- from the next item on, never by reopening the row that
+/// was just closed.
+void LocalGridViewTest::_theListFollowsTheItemBeingFlownTo_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    for (const double north : {10.0, 20.0}) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, added),
+                                          Q_ARG(QVariant, north), Q_ARG(QVariant, 0.0)));
+        QVERIFY(added.toBool());
+    }
+
+    // takeoff, then the two waypoints
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    const auto sequenceOf = [&points](int row) {
+        return points.property(row).property(QStringLiteral("sequence")).toInt();
+    };
+    const auto indexOf = [&points](int row) {
+        return points.property(row).property(QStringLiteral("index")).toInt();
+    };
+
+    const auto selected = [&gridView]() { return gridView->property("selectedWaypointIndex").toInt(); };
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearWaypointSelection", Qt::DirectConnection));
+    QCOMPARE(selected(), -1);
+
+    // Nothing opens while the aircraft is on the ground. A plan being built carries a mission index
+    // too, and pulling the panel onto it would take it away from the item being edited.
+    stub->setProperty("currentMissionIndex", sequenceOf(1));
+    QCOMPARE(selected(), -1);
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+
+    // The item being flown to, not the one just finished. missionPoints computes its own
+    // isVehicleTarget flag from this same sequence, and the follow must not depend on that binding
+    // having run first -- read that way it opened the previous leg on every advance.
+    stub->setProperty("currentMissionIndex", sequenceOf(2));
+    QVERIFY2(selected() == indexOf(2), "the list opened an item other than the one being flown to");
+
+    // The operator opens the takeoff to check the height it climbs to. The aircraft moving on must
+    // not take that away from them.
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, indexOf(0))));
+    QCOMPARE(selected(), indexOf(0));
+    stub->setProperty("currentMissionIndex", sequenceOf(1));
+    QVERIFY2(selected() == indexOf(0), "the aircraft advancing pulled the panel off the item being read");
+
+    // Closing it gives the list back -- at the next item, not by reopening what was just closed
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearWaypointSelection", Qt::DirectConnection));
+    QCOMPARE(selected(), -1);
+    stub->setProperty("currentMissionIndex", sequenceOf(2));
+    QCOMPARE(selected(), indexOf(2));
+
+    vehicle()->setArmedShowError(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
+}
+
+/// Every tool the strip can arm has to place something. "landHere" armed cleanly, lit its button and
+/// then had every tap on the grid fall through placeArmedTool's default case -- which from the
+/// operator's side is a button that does nothing and a grid that has stopped responding.
+///
+/// The landing is also the one tool that puts itself down: a plan has a single ending, so leaving it
+/// armed would leave the button lit over a tool the plan refuses every further use of.
+void LocalGridViewTest::_everyArmableToolPlacesSomething_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // Each of the three the tool strip arms, placed in turn onto the plan the one before it left
+    const QStringList tools = {QStringLiteral("waypoint"), QStringLiteral("roi"), QStringLiteral("landHere")};
+    for (const QString &tool : tools) {
+        gridView->setProperty("armedTool", tool);
+        QCOMPARE(gridView->property("armedTool").toString(), tool);
+
+        QVariant placed;
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "placeArmedTool", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 10.0)));
+        QVERIFY2(placed.toBool(), qPrintable(QStringLiteral("the %1 tool armed but placed nothing").arg(tool)));
+    }
+
+    // The landing put itself down; the two before it stayed in hand, which is what building a
+    // pattern out of several of each depends on
+    QCOMPARE(gridView->property("armedTool").toString(), QString());
+
+    // takeoff, waypoint, ROI, landing -- the ROI carries a coordinate, so all four are on the grid
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 4);
+}
+
+/// Plan mode is what puts an insert tool in the operator's hand, so leaving it has to take the tool
+/// back. A tool that outlived the mode would turn the next tap on the grid -- a tap meant to read a
+/// point, now that the click panel offers nothing else -- into an edit of the plan.
+void LocalGridViewTest::_planEditMode_dropsTheArmedToolWhenItEnds_test()
+{
+    MAKE_GRID_VIEW(gridView);
+
+    gridView->setProperty("planEditMode", true);
+    gridView->setProperty("armedTool", QStringLiteral("waypoint"));
+    QCOMPARE(gridView->property("armedTool").toString(), QStringLiteral("waypoint"));
+
+    gridView->setProperty("planEditMode", false);
+    QCOMPARE(gridView->property("armedTool").toString(), QString());
+}
+
+/// Switching the grid off is switching plan mode off. The view is hidden rather than destroyed, so
+/// a mode left standing would come back with the plan buttons on the tool strip and nothing under
+/// them to tap -- and with a tool still armed for a grid the operator can no longer see.
+void LocalGridViewTest::_planEditMode_endsWhenTheGridIsHidden_test()
+{
+    MAKE_GRID_VIEW(gridView);
+
+    gridView->setProperty("planEditMode", true);
+    gridView->setProperty("armedTool", QStringLiteral("waypoint"));
+
+    gridView->setProperty("visible", false);
+    QVERIFY(!gridView->property("planEditMode").toBool());
+    QCOMPARE(gridView->property("armedTool").toString(), QString());
+}
+
+/// The state the tool strip refuses every insert but Take off in, and the state the grid puts one
+/// line of explanation on screen for. It has to describe the plan rather than the mode: outside plan
+/// mode there is nothing to explain, and the moment the takeoff exists the refusal is over.
+void LocalGridViewTest::_planNeedsTakeoffFirst_clearsOnceTheTakeoffIsPlaced_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // Nothing to say while the strip is showing the flying controls
+    QVERIFY(!gridView->property("planNeedsTakeoffFirst").toBool());
+
+    gridView->setProperty("planEditMode", true);
+    QVERIFY(gridView->property("planNeedsTakeoffFirst").toBool());
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "insertTakeoffAtOrigin", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added)));
+    QVERIFY(added.toBool());
+    QVERIFY(gridView->property("planHasTakeoff").toBool());
+    QVERIFY(!gridView->property("planNeedsTakeoffFirst").toBool());
+}
+
+/// An ROI carries a real coordinate and belongs on the grid, but the aircraft is never routed to
+/// it -- so it must still be drawn, while the leg reaching the item after it is measured from the
+/// last item actually flown to, not from the ROI.
+void LocalGridViewTest::_roiIsDrawnButNotFlownThrough_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    gridView->setProperty("armedTool", QStringLiteral("roi"));
+    QVariant roiPlaced;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "placeArmedTool", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, roiPlaced),
+                                      Q_ARG(QVariant, 5.0), Q_ARG(QVariant, 5.0)));
+    QVERIFY(roiPlaced.toBool());
+    QCOMPARE(stub->property("roiCount").toInt(), 1);
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    // Drawn: the ROI has a real position and belongs on the grid, listed alongside every other item
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 4);
+    bool foundRoi = false;
+    int lastVisualIndex = -1;
+    for (int i = 0; i < 4; i++) {
+        const QJSValue point = points.property(i);
+        lastVisualIndex = point.property(QStringLiteral("index")).toInt();
+        if ((qAbs(point.property(QStringLiteral("north")).toNumber() - 5.0) < 0.05)
+            && (qAbs(point.property(QStringLiteral("east")).toNumber() - 5.0) < 0.05)) {
+            foundRoi = true;
+            QVERIFY2(point.property(QStringLiteral("onGrid")).toBool(),
+                     "an ROI has a real coordinate and belongs on the grid");
+            QVERIFY2(!point.property(QStringLiteral("flyThrough")).toBool(), "an ROI is never flown to");
+        }
+    }
+    QVERIFY2(foundRoi, "the ROI must still be listed among the plan's points");
+
+    // Not flown through: the leg reaching the last waypoint is measured from the waypoint before
+    // the ROI, not from the ROI itself
+    QVariant legStart;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "legStartFor", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, legStart), Q_ARG(QVariant, lastVisualIndex)));
+    const QVariantMap legStartMap = legStart.toMap();
+    QVERIFY(qAbs(legStartMap.value(QStringLiteral("north")).toDouble() - 10.0) < 0.05);
+    QVERIFY(qAbs(legStartMap.value(QStringLiteral("east")).toDouble()) < 0.05);
+}
+
+/// A plan arriving whole from the vehicle -- a download, a clear, a load -- is not the plan whatever
+/// was selected belonged to. Left alone, the same index could now name a completely different item
+/// and silently reopen its editor without anything having been clicked.
+void LocalGridViewTest::_selectionIsClearedWhenThePlanArrivesWhole_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int waypointVisualIndex = points.property(1).property(QStringLiteral("index")).toInt();
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, waypointVisualIndex)));
+    QCOMPARE(gridView->property("selectedWaypointIndex").toInt(), waypointVisualIndex);
+
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "visualItemsReset", Qt::DirectConnection));
+
+    QVERIFY2(gridView->property("selectedWaypointIndex").toInt() == -1,
+             "a freshly arrived plan must not leave a stale index open as if it were still selected");
+}
+
+/// Building a pattern one leg at a time means the common edit is repeating a point -- flying the
+/// same corner at a second altitude or speed to compare them, without retyping it.
+void LocalGridViewTest::_duplicateItem_copiesPositionAltitudeAndSpeed_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int waypointVisualIndex = points.property(1).property(QStringLiteral("index")).toInt();
+
+    QObject *const original = stub->property("lastInsertedItem").value<QObject *>();
+    QVERIFY(original);
+    QObject *const originalAltitude = original->property("altitude").value<QObject *>();
+    QVERIFY(originalAltitude);
+    originalAltitude->setProperty("rawValue", 8.0);
+    QObject *const originalSpeed = original->property("speedSection").value<QObject *>();
+    QVERIFY(originalSpeed);
+    originalSpeed->setProperty("specifyFlightSpeed", true);
+    QObject *const originalSpeedFact = originalSpeed->property("flightSpeed").value<QObject *>();
+    QVERIFY(originalSpeedFact);
+    originalSpeedFact->setProperty("rawValue", 3.0);
+
+    QVariant duplicated;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "duplicateItem", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, duplicated),
+                                      Q_ARG(QVariant, waypointVisualIndex)));
+    QVERIFY(duplicated.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    // Right after the item it was copied from
+    QVERIFY(qAbs(points.property(2).property(QStringLiteral("north")).toNumber() - 10.0) < 0.05);
+
+    QObject *const copy = stub->property("lastInsertedItem").value<QObject *>();
+    QVERIFY(copy);
+    QVERIFY2(copy != original, "the duplicate must be a new item, not the same one selected twice");
+    QObject *const copyAltitude = copy->property("altitude").value<QObject *>();
+    QVERIFY(copyAltitude);
+    QCOMPARE(copyAltitude->property("rawValue").toDouble(), 8.0);
+    QObject *const copySpeed = copy->property("speedSection").value<QObject *>();
+    QVERIFY(copySpeed);
+    QVERIFY(copySpeed->property("specifyFlightSpeed").toBool());
+    QObject *const copySpeedFact = copySpeed->property("flightSpeed").value<QObject *>();
+    QVERIFY(copySpeedFact);
+    QCOMPARE(copySpeedFact->property("rawValue").toDouble(), 3.0);
+}
+
+/// The common edit to a pattern already on the grid is turning one leg into two, and a waypoint
+/// invented at the midpoint of the leg it splits is the only version of that which does not ask the
+/// operator to work out a position for it by hand.
+void LocalGridViewTest::_insertBetween_splitsTheLegAtItsMidpoint_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 20.0)));
+    QVERIFY(added.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    const int firstLegIndex = points.property(1).property(QStringLiteral("index")).toInt();
+
+    QVariant split;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "insertWaypointBetween", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, split),
+                                      Q_ARG(QVariant, firstLegIndex)));
+    QVERIFY(split.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 4);
+    // The midpoint of (20,0) and (20,20) is (20,10)
+    QVERIFY(qAbs(points.property(2).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05);
+    QVERIFY(qAbs(points.property(2).property(QStringLiteral("east")).toNumber() - 10.0) < 0.05);
+
+    // The plan's last item has no leg after it to split
+    const int lastVisualIndex = points.property(3).property(QStringLiteral("index")).toInt();
+    QVariant refused;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "insertWaypointBetween", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, refused),
+                                      Q_ARG(QVariant, lastVisualIndex)));
+    QVERIFY2(!refused.toBool(), "there is no leg after the plan's last item to split");
+}
+
+/// The one thing a waypoint says besides where it is that an ArduCopter ever reads. Its mission
+/// records are 15 bytes and cannot carry a delay and a radius both, so for every non-Plane build the
+/// firmware keeps param1 and drops the rest -- and what it keeps it flies, holding the aircraft on
+/// the point until the seconds run out. Offering it on a takeoff or a landing would be offering a
+/// number those commands spend on something else entirely.
+void LocalGridViewTest::_holdTimeIsOfferedOnWaypointsAlone_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    // A takeoff of its own accord, then the waypoint, then a landing: one plan holding all three of
+    // the commands this grid places
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addMissionItemAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added), Q_ARG(QVariant, QStringLiteral("land")),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 3);
+    QObject *const takeoff = items.at(0).value<QObject *>();
+    QObject *const waypoint = items.at(1).value<QObject *>();
+    QObject *const landing = items.at(2).value<QObject *>();
+    QVERIFY(takeoff && waypoint && landing);
+
+    // Published the way the command tree publishes it for an ArduPilot multirotor: in the advanced
+    // list, because the tree marks this parameter advanced, and named for its label
+    Fact *const hold = publishItemFact(waypoint, "textFieldFactsAdvanced", QStringLiteral("Hold"));
+    QVERIFY(hold);
+
+    // And the same name published on the takeoff, which is not the reason the field stays off it.
+    // The guard is the command: param1 on a takeoff is a different quantity, and a grid that went by
+    // the name alone would edit it the moment some firmware's tree happened to label it this way.
+    QVERIFY(publishItemFact(takeoff, "textFieldFactsAdvanced", QStringLiteral("Hold")));
+
+    // The item's own fact, not a copy of it: what the operator types into the field is the number
+    // the item carries into the upload
+    QVariant found;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointHoldTimeFact", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, found), Q_ARG(QVariant, 1)));
+    QCOMPARE(found.value<QObject *>(), static_cast<QObject *>(hold));
+
+    for (const int index : { 0, 2 }) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointHoldTimeFact", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, found), Q_ARG(QVariant, index)));
+        QVERIFY2(found.value<QObject *>() == nullptr,
+                 "a takeoff and a landing spend param1 on something else, so there is no wait to offer");
+    }
+
+    // And an index that names no item at all answers the same way rather than reaching into the
+    // list past its end -- the panel asks with whatever index it last held, and a plan can shrink
+    // under it
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointHoldTimeFact", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, found), Q_ARG(QVariant, 99)));
+    QVERIFY(found.value<QObject *>() == nullptr);
+}
+
+/// The totals panel has to add the waits itself: QGC's own flight-status calculation has no hold
+/// term in it at all. A sum that missed one would show a plan as taking less time than it takes,
+/// which is the number a battery is sized against.
+void LocalGridViewTest::_holdSecondsAreSummedAcrossThePlan_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant added;
+    for (const double north : { 10.0, 20.0 }) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, added),
+                                          Q_ARG(QVariant, north), Q_ARG(QVariant, 0.0)));
+        QVERIFY(added.toBool());
+    }
+
+    QVERIFY2(qFuzzyIsNull(gridView->property("missionHoldSeconds").toDouble()),
+             "a plan whose waypoints publish no wait waits for nothing");
+
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 3);
+    Fact *const firstHold = publishItemFact(items.at(1).value<QObject *>(), "textFieldFactsAdvanced",
+                                            QStringLiteral("Hold"));
+    Fact *const secondHold = publishItemFact(items.at(2).value<QObject *>(), "textFieldFactsAdvanced",
+                                             QStringLiteral("Hold"));
+    QVERIFY(firstHold && secondHold);
+
+    firstHold->setRawValue(5.0);
+    secondHold->setRawValue(7.0);
+
+    // Waited on rather than read once: the sum is a binding over every hold in the plan, and it is
+    // re-run when one of them changes rather than at the moment it is asked for
+    QTRY_COMPARE_WITH_TIMEOUT(gridView->property("missionHoldSeconds").toDouble(), 12.0,
+                              TestTimeout::shortMs());
+
+    // Editing one re-runs the sum. This is the whole reason the totals are a binding and not a
+    // number worked out once when the panel was built.
+    secondHold->setRawValue(20.0);
+    QTRY_COMPARE_WITH_TIMEOUT(gridView->property("missionHoldSeconds").toDouble(), 25.0,
+                              TestTimeout::shortMs());
+}
+
+/// What the panel shows, end to end: the distance QGC measured for the plan the grid drew, and a
+/// duration that is the flying plus every wait. The duration is the one number here that does not
+/// come from QGC as-is, and a quietly short one is worse than none at all.
+void LocalGridViewTest::_planTotalsIncludeTheWaits_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    QObject *const stats = gridItem->findChild<QObject *>(QStringLiteral("localGrid_missionStats"));
+    QVERIFY2(stats, "the totals panel has to be findable, or nothing below is testing it");
+    QVERIFY2(!stats->property("visible").toBool(),
+             "an empty plan has no totals, and a panel saying so is chrome over the grid");
+
+    // A 20 m square, which is the pattern this grid exists to fly: four corners, four legs of 20 m
+    constexpr double kCornerNorths[] = { 20.0, 20.0, 0.0, 0.0 };
+    constexpr double kCornerEasts[]  = {  0.0, 20.0, 20.0, 0.0 };
+    QVariant added;
+    for (size_t i = 0; i < std::size(kCornerNorths); i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, added),
+                                          Q_ARG(QVariant, kCornerNorths[i]), Q_ARG(QVariant, kCornerEasts[i])));
+        QVERIFY(added.toBool());
+    }
+
+    // What MissionController's own flight-status pass produces for that square at the 1 m/s this
+    // grid writes onto every waypoint it places. Set here rather than derived, because reproducing
+    // QGC's distance and speed integration would test a copy of it instead of what the grid does
+    // with what it produced.
+    stub->setProperty("missionTotalDistance", 80.0);
+    stub->setProperty("missionTime", 80.0);
+
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 5);
+    Fact *const hold = publishItemFact(items.at(1).value<QObject *>(), "textFieldFactsAdvanced",
+                                       QStringLiteral("Hold"));
+    QVERIFY(hold);
+    hold->setRawValue(10.0);
+
+    QTRY_COMPARE_WITH_TIMEOUT(gridView->property("missionHoldSeconds").toDouble(), 10.0,
+                              TestTimeout::shortMs());
+    QCOMPARE(gridView->property("missionDistanceMetres").toDouble(), 80.0);
+    QVERIFY2(qFuzzyCompare(gridView->property("missionDurationSeconds").toDouble(), 90.0),
+             "the plan takes the flying plus the waiting, and the calculator counts only the flying");
+    QVERIFY(gridView->property("missionStatsKnown").toBool());
+
+    QTRY_VERIFY_WITH_TIMEOUT(stats->property("visible").toBool(), TestTimeout::shortMs());
+
+    // Opened by hand: it is folded by default, because a total is read while a pattern is being
+    // built and not again while it is flown
+    stats->setProperty("collapsed", false);
+
+    QObject *const distanceLabel = gridItem->findChild<QObject *>(QStringLiteral("localGrid_missionStatsDistance"));
+    QObject *const durationLabel = gridItem->findChild<QObject *>(QStringLiteral("localGrid_missionStatsDuration"));
+    QVERIFY(distanceLabel && durationLabel);
+
+    // Asked of the same transform the panel asks, so this holds whichever distance units the
+    // application is set to rather than only the metric ones the numbers above are in
+    QObject *const transform = gridView->property("gridTransform").value<QObject *>();
+    QVERIFY(transform);
+    QVariant display;
+    QVERIFY(QMetaObject::invokeMethod(transform, "toDisplay", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, display), Q_ARG(QVariant, 80.0)));
+    const QString expectedDistance = QStringLiteral("%1 %2")
+                                         .arg(qRound(display.toDouble()))
+                                         .arg(transform->property("displayUnits").toString());
+    QCOMPARE(distanceLabel->property("text").toString(), expectedDistance);
+
+    // Minutes and seconds, which is the form a plan is compared against a battery in
+    QCOMPARE(durationLabel->property("text").toString(), QStringLiteral("1:30"));
+
+    // And the panel says where the extra time came from, because it is the one line on it that QGC
+    // did not produce
+    QObject *const holdNote = gridItem->findChild<QObject *>(QStringLiteral("localGrid_missionStatsHoldNote"));
+    QVERIFY(holdNote);
+    QVERIFY(holdNote->property("visible").toBool());
+    QVERIFY(holdNote->property("text").toString().contains(QStringLiteral("10")));
+}
+
+/// Without GNSS the compass is the only absolute reference the aircraft has, and which way the nose
+/// points while a leg is flown is part of what the flow sensor measures. A waypoint cannot say it --
+/// the 15-byte record drops param4 the same way it drops the radius -- so the heading is an item of
+/// its own, and an item that carries no position must not be drawn on the grid or measured into the
+/// leg beside it.
+void LocalGridViewTest::_yawItemCarriesAHeadingAndNoLeg_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QCOMPARE(gridView->property("commandConditionYaw").toInt(), static_cast<int>(MAV_CMD_CONDITION_YAW));
+
+    QVariant added;
+    for (const double east : { 0.0, 20.0 }) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, added),
+                                          Q_ARG(QVariant, 20.0), Q_ARG(QVariant, east)));
+        QVERIFY(added.toBool());
+    }
+
+    // Placed on the first of the two waypoints, so the yaw item lands between them rather than at
+    // the end of the plan
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, 1)));
+
+    QVariant inserted;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "insertConditionYaw", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, inserted), Q_ARG(QVariant, 270.0)));
+    QVERIFY(inserted.toBool());
+
+    QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 4);
+    QObject *const yawItem = items.at(2).value<QObject *>();
+    QVERIFY2(yawItem, "the yaw item belongs right after the waypoint it was placed on");
+    QCOMPARE(yawItem->property("command").toInt(), static_cast<int>(MAV_CMD_CONDITION_YAW));
+
+    // Listed, because it is an item the aircraft will fly, and nowhere on the grid, because it has
+    // no position to be drawn at
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 4);
+    const QJSValue yawPoint = points.property(2);
+    QCOMPARE(yawPoint.property(QStringLiteral("index")).toInt(), 2);
+    QVERIFY2(!yawPoint.property(QStringLiteral("onGrid")).toBool(),
+             "an item with no coordinate has nowhere on the grid to be drawn");
+    QVERIFY2(!yawPoint.property(QStringLiteral("flyThrough")).toBool(),
+             "the aircraft is not routed through a heading");
+
+    // The leg reaching the last waypoint is still measured from the waypoint before the yaw item,
+    // not from the yaw item -- the same path a cancelled ROI takes through this view
+    QVariant legStart;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "legStartFor", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, legStart), Q_ARG(QVariant, 3)));
+    const QVariantMap legStartMap = legStart.toMap();
+    QVERIFY(qAbs(legStartMap.value(QStringLiteral("north")).toDouble() - 20.0) < 0.05);
+    QVERIFY(qAbs(legStartMap.value(QStringLiteral("east")).toDouble()) < 0.05);
+
+    // The heading itself, once the command tree publishes the parameter for the command the item was
+    // just given -- which is what the real controller does as the command is written, and what the
+    // stand-in leaves to the test so that the name comes from the tree rather than from the stub
+    Fact *const heading = publishItemFact(yawItem, "textFieldFacts", QStringLiteral("Heading"));
+    QVERIFY(heading);
+
+    QVariant applied;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, applied),
+                                      Q_ARG(QVariant, 2), Q_ARG(QVariant, 270.0)));
+    QVERIFY(applied.toBool());
+
+    QVariant read;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, read), Q_ARG(QVariant, 2)));
+    QVERIFY2(qAbs(read.toDouble() - 270.0) < 1e-9,
+             "the grid speaks the aircraft's convention: 270 is west, not an angle out of range");
+
+    // Past the wrap is an ordinary thing to type while rotating a pattern, and 370 means 10
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, applied),
+                                      Q_ARG(QVariant, 2), Q_ARG(QVariant, 370.0)));
+    QVERIFY(applied.toBool());
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, read), Q_ARG(QVariant, 2)));
+    QVERIFY(qAbs(read.toDouble() - 10.0) < 1e-9);
+
+    // And a plain waypoint has no heading of its own to read or write, whatever it publishes
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, read), Q_ARG(QVariant, 1)));
+    QVERIFY(qIsNaN(read.toDouble()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, applied),
+                                      Q_ARG(QVariant, 1), Q_ARG(QVariant, 90.0)));
+    QVERIFY2(!applied.toBool(), "a waypoint's own yaw never reaches the aircraft, so it is not offered one");
+}
+
+/// A pattern flown indoors is square to the walls or it is not, and the angle that makes it square
+/// is one number rather than a new position for every waypoint. It turns about the point the pattern
+/// starts from -- not about the origin, which for a pattern already moved to the aircraft is a point
+/// the pattern no longer has anything to do with.
+void LocalGridViewTest::_rotatePlan_turnsThePatternAboutWhereItStarts_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    // A quarter turn clockwise takes a point due north of the pivot to due east of it
+    QVariant turned;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QCOMPARE(turned.toInt(), 1);
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber()) < 0.05);
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("east")).toNumber() - 20.0) < 0.05);
+
+    // The takeoff does not turn with it. It is pinned to the origin because a multirotor climbs in
+    // place whatever coordinate is uploaded with it.
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("north")).toNumber()) < 0.05);
+    QVERIFY(qAbs(points.property(0).property(QStringLiteral("east")).toNumber()) < 0.05);
+
+    // Moved ten metres north on purpose, which is what makes the pivot visible: the pattern now
+    // starts somewhere other than the origin, and the anchor is what says so
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "nudgePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QCOMPARE(moved.toInt(), 1);
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 10.0);
+
+    // The waypoint is now at (10, 20), due east of the anchor at (10, 0). Another quarter turn
+    // clockwise puts it due south of that anchor -- at (-10, 0).
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QCOMPARE(turned.toInt(), 1);
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    const double north = points.property(1).property(QStringLiteral("north")).toNumber();
+    const double east = points.property(1).property(QStringLiteral("east")).toNumber();
+    QVERIFY2(qAbs(north + 10.0) < 0.05,
+             qPrintable(QStringLiteral("turned about the origin instead of the anchor: north %1").arg(north)));
+    QVERIFY2(qAbs(east) < 0.05,
+             qPrintable(QStringLiteral("turned about the origin instead of the anchor: east %1").arg(east)));
+
+    // And turning does not move the anchor: the pattern still starts where it started
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 10.0);
+
+    // A turn of a whole revolution changes nothing rather than rewriting every item to where it
+    // already was
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 360.0)));
+    QCOMPARE(turned.toInt(), 0);
+}
+
+/// A yaw item has no position to turn -- what turns is the heading it holds. Left behind, the pattern
+/// comes out at the right angle with the nose pointing the old way, and on an aircraft measuring with
+/// optical flow that is not a cosmetic difference.
+void LocalGridViewTest::_rotatePlan_turnsYawHeadingsWithThePattern_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QVariant inserted;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "insertConditionYaw", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, inserted), Q_ARG(QVariant, 0.0)));
+    QVERIFY(inserted.toBool());
+
+    const QVariantList items = stub->property("items").toList();
+    QCOMPARE(items.count(), 3);
+    Fact *const heading = publishItemFact(items.at(2).value<QObject *>(), "textFieldFacts",
+                                          QStringLiteral("Heading"));
+    QVERIFY(heading);
+
+    // Set past three quarters, so the turn below has to wrap rather than run off the end of the compass
+    QVariant applied;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setWaypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, applied),
+                                      Q_ARG(QVariant, 2), Q_ARG(QVariant, 350.0)));
+    QVERIFY(applied.toBool());
+
+    QVariant turned;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QVERIFY2(turned.toInt() == 2, "the waypoint turns and so does the heading beside it");
+
+    QVariant read;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointYawHeading", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, read), Q_ARG(QVariant, 2)));
+    QVERIFY2(qAbs(read.toDouble() - 80.0) < 1e-9,
+             "350 turned a quarter clockwise is 80, not 440");
+}
+
+/// The anchor is what says where the pattern starts, and a move made on purpose changes that as
+/// surely as one made to follow the aircraft. Left behind, the grid goes on offering to move a
+/// pattern to where it already claims it is.
+void LocalGridViewTest::_nudgePlan_movesTheAnchorWithThePattern_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    // The aircraft is standing five metres up the field, so the offer to move the plan to it is five
+    // metres -- the number the anchor is subtracted from
+    sendLocalPosition(vehicle(), 5.0F, 0.0F, -1.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("positionValid").toBool(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(qAbs(gridView->property("reanchorNorthMetres").toDouble() - 5.0) < 0.05,
+                             TestTimeout::mediumMs());
+
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "nudgePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 2.0), Q_ARG(QVariant, 0.0)));
+    QCOMPARE(moved.toInt(), 1);
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 22.0) < 0.05);
+
+    QCOMPARE(gridView->property("planAnchorNorth").toDouble(), 2.0);
+    QVERIFY2(qAbs(gridView->property("reanchorNorthMetres").toDouble() - 3.0) < 0.05,
+             "the pattern moved two metres further from the aircraft, so the offer to move it back must shrink by two");
+}
+
+/// Both of these rewrite the plan, and both are shut for the same two reasons the move to the
+/// aircraft is: an aircraft already flying the pattern would have its route changed underneath it,
+/// and a transfer in progress is sending the very items being rewritten. Shut with the reason said
+/// out loud, because a dead button teaches an operator the feature is broken.
+void LocalGridViewTest::_patternShapingIsRefusedWhileArmedOrSyncing_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    // Nothing drawn yet: there is no reason to give, because a grid with no pattern on it explains
+    // itself
+    QVERIFY(!gridView->property("canTransformPlan").toBool());
+    QCOMPARE(gridView->property("transformBlockedReason").toString(), QString());
+
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+    QVERIFY(gridView->property("canTransformPlan").toBool());
+
+    plan->setProperty("syncInProgress", true);
+    QVERIFY(!gridView->property("canTransformPlan").toBool());
+    QVERIFY(!gridView->property("transformBlockedReason").toString().isEmpty());
+
+    QVariant turned;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QCOMPARE(turned.toInt(), 0);
+    plan->setProperty("syncInProgress", false);
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+    QTRY_COMPARE_WITH_TIMEOUT(gridView->property("canTransformPlan").toBool(), false, TestTimeout::mediumMs());
+    QVERIFY(!gridView->property("transformBlockedReason").toString().isEmpty());
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QCOMPARE(turned.toInt(), 0);
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "nudgePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, 2.0), Q_ARG(QVariant, 0.0)));
+    QCOMPARE(moved.toInt(), 0);
+
+    // The pattern is where it was drawn, not somewhere between
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05);
+
+    vehicle()->setArmedShowError(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
+}
+
+// ============================================================================
+// Bagian 6b: undo (Lampiran H)
+// ============================================================================
+
+/// Placing is one tap with nothing guarding it, so it has to be takeable back -- and taking it back
+/// has to leave the plan exactly as it was, not merely one item shorter.
+///
+/// The empty-plan case is the one that makes this more than a removal: the first waypoint of a plan
+/// also brings a takeoff in with it, and an undo that removed only the waypoint would leave behind a
+/// takeoff nobody asked for.
+void LocalGridViewTest::_undoTakesBackAPlacement_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVERIFY2(!gridView->property("canUndo").toBool(), "nothing has happened yet, so there is nothing to undo");
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(placed.toBool());
+
+    // The takeoff came along with it
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY2(gridView->property("canUndo").toBool(), "a placement must be takeable back");
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY2(points.property(QStringLiteral("length")).toInt() == 0,
+             "undoing the first placement must take the takeoff it brought with it as well");
+    QVERIFY2(!gridView->property("canUndo").toBool(),
+             "the control must go once its action has been taken back");
+}
+
+/// The accident 6a reduced but could not remove: a waypoint selected on a touch screen and nudged in
+/// the process. Undo has to put it back exactly, not approximately.
+void LocalGridViewTest::_undoPutsAMovedWaypointBack_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 5.0)));
+    QVERIFY(placed.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int waypointIndex = points.property(1).property(QStringLiteral("index")).toInt();
+
+    QVariant moved;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "moveWaypointTo", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, moved),
+                                      Q_ARG(QVariant, waypointIndex),
+                                      Q_ARG(QVariant, 31.0), Q_ARG(QVariant, -9.0)));
+    QVERIFY(moved.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 31.0) < 0.05);
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY2(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05,
+             "the waypoint must come back to the offsets it was moved from");
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("east")).toNumber() - 5.0) < 0.05);
+}
+
+/// A delete is one tap on a trash icon with no confirmation behind it, and it takes the altitude,
+/// the speed and the wait typed into the item along with the item itself. Undo has to bring all of
+/// it back -- restoring the position alone would hand back something that looks right and flies
+/// differently.
+void LocalGridViewTest::_undoRestoresADeletedItemWholly_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 12.0), Q_ARG(QVariant, -4.0)));
+    QVERIFY(placed.toBool());
+
+    QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    const int waypointIndex = points.property(1).property(QStringLiteral("index")).toInt();
+
+    // Given the fields an operator would have typed before losing it. Whole numbers because the
+    // stub's Facts default to int32 -- the values matter, their precision does not.
+    QObject *const item = stub->property("lastInsertedItem").value<QObject *>();
+    QVERIFY(item);
+    QObject *const altitude = item->property("altitude").value<QObject *>();
+    QVERIFY(altitude);
+    altitude->setProperty("rawValue", 6.0);
+    Fact *const hold = publishItemFact(item, "textFieldFactsAdvanced", QStringLiteral("Hold"));
+    QVERIFY(hold);
+    hold->setRawValue(9.0);
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "selectWaypoint", Qt::DirectConnection,
+                                      Q_ARG(QVariant, waypointIndex)));
+    QVariant removed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "removeSelectedWaypoint", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, removed)));
+    QVERIFY(removed.toBool());
+    QCOMPARE(gridView->property("missionPoints").value<QJSValue>().property(QStringLiteral("length")).toInt(), 1);
+    QVERIFY2(gridView->property("canUndo").toBool(), "a delete with no confirmation behind it must be takeable back");
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY2(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 12.0) < 0.05,
+             "the restored item must come back where it was");
+    QVERIFY(qAbs(points.property(1).property(QStringLiteral("east")).toNumber() + 4.0) < 0.05);
+
+    const int restoredIndex = points.property(1).property(QStringLiteral("index")).toInt();
+    QVariant altitudeFactValue;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointAltitudeFact", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, altitudeFactValue),
+                                      Q_ARG(QVariant, restoredIndex)));
+    QObject *const restoredAltitude = altitudeFactValue.value<QObject *>();
+    QVERIFY2(restoredAltitude, "the restored item carries no altitude at all");
+    QVERIFY2(qFuzzyCompare(restoredAltitude->property("rawValue").toDouble(), 6.0),
+             "the altitude typed into the item must come back with it");
+}
+
+/// Turning the whole pattern is one tap that moves every item. Undo turns it back through the same
+/// angle about the same anchor, which is the inverse rather than a stored copy -- so the check is
+/// that every offset lands back where it started.
+void LocalGridViewTest::_undoTurnsThePatternBack_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    const double north[] = {20.0, 20.0};
+    const double east[]  = {0.0, 20.0};
+    for (int i = 0; i < 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, north[i]), Q_ARG(QVariant, east[i])));
+        QVERIFY(placed.toBool());
+    }
+
+    QVariant turned;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "rotatePlan", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, turned), Q_ARG(QVariant, 90.0)));
+    QVERIFY2(turned.toInt() > 0, "the pattern never turned");
+    QVERIFY2(gridView->property("canUndo").toBool(), "turning the plan must be takeable back");
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    for (int i = 0; i < 2; i++) {
+        const QJSValue point = points.property(i + 1);
+        QVERIFY2(qAbs(point.property(QStringLiteral("north")).toNumber() - north[i]) < 0.05,
+                 "every item must come back to the offsets the turn moved it from");
+        QVERIFY(qAbs(point.property(QStringLiteral("east")).toNumber() - east[i]) < 0.05);
+    }
+}
+
+/// "Set this altitude on all" is the widest single tap on the grid: one number replaces every
+/// altitude in the plan, and none of the old ones are readable from anything left on screen.
+void LocalGridViewTest::_undoRestoresTheAltitudesOneTapReplaced_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    for (int i = 0; i < 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, 10.0 * (i + 1)), Q_ARG(QVariant, 0.0)));
+        QVERIFY(placed.toBool());
+    }
+
+    // Two different altitudes, so a restore that simply writes one number everywhere would show up
+    const QJSValue before = gridView->property("missionPoints").value<QJSValue>();
+    const int firstIndex  = before.property(1).property(QStringLiteral("index")).toInt();
+    const int secondIndex = before.property(2).property(QStringLiteral("index")).toInt();
+
+    const auto altitudeOf = [&gridView](int index) -> QObject * {
+        QVariant value;
+        if (!QMetaObject::invokeMethod(gridView.get(), "waypointAltitudeFact", Qt::DirectConnection,
+                                       Q_RETURN_ARG(QVariant, value), Q_ARG(QVariant, index))) {
+            return nullptr;
+        }
+        return value.value<QObject *>();
+    };
+
+    QObject *const firstAltitude = altitudeOf(firstIndex);
+    QObject *const secondAltitude = altitudeOf(secondIndex);
+    QVERIFY(firstAltitude);
+    QVERIFY(secondAltitude);
+    firstAltitude->setProperty("rawValue", 4.0);
+    secondAltitude->setProperty("rawValue", 7.0);
+
+    QVariant changed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointAltitudes", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, 9.0)));
+    QVERIFY(changed.toInt() > 0);
+    QCOMPARE(altitudeOf(firstIndex)->property("rawValue").toDouble(), 9.0);
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    QVERIFY2(qFuzzyCompare(altitudeOf(firstIndex)->property("rawValue").toDouble(), 4.0),
+             "each item must get its own altitude back, not a single shared one");
+    QVERIFY2(qFuzzyCompare(altitudeOf(secondIndex)->property("rawValue").toDouble(), 7.0),
+             "each item must get its own altitude back, not a single shared one");
+}
+
+/// The fly view's controller is a mirror of the vehicle: a completed transfer rebuilds every item.
+/// A recorded action describes the plan that was there before that, so applying its inverse
+/// afterwards would edit an item it was never about.
+void LocalGridViewTest::_undoIsDroppedWhenThePlanArrivesFromTheVehicle_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(placed.toBool());
+    QVERIFY(gridView->property("canUndo").toBool());
+
+    QVERIFY(QMetaObject::invokeMethod(stub.get(), "visualItemsReset", Qt::DirectConnection));
+
+    QVERIFY2(!gridView->property("canUndo").toBool(),
+             "an action describing the previous plan must not survive the arrival of a new one");
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY2(!undone.toBool(), "there must be nothing left to take back");
+}
+
+/// One level, deliberately. Two actions then one undo takes back the second and offers nothing
+/// further -- a stack of claims about a plan the vehicle may already have replaced is what this
+/// avoids.
+void LocalGridViewTest::_undoRemembersOnlyTheLastAction_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    for (int i = 0; i < 2; i++) {
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, placed),
+                                          Q_ARG(QVariant, 10.0 * (i + 1)), Q_ARG(QVariant, 0.0)));
+        QVERIFY(placed.toBool());
+    }
+    // takeoff plus two waypoints
+    QCOMPARE(gridView->property("missionPoints").value<QJSValue>().property(QStringLiteral("length")).toInt(), 3);
+
+    QVariant undone;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "undoLastAction", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, undone)));
+    QVERIFY(undone.toBool());
+
+    // Only the second placement went; the first waypoint and its takeoff stay
+    QCOMPARE(gridView->property("missionPoints").value<QJSValue>().property(QStringLiteral("length")).toInt(), 2);
+    QVERIFY2(!gridView->property("canUndo").toBool(),
+             "one level means the first placement is not offered up after the second is taken back");
+}
+
+/// The bug an operator met first: build a plan, and every waypoint after the first became waypoint
+/// one.
+///
+/// setCurrentPlanViewSeqNum finds the item whose *first* sequence number matches what it is handed.
+/// The fly view handed it lastSequenceNumber instead -- in MissionController's own initialisation
+/// and in the grid's clearWaypointSelection, which was written to mirror it. The two are equal only
+/// for an item that occupies one place in the uploaded mission, and every waypoint this grid places
+/// carries a speed, so it is flown as NAV_WAYPOINT followed by DO_CHANGE_SPEED and occupies two.
+///
+/// Nothing matched, the controller was left with no current item, currentPlanViewVIIndex stayed at
+/// -1, and _insertIndex turned that into 0 -- the mission settings item's own slot, in front of the
+/// whole plan.
+///
+/// This went unseen because the stand-in was kinder than the real thing: its items default to
+/// lastSequenceNumber == sequenceNumber, so the lookup always succeeded. The span is set explicitly
+/// here, which is the shape a real speed-carrying waypoint has.
+void LocalGridViewTest::_insertAppendsWhenAnItemSpansTwoSequenceNumbers_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 10.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(placed.toBool());
+
+    // The waypoint just placed carries a speed, so it spans two numbers the way the real one does
+    QObject *const firstWaypoint = stub->property("lastInsertedItem").value<QObject *>();
+    QVERIFY(firstWaypoint);
+    firstWaypoint->setProperty("lastSequenceNumber",
+                               firstWaypoint->property("sequenceNumber").toInt() + 1);
+
+    // Clicking bare grid deselects, which is what puts the controller back at the end of the plan --
+    // the path that was handing over the wrong number
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "clearWaypointSelection", Qt::DirectConnection));
+
+    QVariant insertIndex;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "_insertIndex", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, insertIndex)));
+    QVERIFY2(insertIndex.toInt() != 0,
+             qPrintable(QStringLiteral("an insert must never land on the mission settings item's own "
+                                       "slot; got index %1").arg(insertIndex.toInt())));
+
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(placed.toBool());
+
+    // takeoff, then 10 north, then 20 north -- in the order they were placed
+    const QJSValue points = gridView->property("missionPoints").value<QJSValue>();
+    QCOMPARE(points.property(QStringLiteral("length")).toInt(), 3);
+    QVERIFY2(qAbs(points.property(1).property(QStringLiteral("north")).toNumber() - 10.0) < 0.05,
+             "the first waypoint must stay first");
+    QVERIFY2(qAbs(points.property(2).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05,
+             "the second waypoint must land after it, not in front of the whole plan");
 }

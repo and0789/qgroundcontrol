@@ -84,6 +84,27 @@ ColumnLayout {
     /// position fields would take a number and move nothing, so they are dropped rather than shown.
     readonly property bool _placedOnGrid: !isNaN(north) && !isNaN(east)
 
+    /// True for a landing, whose altitude is not the operator's to set. ArduPilot zeroes the one it
+    /// is given and refills it from the vehicle's current altitude, so the number in the field would
+    /// take an edit and change nothing about the flight.
+    readonly property bool _isLanding: (gridView && (visualItemIndex >= 0))
+                                        ? gridView.waypointIsLanding(visualItemIndex)
+                                        : false
+
+    /// Whether this item's altitude is worth showing, and worth taking an edit
+    readonly property bool _altitudeIsOwn: (_altitudeFact !== null) && !_isLanding
+
+    /// How long the aircraft waits here, in seconds. Null for every item that has no such wait --
+    /// which is every item but a plain waypoint.
+    readonly property var _holdTimeFact: (gridView && (visualItemIndex >= 0))
+                                            ? gridView.waypointHoldTimeFact(visualItemIndex)
+                                            : null
+
+    /// True for an item whose whole job is to point the nose somewhere
+    readonly property bool _isYawCommand: (gridView && (visualItemIndex >= 0))
+                                            ? gridView.waypointIsYawCommand(visualItemIndex)
+                                            : false
+
     /// Whether the fields that move this item are any use on it
     readonly property bool _movable: _placedOnGrid && !_isPinned
 
@@ -104,13 +125,19 @@ ColumnLayout {
                 return
             }
             const capped = _root.gridView.clampAltitude(value)
-            if (capped === value) {
+            if (capped !== value) {
+                _root._altitudeFact.rawValue = capped
+                _root._clampedNote = qsTr("Held to %1 — the rangefinder only reaches %2.")
+                                        .arg(_root._altitudeText(capped))
+                                        .arg(_root._limitText)
+                // That write raises this handler again with the capped value, which is where the
+                // landings are brought into step. Doing it here as well would walk the plan twice
+                // and move them to a height that is about to be corrected.
                 return
             }
-            _root._altitudeFact.rawValue = capped
-            _root._clampedNote = qsTr("Held to %1 — the rangefinder only reaches %2.")
-                                    .arg(_root._altitudeText(capped))
-                                    .arg(_root._limitText)
+            // A landing is flown at the height of the leg reaching it, so retyping a waypoint's
+            // altitude moves the landing after it too
+            _root.gridView.syncLandingAltitudes()
         }
     }
 
@@ -167,6 +194,14 @@ ColumnLayout {
     /// property from one leaves the fields a step behind -- which showed as bearing and distance
     /// reading NaN while north and east beside them were already correct.
     function _refillFields() {
+        // Filled ahead of the guard below, not after it. A yaw item carries no coordinate at all, so
+        // north and east are NaN on it and the early return would leave this field permanently
+        // blank -- on the one item type it is the only field for.
+        if (_isYawCommand && !yawHeadingRow.field.activeFocus) {
+            const heading = gridView.waypointYawHeading(visualItemIndex)
+            yawHeadingRow.field.text = isNaN(heading) ? "" : heading.toFixed(1)
+        }
+
         if (!_transform || isNaN(north) || isNaN(east)) {
             return
         }
@@ -234,6 +269,23 @@ ColumnLayout {
         gridView.moveWaypointToLeg(visualItemIndex, bearing, _transform.fromDisplay(distance))
     }
 
+    /// Whether the background notes are being shown. Off by default: the editor is a column of
+    /// numbers being read at a flight line, and a paragraph between every two of them is a paragraph
+    /// nobody reads twice. What it explains does not stop being true while it is hidden -- the
+    /// Mission Items header carries the toggle that brings it all back.
+    readonly property bool _showHelp: QGroundControl.settingsManager.flyViewSettings.showLocalGridPlanHelp.rawValue
+
+    /// Background: how the firmware behaves, and how this panel is worked. True whether or not the
+    /// operator is looking at this particular item, which is exactly what makes it worth folding
+    /// away -- unlike the notes below that report what has happened to the item in hand, and stay.
+    component HelpNote: QGCLabel {
+        Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 3
+        Layout.maximumWidth:    _root._textWidth
+        wrapMode:               Text.WordWrap
+        font.pointSize:         ScreenTools.smallFontPointSize
+        color:                  qgcPal.colorGrey
+    }
+
     component SectionHeader: QGCLabel {
         Layout.fillWidth:   true
         Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
@@ -279,7 +331,7 @@ ColumnLayout {
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
         color:                  qgcPal.colorGrey
-        text:                   qsTr("Held on the origin, where the aircraft is standing. Set its altitude below.")
+        text:                   qsTr("Held on the origin, where the aircraft is standing.")
     }
 
     // An item that flies to a point the plan does not carry -- a return to launch goes to the
@@ -353,11 +405,32 @@ ColumnLayout {
         onApplied:  _root._applyLeg()
     }
 
-    // Only for items carrying an altitude of their own. A complex item may not, and the row is
-    // dropped rather than shown holding nothing.
+    // What happens at a landing instead of an altitude field. Said out loud because the field was
+    // there until now: an operator who set a number in it and watched the aircraft ignore it is
+    // owed the reason, and one who goes looking for the field needs to know it did not fail to load.
+    QGCLabel {
+        objectName:             "localGrid_landingAltitudeFollows"
+        Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 3
+        Layout.maximumWidth:    _root._textWidth
+        visible:                _root._isLanding
+        wrapMode:               Text.WordWrap
+        font.pointSize:         ScreenTools.smallFontPointSize
+        color:                  qgcPal.colorGrey
+        // Stays whether or not help is on. An altitude field that is simply absent reads as a panel
+        // that failed to load, and this is the one line that says otherwise.
+        text:                   qsTr("No altitude of its own.")
+    }
+
+    HelpNote {
+        visible:    _root._isLanding && _root._showHelp
+        text:       qsTr("A landing is flown from the height of the leg that reaches it: the aircraft arrives at whatever altitude that leg holds and descends from there.")
+    }
+
+    // Only for items carrying an altitude of their own. A complex item may not, and a landing's is
+    // never flown, so the row is dropped rather than shown holding a number that does nothing.
     RowLayout {
         Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
-        visible:            _root._altitudeFact !== null
+        visible:            _root._altitudeIsOwn
         spacing:            ScreenTools.defaultFontPixelWidth
 
         QGCLabel {
@@ -381,7 +454,7 @@ ColumnLayout {
     // did not take what was typed into it.
     QGCLabel {
         Layout.maximumWidth:    _root._textWidth
-        visible:                _root._clampedNote !== ""
+        visible:                _root._altitudeIsOwn && (_root._clampedNote !== "")
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
         color:                  qgcPal.colorOrange
@@ -394,7 +467,7 @@ ColumnLayout {
     // file or from the vehicle is not quietly rewritten under the operator.
     QGCLabel {
         Layout.maximumWidth:    _root._textWidth
-        visible:                _root._altitudeAboveLimit
+        visible:                _root._altitudeIsOwn && _root._altitudeAboveLimit
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
         color:                  qgcPal.colorOrange
@@ -404,8 +477,9 @@ ColumnLayout {
 
     QGCButton {
         objectName:         "localGrid_applyAltitudeToAllButton"
-        Layout.fillWidth:   true
-        visible:            _root._altitudeFact !== null
+        Layout.leftMargin:  _root._labelWidth + ScreenTools.defaultFontPixelWidth
+        visible:            _root._altitudeIsOwn
+        pointSize:          ScreenTools.smallFontPointSize
         text:               qsTr("Set this altitude on all")
         onClicked:          _root._applyAltitudeToAll()
     }
@@ -447,26 +521,88 @@ ColumnLayout {
         wrapMode:               Text.WordWrap
         font.pointSize:         ScreenTools.smallFontPointSize
         color:                  qgcPal.colorOrange
-        text:                   qsTr("This waypoint carries no speed of its own — it will be flown at the vehicle's WP_SPD. Type a speed, or set one on all below.")
+        // A statement about this waypoint rather than about the firmware, so it is not folded away
+        // with the background notes -- a blank field with nothing said beside it is the state an
+        // operator reads as broken.
+        text:                   qsTr("No speed of its own — flown at the vehicle's WP_SPD.")
+    }
+
+    HelpNote {
+        visible:    (_root._speedSection !== null) && !_root._speedSpecified && _root._showHelp
+        text:       qsTr("Type a speed here to give this waypoint one, or set one on every waypoint at once below.")
     }
 
     // The button the comparison flights are actually flown from: one pattern at two speeds means
     // retyping every waypoint otherwise, and the speed is the thing being varied.
     QGCButton {
         objectName:         "localGrid_applySpeedToAllButton"
-        Layout.fillWidth:   true
+        Layout.leftMargin:  _root._labelWidth + ScreenTools.defaultFontPixelWidth
+        pointSize:          ScreenTools.smallFontPointSize
         visible:            _root._speedSection !== null
         text:               qsTr("Set this speed on all")
         onClicked:          _root._applySpeedToAll()
     }
 
-    QGCLabel {
-        Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 3
-        Layout.maximumWidth:    _root._textWidth
-        wrapMode:               Text.WordWrap
-        font.pointSize:         ScreenTools.smallFontPointSize
-        visible:                _root._movable
-        color:                  qgcPal.colorGrey
-        text:                   qsTr("Drag the marker, or type into any field.")
+    // The one waypoint parameter besides position and altitude that reaches an ArduCopter. Its
+    // mission records are 15 bytes and cannot carry both a delay and a radius, so the firmware keeps
+    // this and drops the rest -- which is why there is no acceptance radius field beside it.
+    RowLayout {
+        Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
+        visible:            _root._holdTimeFact !== null
+        spacing:            ScreenTools.defaultFontPixelWidth
+
+        QGCLabel {
+            Layout.preferredWidth:  _root._labelWidth
+            horizontalAlignment:    Text.AlignRight
+            font.pointSize:         ScreenTools.smallFontPointSize
+            text:                   qsTr("Hold")
+        }
+
+        FactTextField {
+            objectName:             "localGrid_waypointHoldField"
+            Layout.preferredWidth:  _root._fieldWidth
+            font.pointSize:         ScreenTools.smallFontPointSize
+            fact:                   _root._holdTimeFact
+        }
+    }
+
+    // Why there is no acceptance radius here, said once beside the field that replaced it. An
+    // operator who has planned in the Plan view has seen that field and will look for it; left
+    // unsaid, its absence reads as something this panel failed to load rather than as a number the
+    // aircraft was never going to read.
+    HelpNote {
+        objectName: "localGrid_acceptanceRadiusNote"
+        visible:    (_root._holdTimeFact !== null) && _root._showHelp
+        text:       qsTr("A wait of 0 flies straight through. There is no acceptance radius here: ArduPilot's mission records have no room for one beside the wait, so the firmware drops it and uses the WP_RADIUS_M parameter for every waypoint alike.")
+    }
+
+    // The only field a yaw item has, and the reason it exists. Its own row rather than the generic
+    // fact field: the command tree describes this parameter as -180..180 while ArduPilot reads it as
+    // 0-360 from north, and this grid speaks the aircraft's convention everywhere else -- a bearing
+    // of 270 has to be typeable here without the field calling it out of range.
+    EntryRow {
+        id:         yawHeadingRow
+        objectName: "localGrid_yawHeadingRow"
+        visible:    _root._isYawCommand
+        label:      qsTr("Heading")
+        units:      "°"
+        onApplied: {
+            const heading = parseFloat(yawHeadingRow.field.text)
+            if (!isNaN(heading)) {
+                _root.gridView.setWaypointYawHeading(_root.visualItemIndex, heading)
+            }
+            _root._refillFields()
+        }
+    }
+
+    HelpNote {
+        visible:    _root._isYawCommand && _root._showHelp
+        text:       qsTr("Clockwise from north, held from here until another yaw item changes it. Which way the nose points is part of what a leg measures: the flow sensor reads movement in the airframe's own frame.")
+    }
+
+    HelpNote {
+        objectName: "localGrid_dragHint"
+        visible:    _root._movable && _root._showHelp
+        text:       qsTr("Drag the marker, or type into any field.")
     }
 }

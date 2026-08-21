@@ -226,3 +226,109 @@ void FlyViewLocalGridUITest::_theAirspeedPanelFollowsTheSensor_test()
                      "the position readout went with the airspeed panel");
         });
 }
+
+/// The tool strip is two strips in one place, and the whole safety of that rests on only one of them
+/// being on screen at a time. Boots the real strip and switches modes on it, because none of what
+/// makes this work is visible from the grid's own properties: the flying buttons stand down through
+/// bindings inside their own files, and the plan buttons show what is armed through Binding elements
+/// declared a file away from the actions they drive.
+///
+/// The armed tool is the part with a history. The strip writes checked back into its action, which
+/// destroys an ordinary binding on it, and the strip also unchecks every other button when one goes
+/// down -- so a plan tool would either stick lit after the grid disarmed it, or switch the mode off
+/// underneath itself the moment it was armed.
+void FlyViewLocalGridUITest::_planModeSwapsTheStripWithoutLosingTheMode_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &/*mockLink*/, Vehicle * /*vehicle*/) {
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_nonGpsStatusButton"), 10000),
+                     "the flying strip never came up");
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_planTakeoffButton"), 0) == nullptr,
+                     "a plan button was on the strip before plan mode was ever entered");
+
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_planButton")), "the Plan button could not be clicked");
+            QVERIFY_TRUE_WAIT(gridView->property("planEditMode").toBool(), TestTimeout::longMs());
+
+            // The swap, both ways round: the plan's inserts are on the strip and the buttons that
+            // command the aircraft are not
+            QVERIFY2(
+                findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_planTakeoffButton"), TestTimeout::longMs()),
+                "the plan inserts never reached the strip");
+            QVERIFY_TRUE_WAIT(
+                findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_nonGpsStatusButton"), 0) == nullptr,
+                TestTimeout::longMs());
+            QVERIFY2(verifyChecked(QStringLiteral("flyToolStrip_planButton"), true, QStringLiteral("in plan mode")),
+                     "the Plan button does not show the mode it just entered");
+
+            // Arming a tool must not put the mode out. Set on the grid rather than clicked, because
+            // what is under test is the strip following the grid -- which is the direction that
+            // breaks when the plan is disarmed by something other than a click.
+            gridView->setProperty("armedTool", QStringLiteral("waypoint"));
+            QVERIFY_TRUE_WAIT(findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_planWaypointButton"), 0)
+                                  ->property("checked")
+                                  .toBool(),
+                              TestTimeout::longMs());
+            QVERIFY2(verifyChecked(QStringLiteral("flyToolStrip_planButton"), true,
+                                   QStringLiteral("with a plan tool armed")),
+                     "arming a plan tool switched the mode off underneath it");
+
+            // Leaving the mode puts the tool down, and the button has to let go with it
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_planButton")),
+                     "the Plan button could not be clicked again");
+            QVERIFY_TRUE_WAIT(!gridView->property("planEditMode").toBool(), TestTimeout::longMs());
+            QCOMPARE(gridView->property("armedTool").toString(), QString());
+            QVERIFY_TRUE_WAIT(
+                findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_nonGpsStatusButton"), 0) != nullptr,
+                TestTimeout::longMs());
+        });
+}
+
+/// Shaping the pattern lives behind a drop panel, which is the one place a plan control can go and
+/// leave no trace of having gone missing. Turning the pattern and pinning the nose are reached from
+/// nowhere else -- rotatePlan and insertConditionYaw have no other caller in the app -- and their own
+/// tests drive those functions directly, so both stayed green through a spell where nothing on screen
+/// could reach either.
+///
+/// Opening the panel must also leave the mode alone. A drop panel checks its button, and the strip
+/// unchecks every other button when one goes down.
+void FlyViewLocalGridUITest::_shapingThePatternIsReachableInPlanMode_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> & /*mockLink*/, Vehicle * /*vehicle*/) {
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_planShapeButton"), 0) == nullptr,
+                     "the Shape button was on the strip outside plan mode");
+
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_planButton")), "the Plan button could not be clicked");
+            QVERIFY_TRUE_WAIT(gridView->property("planEditMode").toBool(), TestTimeout::longMs());
+
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_planShapeButton")),
+                     "the Shape button never reached the strip in plan mode");
+
+            // The three controls that have no other way in
+            for (const QString &control : {QStringLiteral("localGrid_planRotateButton"),
+                                           QStringLiteral("localGrid_planMoveButton"),
+                                           QStringLiteral("localGrid_planYawButton")}) {
+                QVERIFY2(findVisibleItem(_rootItem, control, TestTimeout::longMs()),
+                         qPrintable(QStringLiteral("%1 is reachable from nowhere in the app").arg(control)));
+            }
+
+            // Opening a panel is not picking up a tool, so the mode underneath it stands
+            QVERIFY2(gridView->property("planEditMode").toBool(), "opening the Shape panel switched plan mode off");
+            QVERIFY2(verifyChecked(QStringLiteral("flyToolStrip_planButton"), true,
+                                   QStringLiteral("with the Shape panel open")),
+                     "opening the Shape panel unchecked the Plan button");
+        });
+}
+

@@ -1,0 +1,743 @@
+<title>Konfigurasi Non-GPS Pixhawk 6C</title>
+<style>
+  :root {
+    --bg:        #F6F7F9;
+    --surface:   #FFFFFF;
+    --surface-2: #EEF1F4;
+    --ink:       #141C24;
+    --ink-2:     #5A6673;
+    --ink-3:     #8996A3;
+    --rule:      #DCE1E7;
+    --rule-2:    #C3CCD5;
+    --accent:    #17618C;
+    --accent-bg: #E4EEF5;
+    --signal:    #A65B08;
+    --signal-bg: #F8EDDF;
+    --ok:        #0F6E52;
+    --ok-bg:     #E1F0EA;
+    --crit:      #A3271F;
+    --crit-bg:   #F7E6E4;
+    --shadow:    0 1px 2px rgba(20,28,36,.06), 0 1px 0 rgba(20,28,36,.03);
+
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:        #0F151B;
+      --surface:   #161F27;
+      --surface-2: #1D2831;
+      --ink:       #DEE6ED;
+      --ink-2:     #93A3B1;
+      --ink-3:     #6C7C8A;
+      --rule:      #25323D;
+      --rule-2:    #34434F;
+      --accent:    #6DB9E4;
+      --accent-bg: #14293A;
+      --signal:    #E4A054;
+      --signal-bg: #33260F;
+      --ok:        #55C69F;
+      --ok-bg:     #102C24;
+      --crit:      #E8837A;
+      --crit-bg:   #331916;
+      --shadow:    0 1px 2px rgba(0,0,0,.3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg:        #0F151B;
+    --surface:   #161F27;
+    --surface-2: #1D2831;
+    --ink:       #DEE6ED;
+    --ink-2:     #93A3B1;
+    --ink-3:     #6C7C8A;
+    --rule:      #25323D;
+    --rule-2:    #34434F;
+    --accent:    #6DB9E4;
+    --accent-bg: #14293A;
+    --signal:    #E4A054;
+    --signal-bg: #33260F;
+    --ok:        #55C69F;
+    --ok-bg:     #102C24;
+    --crit:      #E8837A;
+    --crit-bg:   #331916;
+    --shadow:    0 1px 2px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+    padding: 0 20px 96px;
+  }
+
+  .wrap { max-width: 940px; margin: 0 auto; }
+  .prose { max-width: 68ch; }
+
+  /* ---------- masthead ---------- */
+
+  header.masthead {
+    padding: 48px 0 28px;
+    border-bottom: 2px solid var(--ink);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(28px, 4.6vw, 42px);
+    line-height: 1.12;
+    letter-spacing: -.02em;
+    font-weight: 600;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 17px;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0;
+  }
+  dl.specs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px 24px;
+    margin: 6px 0 0;
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  dl.specs dt {
+    color: var(--ink-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    font-size: 10.5px;
+    margin-bottom: 2px;
+  }
+  dl.specs dd { margin: 0; color: var(--ink); }
+
+  /* ---------- verdict strip ---------- */
+
+  .verdict {
+    display: flex;
+    gap: 16px;
+    align-items: baseline;
+    background: var(--signal-bg);
+    border-left: 3px solid var(--signal);
+    padding: 18px 20px;
+    margin: 32px 0 0;
+  }
+  .verdict .n {
+    font-family: var(--mono);
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--signal);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .verdict p { margin: 0; }
+  .verdict strong { font-family: var(--mono); font-weight: 600; }
+
+  /* ---------- sections ---------- */
+
+  section { padding-top: 52px; }
+  h2 {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--accent);
+    margin: 0 0 22px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid var(--rule-2);
+  }
+  h3 {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 34px 0 12px;
+    text-wrap: balance;
+  }
+  h4 {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    font-weight: 600;
+    margin: 24px 0 8px;
+  }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 7px; }
+  a { color: var(--accent); }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  code, .p {
+    font-family: var(--mono);
+    font-size: .885em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  strong { font-weight: 650; }
+
+  /* ---------- steps ---------- */
+
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    box-shadow: var(--shadow);
+    padding: 22px 24px 24px;
+    margin-bottom: 18px;
+  }
+  .step-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .step-n {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-3);
+    letter-spacing: .1em;
+    font-variant-numeric: tabular-nums;
+  }
+  .step-title {
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 200px;
+  }
+  .step p, .step ul, .step ol { margin-bottom: 12px; }
+  .step > :last-child { margin-bottom: 0; }
+  .step-body { max-width: 68ch; }
+
+  .chip {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .chip-blok  { background: var(--crit-bg);   color: var(--crit); }
+  .chip-wajib { background: var(--signal-bg); color: var(--signal); }
+  .chip-ops   { background: var(--surface-2); color: var(--ink-2); }
+  .chip-ok    { background: var(--ok-bg);     color: var(--ok); }
+  .chip-boot  { background: var(--accent-bg); color: var(--accent); }
+
+  /* ---------- param change rows ---------- */
+
+  .changes {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin: 16px 0;
+    overflow-x: auto;
+  }
+  .change {
+    display: grid;
+    grid-template-columns: minmax(160px, 1.4fr) auto auto auto minmax(120px, 1.6fr);
+    gap: 12px;
+    align-items: baseline;
+    background: var(--surface);
+    padding: 9px 14px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    min-width: 560px;
+  }
+  .change .name { font-weight: 600; }
+  .change .old  { color: var(--ink-3); text-decoration: line-through; }
+  .change .arr  { color: var(--ink-3); }
+  .change .new  { color: var(--ok); font-weight: 600; }
+  .change .note { color: var(--ink-2); font-size: 12px; white-space: normal; }
+
+  /* ---------- tables ---------- */
+
+  .scroll { overflow-x: auto; margin: 16px 0 20px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13.5px;
+    min-width: 560px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  thead th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    border-bottom: 1px solid var(--rule-2);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.m, th.m { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.dim td { color: var(--ink-3); }
+  tr.mark td { background: var(--signal-bg); }
+  td .sub { display: block; color: var(--ink-3); font-size: 12px; font-family: var(--sans); }
+
+  /* ---------- callouts ---------- */
+
+  .note-box {
+    border-left: 3px solid var(--rule-2);
+    background: var(--surface);
+    padding: 14px 18px;
+    margin: 18px 0;
+    font-size: 14.5px;
+  }
+  .note-box.key    { border-left-color: var(--accent); background: var(--accent-bg); }
+  .note-box.warn   { border-left-color: var(--signal); background: var(--signal-bg); }
+  .note-box > :last-child { margin-bottom: 0; }
+  .note-box .lbl {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--ink-2);
+    display: block;
+    margin-bottom: 5px;
+  }
+  .note-box.key .lbl  { color: var(--accent); }
+  .note-box.warn .lbl { color: var(--signal); }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 14px 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; white-space: pre; }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    line-height: 1.7;
+  }
+
+  @media (max-width: 620px) {
+    body { padding: 0 16px 64px; }
+    header.masthead { padding-top: 34px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div class="eyebrow">Referensi Konfigurasi Parameter</div>
+  <h1>Konfigurasi Non-GPS<br>Pixhawk 6C</h1>
+  <p class="standfirst">Urutan perbaikan parameter dan dokumentasi rantai konfigurasi untuk penerbangan tanpa GPS berbasis optical flow. Semua nilai diverifikasi ke source ArduPilot pada tag <code>Copter-4.7.0</code>.</p>
+  <dl class="specs">
+    <div><dt>Flight Controller</dt><dd>Pixhawk 6C</dd></div>
+    <div><dt>Firmware</dt><dd>ArduCopter 4.7.0</dd></div>
+    <div><dt>Baseline</dt><dd>Pengujian060826.params</dd></div>
+    <div><dt>Estimasi Posisi</dt><dd>Optical flow + rangefinder</dd></div>
+  </dl>
+</header>
+
+<div class="verdict">
+  <div class="n">1</div>
+  <p><strong>satu parameter</strong> memblokir seluruh pesan error di TELEM1: <strong>MAV2_OPTIONS = 2</strong>. Ini bukan masalah bandwidth. Selesaikan langkah 2 lebih dulu dan sendirian, sebelum menyentuh apa pun yang lain.</p>
+</div>
+
+<!-- ============ BAGIAN A ============ -->
+
+<section>
+<h2>Bagian A — Urutan Perubahan</h2>
+
+<p class="prose">Urutan ini penting. Langkah 2 adalah perbaikannya; langkah 3 mencegahnya kembali; sisanya optimasi yang hanya bermakna setelah langkah 2 terbukti berhasil. Jangan gabungkan beberapa langkah dalam satu sesi — kalau digabung, kamu kehilangan kemampuan menyimpulkan mana yang bekerja.</p>
+
+<div class="step">
+  <div class="step-head">
+    <span class="step-n">01</span>
+    <h3 class="step-title">Amankan baseline</h3>
+    <span class="chip chip-ops">Tanpa perubahan</span>
+  </div>
+  <div class="step-body">
+    <p>QGC → <em>Vehicle Setup</em> → <em>Parameters</em> → <em>Tools</em> → <em>Save to file</em>. Simpan sebagai <code>pra-perbaikan-140826.params</code>.</p>
+    <p>Gunanya bukan sekadar cadangan: setelah langkah 2 kamu bisa <em>diff</em> dua file itu dan membuktikan hanya satu baris yang berubah.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-head">
+    <span class="step-n">02</span>
+    <h3 class="step-title">Buka jalur pesan di TELEM1</h3>
+    <span class="chip chip-blok">Penyebab utama</span>
+    <span class="chip chip-boot">Butuh reboot</span>
+  </div>
+  <div class="step-body">
+    <div class="changes">
+      <div class="change">
+        <span class="name">MAV2_OPTIONS</span>
+        <span class="old">2</span><span class="arr">→</span><span class="new">0</span>
+        <span class="note">Membuka STATUSTEXT ke TELEM1</span>
+      </div>
+    </div>
+    <p>Nilai 2 adalah bit 1, <em>"Don't forward mavlink to/from"</em>. Bit itu menandai channel sebagai <strong>private</strong>, dan channel private dibuang dari daftar tujuan pesan teks:</p>
+    <pre><code>// GCS.cpp:270
+mavlink_channel_mask_t GCS::statustext_send_channel_mask() const {
+    ret |= GCS_MAVLINK::active_channel_mask();
+    ret |= GCS_MAVLINK::streaming_channel_mask();
+    ret &amp;= ~GCS_MAVLINK::private_channel_mask();   // TELEM1 dibuang
+}</code></pre>
+    <p>Stream telemetri biasa tidak lewat mask ini — itulah sebabnya link terasa hidup normal sementara hanya pesan error yang hilang.</p>
+    <h4>Cara memastikan berhasil</h4>
+    <p>Setelah reboot, tanpa baling-baling, picu satu kegagalan prearm yang kamu tahu pasti gagal (mis. safety switch belum ditekan) lalu coba arm. Pesan <code>PreArm:</code> harus muncul di QGC lewat TELEM1. Alternatif tanpa mencoba arm: kirim <code>MAV_CMD_RUN_PREARM_CHECKS</code> dari MAVLink Console.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-head">
+    <span class="step-n">03</span>
+    <h3 class="step-title">Bersihkan file .params sumber</h3>
+    <span class="chip chip-wajib">Mencegah kambuh</span>
+  </div>
+  <div class="step-body">
+    <p>Bit ini muncul <strong>persis saat konfigurasi non-GPS pertama dibuat</strong> dan ikut ke setiap file non-GPS sesudahnya. Selama file-file itu masih dipakai, memuatnya akan menanam ulang bit tersebut ke FC.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th class="m">Tanggal</th><th>File</th><th class="m">MAV2_OPTIONS</th><th class="m">GPS1_TYPE</th></tr></thead>
+        <tbody>
+          <tr class="dim"><td class="m">29 Jul 10:07</td><td>default-pixhawk6c.params</td><td class="m">0</td><td class="m">1</td></tr>
+          <tr class="dim"><td class="m">29 Jul 10:46</td><td>default-pixhawk6c-merahputih.params</td><td class="m">0</td><td class="m">1</td></tr>
+          <tr class="mark"><td class="m">29 Jul 11:39</td><td>non_gps_pixhawk6c_merahputih.params <span class="sub">bit pertama kali muncul di sini</span></td><td class="m">2</td><td class="m">0</td></tr>
+          <tr class="mark"><td class="m">31 Jul 10:07</td><td>non-gps-coba-rangefinder-bukan-baro-posx.params</td><td class="m">2</td><td class="m">0</td></tr>
+          <tr class="dim"><td class="m">3 Agu 09:38</td><td>default-pixhawk6c-3agustus26.params</td><td class="m">0</td><td class="m">1</td></tr>
+          <tr class="dim"><td class="m">4 Agu 10:28</td><td>default-px6-040826.params</td><td class="m">0</td><td class="m">1</td></tr>
+          <tr class="mark"><td class="m">4 Agu 16:19</td><td>default-px6-040826_Sore.params</td><td class="m">2</td><td class="m">0</td></tr>
+          <tr class="mark"><td class="m">5 Agu 11:46</td><td>px6c_050826_oftical_flow.params</td><td class="m">2</td><td class="m">0</td></tr>
+          <tr class="mark"><td class="m">6 Agu 12:12</td><td>Pengujian060826.params</td><td class="m">2</td><td class="m">0</td></tr>
+          <tr class="mark"><td class="m">8 Agu 13:57</td><td>Default-GPS-080826.params</td><td class="m">2</td><td class="m">1</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Suntingan yang diperlukan di enam file bertanda: ubah baris <code>MAV2_OPTIONS</code> dari <code>2</code> menjadi <code>0</code>. Ini file teks biasa, aman diedit dengan editor apa pun.</p>
+    <p>Korelasinya menjelaskan sepenuhnya pengamatanmu: setiap file hasil <em>reset ke default</em> bernilai 0, dan di situlah pesan kembali normal.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-head">
+    <span class="step-n">04</span>
+    <h3 class="step-title">Tentukan siapa yang mengatur stream rate</h3>
+    <span class="chip chip-wajib">Keputusan</span>
+  </div>
+  <div class="step-body">
+    <p>Ini yang menjelaskan kenapa menurunkan Hz secara manual tidak pernah membantu: <strong>QGC menimpanya balik</strong>. Saat connect, QGC mengirim <code>REQUEST_DATA_STREAM</code> dengan nilai dari settings-nya sendiri — dan default QGC persis sama dengan angka <code>MAV2_*</code> di file kamu.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Stream</th><th class="m">Default QGC</th><th class="m">MAV2_ kamu</th></tr></thead>
+        <tbody>
+          <tr><td>Raw Sensors</td><td class="m">2</td><td class="m">2</td></tr>
+          <tr><td>Extended Status</td><td class="m">2</td><td class="m">2</td></tr>
+          <tr><td>RC Channels</td><td class="m">2</td><td class="m">2</td></tr>
+          <tr><td>Position</td><td class="m">3</td><td class="m">3</td></tr>
+          <tr><td>Extra 1</td><td class="m">10</td><td class="m">10</td></tr>
+          <tr><td>Extra 2</td><td class="m">10</td><td class="m">10</td></tr>
+          <tr><td>Extra 3</td><td class="m">3</td><td class="m">3</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Angka-angka itu bukan settingan kamu — itu jejak QGC.</p>
+    <h4>Pilih satu</h4>
+    <ul>
+      <li><strong>Opsi A — biarkan QGC yang atur.</strong> Jangan sentuh <code>MAV2_*</code> sama sekali; atur dari QGC → <em>Application Settings</em> → <em>MAVLink</em>. Lebih sederhana, dan cukup untuk sebagian besar kasus.</li>
+      <li><strong>Opsi B — FC yang atur.</strong> Set ketujuh stream rate di QGC ke <strong>"Controlled By Vehicle"</strong> (nilai −1), baru <code>MAV2_*</code> berlaku. Wajib kalau kamu mau langkah 5 benar-benar bertahan.</li>
+    </ul>
+    <div class="note-box warn">
+      <span class="lbl">Khusus wahana non-GPS</span>
+      <p>QGC mengirim ulang seluruh permintaan stream <strong>setiap 10 detik selamanya</strong> kalau <code>HOME_POSITION</code> atau <code>BATTERY_STATUS</code> tidak datang. Tanpa EKF origin, <code>HOME_POSITION</code> memang tidak pernah dikirim FC — jadi loop ini selalu aktif di wahanamu. Dua konsekuensinya: jangan pernah menolkan <code>MAV2_EXTRA3</code> (di situ <code>BATTERY_STATUS</code> berada), dan pilih Opsi B kalau traffic uplink berkala itu mengganggu.</p>
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-head">
+    <span class="step-n">05</span>
+    <h3 class="step-title">Diet telemetri TELEM1</h3>
+    <span class="chip chip-ops">Opsional</span>
+    <span class="chip chip-boot">Butuh reboot</span>
+  </div>
+  <div class="step-body">
+    <p>Hanya kerjakan kalau kamu memilih <strong>Opsi B</strong> di langkah 4, dan hanya kalau link masih terasa sesak setelah langkah 2. Ini bukan perbaikan untuk masalah pesan error.</p>
+    <div class="changes">
+      <div class="change"><span class="name">MAV2_RAW_SENS</span><span class="old">2</span><span class="arr">→</span><span class="new">0</span><span class="note">RAW_IMU &amp; SCALED_PRESSURE, hanya perlu saat kalibrasi</span></div>
+      <div class="change"><span class="name">MAV2_EXTRA1</span><span class="old">10</span><span class="arr">→</span><span class="new">4</span><span class="note">ATTITUDE — 4 Hz cukup untuk HUD</span></div>
+      <div class="change"><span class="name">MAV2_EXTRA2</span><span class="old">10</span><span class="arr">→</span><span class="new">4</span><span class="note">VFR_HUD</span></div>
+      <div class="change"><span class="name">MAV2_RC_CHAN</span><span class="old">2</span><span class="arr">→</span><span class="new">1</span><span class="note">RC_CHANNELS + SERVO_OUTPUT_RAW</span></div>
+      <div class="change"><span class="name">MAV2_ADSB</span><span class="old">4</span><span class="arr">→</span><span class="new">0</span><span class="note">ADSB_TYPE = 0, tidak terpakai</span></div>
+      <div class="change"><span class="name">MAV2_RAW_CTRL</span><span class="old">4</span><span class="arr">→</span><span class="new">0</span><span class="note">Kerapian saja — lihat catatan</span></div>
+    </div>
+    <p><strong>Pertahankan</strong> <code>MAV2_EXT_STAT</code> = 2, <code>MAV2_POSITION</code> = 3, dan terutama <code>MAV2_EXTRA3</code> = 3. Biarkan <code>MAV2_PARAMS</code> = 0 — itu memang default Copter, dan QGC mengambil parameter lewat MAVFTP, bukan lewat stream ini.</p>
+    <div class="note-box">
+      <span class="lbl">Koreksi</span>
+      <p>Sebelumnya saya sebut <code>RAW_CTRL</code> membawa <code>SERVO_OUTPUT_RAW</code>. Itu keliru: di 4.7 <code>STREAM_RAW_CONTROLLER_msgs[]</code> <strong>kosong</strong>, jadi <code>MAV2_RAW_CTRL</code> tidak mengirim apa pun pada nilai berapa pun. <code>SERVO_OUTPUT_RAW</code> sebenarnya ikut stream <code>RC_CHAN</code>. Penghematannya datang dari <code>RC_CHAN</code>, bukan <code>RAW_CTRL</code>.</p>
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-head">
+    <span class="step-n">06</span>
+    <h3 class="step-title">Pindahkan RC ke port RC/SBUS</h3>
+    <span class="chip chip-ops">Rencanamu</span>
+    <span class="chip chip-boot">Butuh reboot</span>
+  </div>
+  <div class="step-body">
+    <div class="changes">
+      <div class="change"><span class="name">SERIAL5_PROTOCOL</span><span class="old">23</span><span class="arr">→</span><span class="new">−1</span><span class="note">Lepas RCIN dari TELEM3</span></div>
+    </div>
+    <p>Pindahkan kabel receiver ke konektor RC/SBUS khusus, lalu set di atas. Biarkan <code>RC_PROTOCOLS</code> = 1 (All) — ia akan mendeteksi sendiri.</p>
+    <p>Rencana ini bagus untuk kerapian kabel dan membebaskan satu UART, tapi jujur saja: <strong>ini tidak ada hubungannya dengan pesan error yang hilang.</strong> RCIN pada <code>SERIAL5</code> bukan channel MAVLink, jadi ia tidak pernah ikut membebani jalur telemetri sejak awal. Kerjakan karena memang lebih rapi, bukan sebagai perbaikan.</p>
+    <p>Verifikasi lewat halaman <em>Radio</em> di QGC sebelum terbang: semua channel harus bergerak seperti sebelumnya, dan failsafe throttle (<code>FS_THR_VALUE</code> = 975) harus diuji ulang dengan mematikan transmitter.</p>
+  </div>
+</div>
+
+</section>
+
+<!-- ============ BAGIAN B ============ -->
+
+<section>
+<h2>Bagian B — Referensi Konfigurasi</h2>
+
+<h3>B1 · Peta port serial dan channel MAVLink</h3>
+
+<div class="note-box key">
+  <span class="lbl">Aturan penomoran</span>
+  <p><code>MAVn_</code> <strong>bukan</strong> <code>SERIALn</code>. Channel MAVLink dinomori berurutan dari port SERIAL mana pun yang protokolnya MAVLink. Di konfigurasimu ada empat port MAVLink, jadi penomorannya bergeser satu terhadap nomor port.</p>
+</div>
+
+<div class="scroll">
+  <table>
+    <thead><tr><th>Port</th><th class="m">PROTOCOL</th><th class="m">BAUD</th><th>Fungsi</th><th class="m">Channel</th><th class="m">Grup param</th></tr></thead>
+    <tbody>
+      <tr><td>SERIAL0 · USB</td><td class="m">2 (MAVLink2)</td><td class="m">115200</td><td>GCS via kabel</td><td class="m">COMM_0</td><td class="m">MAV1_</td></tr>
+      <tr class="mark"><td>SERIAL1 · TELEM1</td><td class="m">2 (MAVLink2)</td><td class="m">57600</td><td>Radio telemetri ke GCS</td><td class="m">COMM_1</td><td class="m">MAV2_</td></tr>
+      <tr><td>SERIAL2 · TELEM2</td><td class="m">2 (MAVLink2)</td><td class="m">115200</td><td>Optical flow + rangefinder</td><td class="m">COMM_2</td><td class="m">MAV3_</td></tr>
+      <tr class="dim"><td>SERIAL3</td><td class="m">5 (GPS)</td><td class="m">230400</td><td>Kosong — GPS1_TYPE = 0</td><td class="m">—</td><td class="m">—</td></tr>
+      <tr class="dim"><td>SERIAL4</td><td class="m">5 (GPS)</td><td class="m">230400</td><td>Kosong — GPS2_TYPE = 0</td><td class="m">—</td><td class="m">—</td></tr>
+      <tr><td>SERIAL5 · TELEM3</td><td class="m">23 (RCIN)</td><td class="m">57600</td><td>RC — akan pindah ke port SBUS</td><td class="m">—</td><td class="m">—</td></tr>
+      <tr class="dim"><td>SERIAL6</td><td class="m">−1</td><td class="m">—</td><td>Nonaktif</td><td class="m">—</td><td class="m">—</td></tr>
+      <tr><td>SERIAL7 · OTG2</td><td class="m">2 (MAVLink2)</td><td class="m">115200</td><td>USB kedua / SLCAN</td><td class="m">COMM_3</td><td class="m">MAV4_</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="prose">Sumber pemetaan: <code>GCS::setup_uarts()</code> memindai port berurutan lewat <code>find_serial(SerialProtocol_MAVLink, i)</code>, dan grup <code>MAV1_</code>…<code>MAV4_</code> terikat ke <code>_chan[0]</code>…<code>_chan[3]</code> di <code>GCS.cpp:77</code>.</p>
+
+<p class="prose"><strong>Kerapian opsional:</strong> <code>SERIAL3</code> dan <code>SERIAL4</code> masih diset protokol GPS pada 230400 padahal kedua GPS dimatikan. Tidak berbahaya, tapi kalau ingin bersih, set keduanya ke <code>−1</code>. Perhatikan bahwa ini <em>tidak</em> menggeser penomoran <code>MAVn_</code> karena keduanya bukan port MAVLink.</p>
+
+<h3>B2 · Rantai estimasi posisi tanpa GPS</h3>
+
+<div class="scroll">
+  <table>
+    <thead><tr><th class="m">Parameter</th><th class="m">Nilai</th><th>Arti</th></tr></thead>
+    <tbody>
+      <tr><td class="m">EK3_SRC1_POSXY</td><td class="m">0</td><td>None — tidak ada sumber posisi horizontal absolut</td></tr>
+      <tr><td class="m">EK3_SRC1_VELXY</td><td class="m">5</td><td>OpticalFlow — kecepatan horizontal dari flow</td></tr>
+      <tr><td class="m">EK3_SRC1_POSZ</td><td class="m">1</td><td>Baro — dengan pengambilalihan rangefinder di ketinggian rendah</td></tr>
+      <tr><td class="m">EK3_SRC1_VELZ</td><td class="m">0</td><td>None</td></tr>
+      <tr><td class="m">EK3_SRC1_YAW</td><td class="m">1</td><td>Compass</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="prose">Konfigurasi ini benar untuk optical flow tanpa GPS. Posisi horizontal murni hasil integrasi kecepatan — <strong>ia akan hanyut</strong>, dan itu perilaku yang diharapkan, bukan kerusakan.</p>
+
+<p class="prose"><code>EK3_SRC2_*</code> dan <code>EK3_SRC3_*</code> disetel identik dengan <code>SRC1</code>, dan tidak ada channel RC yang diberi opsi 90 (<em>EKF Source Set</em>). Artinya fitur pindah sumber tidak terpakai. Itu sah, hanya perlu kamu sadari bahwa saklar itu tidak ada.</p>
+
+<h4>Sensor</h4>
+<div class="scroll">
+  <table>
+    <thead><tr><th class="m">Parameter</th><th class="m">Nilai</th><th>Arti</th></tr></thead>
+    <tbody>
+      <tr><td class="m">FLOW_TYPE</td><td class="m">5</td><td>MAVLink — flow masuk sebagai pesan MAVLink lewat TELEM2</td></tr>
+      <tr><td class="m">FLOW_ORIENT_YAW</td><td class="m">18000</td><td>Sensor terpasang berputar 180°</td></tr>
+      <tr><td class="m">FLOW_FXSCALER / FYSCALER</td><td class="m">−30 / −24</td><td>Hasil kalibrasi flow</td></tr>
+      <tr><td class="m">RNGFND1_TYPE</td><td class="m">10</td><td>MAVLink — rangefinder juga lewat TELEM2</td></tr>
+      <tr><td class="m">RNGFND1_MIN / MAX</td><td class="m">0,02 / 8 m</td><td>Jangkauan efektif</td></tr>
+      <tr><td class="m">RNGFND1_ORIENT</td><td class="m">25</td><td>Menghadap ke bawah</td></tr>
+      <tr><td class="m">EK3_RNG_USE_HGT</td><td class="m">70</td><td>Persen dari RNGFND1_MAX (nilai maksimum yang diizinkan)</td></tr>
+      <tr><td class="m">EK3_RNG_USE_SPD</td><td class="m">2</td><td>m/s — batas kecepatan horizontal</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note-box warn">
+  <span class="lbl">Amplop operasi yang tersirat</span>
+  <p>Rangefinder menjadi sumber ketinggian utama hanya ketika <strong>di bawah 5,6 m</strong> (70% × 8 m) <strong>dan</strong> kecepatan horizontal di bawah 2 m/s. Di atas itu, ketinggian kembali ke baro.</p>
+  <p>Dokumentasi ArduPilot untuk <code>EK3_RNG_USE_HGT</code> menyatakan fitur ini dirancang untuk lepas landas dan mendarat vertikal <strong>di atas area datar di sekitar titik takeoff</strong>, dan secara eksplisit bukan untuk terrain following. Konfigurasimu memasang <code>WP_RFND_USE</code> = 1 (terrain following pakai rangefinder) bersamaan dengan <code>EK3_RNG_USE_HGT</code> = 70. Kombinasi itu bertentangan dengan peruntukannya. Selama terbang di area datar hal ini tidak terasa; di atas permukaan bertingkat, ketinggian bisa melompat.</p>
+</div>
+
+<h3>B3 · Jalur pesan dan telemetri</h3>
+
+<h4>Bagaimana pesan error sampai ke GCS</h4>
+<p class="prose">FC menaruh setiap pesan ke satu antrian bersama berkapasitas 30 entri, lalu tiap channel melayani antrian itu sendiri-sendiri. Sebuah pesan dikirim ke channel hanya bila channel tersebut <em>aktif atau streaming</em> <strong>dan tidak private</strong>. Dua konsekuensi praktis:</p>
+<ul class="prose">
+  <li>Channel private tidak pernah menerima pesan, seberapa lega pun bandwidth-nya. Ini kasusmu.</li>
+  <li><code>service_statustext()</code> berhenti begitu <code>txspace()</code> kurang dari ukuran payload. Saat itu terjadi, antrian diisi dengan <code>push_force</code> yang <strong>menimpa entri terlama</strong> — sehingga satu link yang macet bisa menghilangkan pesan untuk <em>semua</em> link, termasuk USB.</li>
+</ul>
+
+<h4>Isi setiap stream</h4>
+<div class="scroll">
+  <table>
+    <thead><tr><th class="m">Stream</th><th>Pesan di dalamnya</th><th>Perlu untuk non-GPS?</th></tr></thead>
+    <tbody>
+      <tr><td class="m">EXTRA3</td><td>AHRS, DISTANCE_SENSOR, SYSTEM_TIME, TERRAIN, BATTERY_STATUS, OPTICAL_FLOW, MAG_CAL, <strong>EKF_STATUS_REPORT</strong>, VIBRATION</td><td><strong>Paling penting.</strong> Jangan dinolkan</td></tr>
+      <tr><td class="m">POSITION</td><td>GLOBAL_POSITION_INT, LOCAL_POSITION_NED</td><td>Ya — LOCAL_POSITION_NED satu-satunya posisi yang berarti tanpa GPS</td></tr>
+      <tr><td class="m">EXT_STAT</td><td>SYS_STATUS, POWER_STATUS, MCU_STATUS, MEMINFO, CURRENT_WAYPOINT, GPS_RAW (kosong), NAV_CONTROLLER_OUTPUT, FENCE_STATUS</td><td>Ya — bit SYS_STATUS menunjukkan sensor mana yang tidak sehat</td></tr>
+      <tr><td class="m">EXTRA1</td><td>ATTITUDE, AHRS2, PID_TUNING, ESC_TELEMETRY, RPM</td><td>Ya, tapi 4 Hz cukup</td></tr>
+      <tr><td class="m">EXTRA2</td><td>VFR_HUD</td><td>Ya, 4 Hz cukup</td></tr>
+      <tr><td class="m">RC_CHAN</td><td>SERVO_OUTPUT_RAW, RC_CHANNELS</td><td>Secukupnya — 1 Hz memadai</td></tr>
+      <tr class="dim"><td class="m">RAW_SENS</td><td>RAW_IMU, SCALED_IMU2/3, SCALED_PRESSURE1/2/3</td><td>Tidak — hanya untuk kalibrasi</td></tr>
+      <tr class="dim"><td class="m">RAW_CTRL</td><td><em>kosong di 4.7</em></td><td>Tidak berfungsi sama sekali</td></tr>
+      <tr class="dim"><td class="m">PARAMS</td><td>NEXT_PARAM, AVAILABLE_MODES</td><td>Tidak — QGC pakai MAVFTP</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h4>Realitas bandwidth TELEM1</h4>
+<p class="prose">Pada stream saat ini, muatan turun kira-kira <strong>3 kB/s</strong> di jalur berkapasitas <strong>5,76 kB/s</strong> (57600 8N1) — sekitar separuh kawat. Kalau radionya tipe SiK, throughput udara efektifnya jauh di bawah angka kawat karena half-duplex dan ECC, sehingga sesak itu nyata. Tapi kesesakan menjelaskan pesan yang <em>kadang</em> hilang; ia tidak pernah menjelaskan pesan yang <em>selalu</em> hilang.</p>
+
+<h3>B4 · Arming dan failsafe</h3>
+
+<div class="note-box key">
+  <span class="lbl">Perubahan nama di 4.7</span>
+  <p><code>ARMING_CHECK</code> <strong>sudah tidak ada</strong> di 4.7 — slot parameternya dihapus. Penggantinya <code>ARMING_SKIPCHK</code>, yang logikanya terbalik: ia adalah bitmask check yang <em>dilewati</em>. Nilaimu 0 berarti semua check aktif, dan itu yang benar. Panduan non-GPS di internet yang menyuruh mengatur <code>ARMING_CHECK</code> sudah usang untuk firmware ini.</p>
+</div>
+
+<div class="scroll">
+  <table>
+    <thead><tr><th class="m">Parameter</th><th class="m">Nilai</th><th>Penilaian</th></tr></thead>
+    <tbody>
+      <tr><td class="m">ARMING_SKIPCHK</td><td class="m">0</td><td>Benar — tidak ada check yang dilewati. Jangan diisi −1</td></tr>
+      <tr><td class="m">ARMING_NEED_LOC</td><td class="m">0</td><td>Benar — tidak menuntut posisi untuk arm</td></tr>
+      <tr><td class="m">ARMING_OPTIONS</td><td class="m">0</td><td>Benar — bit 0 akan <em>membungkam</em> laporan prearm. Jangan diaktifkan</td></tr>
+      <tr><td class="m">FS_EKF_ACTION / THRESH</td><td class="m">1 / 0,8</td><td>Land saat EKF variance tinggi. Wajar untuk flow</td></tr>
+      <tr><td class="m">FS_THR_ENABLE / VALUE</td><td class="m">3 / 975</td><td>Aktif. Uji ulang setelah RC pindah port (langkah 6)</td></tr>
+      <tr><td class="m">FS_GCS_ENABLE</td><td class="m">0</td><td>Nonaktif. Dapat dibenarkan selama pilot memegang RC</td></tr>
+      <tr><td class="m">FS_DR_ENABLE</td><td class="m">2 (RTL)</td><td>Praktis tidak pernah aktif — lihat catatan</td></tr>
+      <tr><td class="m">FENCE_ENABLE / TYPE</td><td class="m">0 / 7</td><td>Fence mati. Tipe 7 mencakup <em>Circle Centered on Home</em></td></tr>
+      <tr><td class="m">AVOID_ENABLE</td><td class="m">3</td><td>Menyala untuk fence + proximity, tapi semua PRX*_TYPE = 0</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="prose"><strong>Soal <code>FS_DR_ENABLE</code>:</strong> nilainya 2 berarti RTL, yang tidak masuk akal untuk wahana tanpa home. Tetapi flag <code>dead_reckoning</code> di EKF3 mensyaratkan <code>doingWindRelNav</code>, dan dengan <code>ARSPD_ENABLE</code> = 0 serta <code>AHRS_WIND_MAX</code> = 0 pada copter, kondisi itu praktis tidak pernah terpenuhi. Jadi aman dibiarkan. Kalau ingin konsisten secara niat, set ke 1 (Land) — bukan karena ia berbahaya sekarang, tapi supaya tidak menyesatkan siapa pun yang membaca konfigurasi ini nanti.</p>
+
+<p class="prose"><strong>Soal fence:</strong> kalau suatu saat kamu menyalakan <code>FENCE_ENABLE</code>, sadari <code>FENCE_TYPE</code> = 7 mencakup bit 1, <em>Circle Centered on Home</em>. Tanpa GPS, "home" adalah titik takeoff hasil integrasi flow yang ikut hanyut — lingkaran itu ikut hanyut bersamanya.</p>
+
+<h3>B5 · Sudah benar — jangan diubah</h3>
+<p class="prose">Bagian ini ada supaya kamu berhenti mengutak-atik hal yang bukan masalah. Semuanya sudah tepat untuk penerbangan non-GPS:</p>
+<ul class="prose">
+  <li><code>GPS1_TYPE</code> = <code>GPS2_TYPE</code> = 0, <code>AHRS_GPS_USE</code> = 0 — GPS benar-benar mati</li>
+  <li><code>AHRS_EKF_TYPE</code> = 3, <code>EK3_ENABLE</code> = 1 — EKF3, satu-satunya yang mendukung sumber flow</li>
+  <li><code>EK3_FLOW_USE</code> = 1 — flow dipakai untuk navigasi, bukan hanya terrain</li>
+  <li><code>MAV2_PARAMS</code> = 0 — memang default Copter; parameter diambil via MAVFTP</li>
+  <li><code>LOG_BITMASK</code> = 180222 — bit 11 (Optical Flow) menyala, jadi log <code>OF</code> tersedia untuk analisis</li>
+  <li><code>BRD_SER1_RTSCTS</code> = 2 (auto) — biarkan, radio yang tidak punya flow control akan terdeteksi sendiri</li>
+</ul>
+
+<h3>B6 · Cara verifikasi dari log, bukan dari tebakan</h3>
+
+<p class="prose">Semua yang di bawah ini bisa kamu jawab dari file <code>.bin</code> yang <strong>sudah ada</strong> di tanganmu, tanpa perlu terbang lagi.</p>
+
+<h4>Rekaman MAV — kesehatan tiap channel</h4>
+<p class="prose">ArduPilot menulis satu baris <code>MAV</code> per channel per detik, dan <strong>ini tidak digerbangi <code>LOG_BITMASK</code></strong>, jadi pasti ada di log lamamu. Kolomnya:</p>
+<div class="scroll">
+  <table>
+    <thead><tr><th class="m">Kolom</th><th>Arti</th><th>Yang dicari</th></tr></thead>
+    <tbody>
+      <tr class="mark"><td class="m">flags</td><td>bit 0 signing · 1 ACTIVE · 2 STREAMING · <strong>3 PRIVATE</strong> · 4 LOCKED</td><td><code>chan = 1</code> dengan bit 3 menyala (nilai 14) membuktikan bug MAV2_OPTIONS langsung dari log</td></tr>
+      <tr><td class="m">ss</td><td>stream_slowdown_ms — perlambatan otomatis akibat radio melapor buffer penuh</td><td>Nilai &gt; 0 dan naik = link memang sesak</td></tr>
+      <tr><td class="m">tf</td><td>times_full — berapa kali tidak ada ruang untuk mengirim</td><td>Terus bertambah = kongesti nyata</td></tr>
+      <tr><td class="m">rxdp</td><td>Paket rusak/hilang saat diterima</td><td>Naik cepat = masalah RF atau kabel, bukan konfigurasi</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="prose">Inilah cara memisahkan dua hipotesis secara definitif: <code>flags</code> menjawab "diblokir?", <code>ss</code> dan <code>tf</code> menjawab "sesak?". Keduanya bisa benar bersamaan, dan penanganannya berbeda.</p>
+
+<h4>Rekaman lain yang relevan</h4>
+<ul class="prose">
+  <li><code>MSG</code> — seluruh teks yang <em>dibuat</em> FC. Kalau pesan errormu ada di sini tapi tidak muncul di QGC, itu murni masalah pengiriman. Kalau tidak ada di sini juga, FC memang tidak pernah membuatnya dan arah investigasinya berbeda total.</li>
+  <li><code>OF</code> — kolom <code>Qual</code>, <code>flowX/Y</code>, <code>bodyX/Y</code>. Kualitas flow rendah adalah penyebab paling umum posisi hanyut pada wahana seperti ini.</li>
+  <li><code>XKF</code> / <code>EKF_STATUS_REPORT</code> — variance yang memicu <code>FS_EKF_ACTION</code>.</li>
+</ul>
+
+<h4>Saat terhubung</h4>
+<ul class="prose">
+  <li><strong>MAVLink Inspector</strong> di QGC — laju pesan sebenarnya per ID, bukan laju yang kamu minta.</li>
+  <li><strong>RADIO_STATUS</strong> — <code>txbuf</code>, <code>noise</code>, <code>remnoise</code>. Ini yang memberi tahu ArduPilot kapan harus memperlambat.</li>
+  <li><strong><code>MAV_CMD_RUN_PREARM_CHECKS</code></strong> dari MAVLink Console — memaksa laporan prearm kapan saja tanpa mencoba arm.</li>
+</ul>
+
+<h3>B7 · Jebakan yang sudah terbukti di proyek ini</h3>
+<ol class="prose">
+  <li><strong>Bit private yang tak terlihat.</strong> Dulu ini <code>SERIAL1_OPTIONS</code> bit 10. Versi 4.7 mengkonversinya ke <code>MAV2_OPTIONS</code> lalu <em>menolkan bit lamanya</em>, sehingga <code>SERIAL1_OPTIONS</code> terbaca 0 dan jejaknya lenyap. Kalau kamu mencari penyebab di <code>SERIAL1_*</code>, kamu tidak akan pernah menemukannya.</li>
+  <li><strong>QGC menimpa stream rate.</strong> Menyetel <code>MAVn_*</code> dengan tangan tidak bertahan kecuali QGC disuruh diam.</li>
+  <li><strong>Loop re-init 10 detik.</strong> Spesifik untuk wahana non-GPS, karena <code>HOME_POSITION</code> memang tidak pernah ada.</li>
+  <li><strong>Nama parameter berubah di 4.7.</strong> <code>ARMING_CHECK</code> hilang; <code>SRn_*</code> menjadi <code>MAVn_*</code>; <code>SYSID_MYGCS</code> menjadi <code>MAV_GCS_SYSID</code>; <code>WPNAV_*</code> menjadi <code>WP_*</code>. Tutorial lama akan menyesatkan.</li>
+</ol>
+
+<div class="note-box">
+  <span class="lbl">Soal memodifikasi firmware</span>
+  <p>Tidak perlu, dan saya sarankan tidak. Mekanisme "hanya kirim data penting" sudah ada dan namanya <code>MAVn_*</code>. Fork firmware berarti kehilangan jalur update dan, yang lebih merugikan saat men-debug wahana non-GPS, kehilangan kemampuan membandingkan perilaku dengan pengguna lain — persis kemampuan yang paling kamu butuhkan sekarang.</p>
+</div>
+
+</section>
+
+<footer>
+  Disusun 14 Agustus 2026 · Semua perilaku firmware diverifikasi terhadap source pada tag <code>Copter-4.7.0</code>, bukan dari dokumentasi umum.<br>
+  Rujukan kode: <code>GCS.cpp:270</code> (mask statustext) · <code>GCS_Common.cpp:195</code> (private) · <code>GCS_MAVLink_Parameters.cpp:216</code> (bitmask OPTIONS) · <code>GCS_Common.cpp:2684</code> (service_statustext) · <code>APMFirmwarePlugin.cc:319</code> (loop re-init QGC) · <code>LogStructure.h:1277</code> (kolom rekaman MAV)
+</footer>
+
+</div>

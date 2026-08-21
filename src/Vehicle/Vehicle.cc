@@ -248,6 +248,17 @@ void Vehicle::_commonInit(LinkInterface* link)
     connect(_firmwarePlugin, &FirmwarePlugin::toolIndicatorsChanged, this, &Vehicle::toolIndicatorsChanged);
 
     connect(this, &Vehicle::initialConnectComplete, this, &Vehicle::requestEstimatorOrigin);
+
+    // A correction the vehicle took is the operator having stated where it is standing. Hung off the
+    // result rather than off sending, because a correction the estimator refused has moved nothing:
+    // the frame is still where it drifted to, and saying otherwise would clear the one check that
+    // was about to catch it.
+    connect(this, &Vehicle::externalPositionEstimateResult, this, [this](bool accepted, const QString &) {
+        if (accepted) {
+            _setPositionConfirmedSinceLastFlight(true);
+        }
+    });
+
     connect(this, &Vehicle::coordinateChanged,      this, &Vehicle::_updateDistanceHeadingHome);
     connect(this, &Vehicle::coordinateChanged,      this, &Vehicle::_updateDistanceHeadingGCS);
     connect(this, &Vehicle::homePositionChanged,    this, &Vehicle::_updateDistanceHeadingHome);
@@ -1909,7 +1920,22 @@ void Vehicle::_setFlying(bool flying)
 {
     if (_flying != flying) {
         _flying = flying;
+        if (!flying) {
+            // Touching down is what makes the last statement of position stale. The estimate crept
+            // over the flight that just ended, and it is the frame the next mission would be flown
+            // in -- so the aircraft has to be stood somewhere and said to be there again before it
+            // counts as known.
+            _setPositionConfirmedSinceLastFlight(false);
+        }
         emit flyingChanged(flying);
+    }
+}
+
+void Vehicle::_setPositionConfirmedSinceLastFlight(bool confirmed)
+{
+    if (_positionConfirmedSinceLastFlight != confirmed) {
+        _positionConfirmedSinceLastFlight = confirmed;
+        emit positionConfirmedSinceLastFlightChanged();
     }
 }
 
@@ -3338,6 +3364,13 @@ void Vehicle::setEstimatorOrigin(const QGeoCoordinate& centerCoord)
     if (!qIsFinite(originCoord.altitude())) {
         originCoord.setAltitude(0.0);
     }
+
+    // Placing the origin is the operator saying where the aircraft is standing -- it goes on the
+    // point the aircraft launches from, which is the same statement a correction makes. Marked here
+    // rather than on the acknowledgement, which this path does not collect; a refused origin costs
+    // nothing, because the vehicle then has no origin at all and the estimator-origin check holds
+    // the flight on its own.
+    _setPositionConfirmedSinceLastFlight(true);
 
     // Prefer MAV_CMD_DO_SET_GLOBAL_ORIGIN (sent as COMMAND_INT, supersedes SET_GPS_GLOBAL_ORIGIN).
     sendMavCommandIntWithLambdaFallback(

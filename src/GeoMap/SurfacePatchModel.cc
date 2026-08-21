@@ -13,6 +13,10 @@
 #include <cmath>
 #include <utility>
 
+#ifdef Q_OS_ANDROID
+#include <android/log.h>
+#endif
+
 #include "GeoMapCamera.h"
 #include "GeoScene.h"
 #include "HeightField.h"
@@ -344,6 +348,7 @@ int SurfacePatchModel::maxZoomLevel() const
     return maxZoom;
 }
 
+// GCOVR_EXCL_START — perf-stats/capture/diagnostics instrumentation, not shipping behavior
 void SurfacePatchModel::_startStatsSampling()
 {
     if (!_statsTimer) {
@@ -387,6 +392,8 @@ void SurfacePatchModel::_statsTick()
         _surfaceModel ? _surfaceModel->takeUpdateStats() : SurfaceModel::UpdateStats{};
     const double avgMs = stats.updates ? (stats.totalUs / 1000.0) / stats.updates : 0.0;
     const double maxMs = stats.maxUs / 1000.0;
+    const double addAvgMs = stats.updates ? (stats.addTotalUs / 1000.0) / stats.updates : 0.0;
+    const double addMaxMs = stats.addMaxUs / 1000.0;
     _statsText = QStringLiteral("upd/s %1  avg %2 ms  max %3 ms  |  patch +%4 -%5 /s  comp/s %6")
                      .arg(stats.updates)
                      .arg(avgMs, 0, 'f', 2)
@@ -398,11 +405,13 @@ void SurfacePatchModel::_statsTick()
         _captureWorstMaxMs = std::max(_captureWorstMaxMs, maxMs);
         _captureWorstAvgMs = std::max(_captureWorstAvgMs, avgMs);
         GeoMapCamera* const camera = _camera();
-        _captureRows.append(QStringLiteral("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12")
+        _captureRows.append(QStringLiteral("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14")
                                 .arg(_captureClock.elapsed() / 1000.0, 0, 'f', 1)
                                 .arg(stats.updates)
                                 .arg(avgMs, 0, 'f', 3)
                                 .arg(maxMs, 0, 'f', 3)
+                                .arg(addAvgMs, 0, 'f', 3)
+                                .arg(addMaxMs, 0, 'f', 3)
                                 .arg(_statAdds)
                                 .arg(_statRemoves)
                                 .arg(_statComposites)
@@ -430,8 +439,8 @@ void SurfacePatchModel::startCapture()
     _captureWorstMaxMs = 0.0;
     _captureWorstAvgMs = 0.0;
     _captureRows.append(
-        QStringLiteral("time_s,updates,avg_ms,max_ms,patch_adds,patch_removes,composites,patches,pending,max_zoom,cam_"
-                       "dist_m,cam_tilt_deg"));
+        QStringLiteral("time_s,updates,avg_ms,max_ms,add_avg_ms,add_max_ms,patch_adds,patch_removes,composites,"
+                       "patches,pending,max_zoom,cam_dist_m,cam_tilt_deg"));
     _captureClock.start();
     // Run the sampler directly rather than via statsEnabled: that property is
     // QML-bound to the overlay toggle, and writing it here would fight the
@@ -471,6 +480,16 @@ QString SurfacePatchModel::stopCapture()
         emit statsTextChanged();
         return QString();
     }
+
+#ifdef Q_OS_ANDROID
+    // Non-debuggable release builds hide the app cache from adb; dump the CSV
+    // to logcat so it can be pulled with: adb logcat -d -s GeoMapCapture
+    for (const QByteArray& line : data.split('\n')) {
+        if (!line.isEmpty()) {
+            __android_log_print(ANDROID_LOG_WARN, "GeoMapCapture", "%s", line.constData());
+        }
+    }
+#endif
 
     // No log output on success: the overlay shows the path, and UI tests run
     // with strict log checking. The worst-case summary makes the overlay a
@@ -525,6 +544,8 @@ void SurfacePatchModel::analyzeSurface() const
         SurfaceAnalysis::analyze(_surfaceModel->patches(), SurfaceModel::kGridSize, view);
     qDebug().noquote() << report.text();  // user-triggered diagnostic: always emitted
 }
+
+// GCOVR_EXCL_STOP
 
 int SurfacePatchModel::rowCount(const QModelIndex& parent) const
 {
@@ -608,6 +629,16 @@ bool SurfacePatchModel::_fallbackAvailable(const TileMath::TileKey& key) const
 QImage SurfacePatchModel::_fallbackImage(const TileMath::TileKey& key) const
 {
     // Sharper first: composite direct children (LOD coarsening keeps their detail)
+    QImage image = _compositeFromChildren(key);
+    if (image.isNull()) {
+        // Blurrier: crop the covering region out of the nearest available ancestor
+        image = _cropFromAncestor(key);
+    }
+    return image;
+}
+
+QImage SurfacePatchModel::_compositeFromChildren(const TileMath::TileKey& key) const
+{
     bool anyChild = false;
     for (int childY = 0; (childY < 2) && !anyChild; childY++) {
         for (int childX = 0; (childX < 2) && !anyChild; childX++) {
@@ -615,27 +646,30 @@ QImage SurfacePatchModel::_fallbackImage(const TileMath::TileKey& key) const
                 _tileImages.contains(TileMath::TileKey{(key.x * 2) + childX, (key.y * 2) + childY, key.zoom + 1});
         }
     }
-    if (anyChild) {
-        constexpr int kCanvas = 256;
-        _statComposites++;
-        QImage canvas(kCanvas, kCanvas, QImage::Format_RGBA8888);
-        canvas.fill(QColor(0x3a, 0x40, 0x48));  // missing quadrants stay neutral
-        QPainter painter(&canvas);
-        for (int childY = 0; childY < 2; childY++) {
-            for (int childX = 0; childX < 2; childX++) {
-                const QImage child =
-                    _tileImages.value(TileMath::TileKey{(key.x * 2) + childX, (key.y * 2) + childY, key.zoom + 1});
-                if (!child.isNull()) {
-                    // Tile y grows south and image row 0 is north, so child y maps to top half directly
-                    painter.drawImage(QRect((childX * kCanvas) / 2, (childY * kCanvas) / 2, kCanvas / 2, kCanvas / 2),
-                                      child);
-                }
+    if (!anyChild) {
+        return {};
+    }
+    constexpr int kCanvas = 256;
+    _statComposites++;
+    QImage canvas(kCanvas, kCanvas, QImage::Format_RGBA8888);
+    canvas.fill(QColor(0x3a, 0x40, 0x48));  // missing quadrants stay neutral
+    QPainter painter(&canvas);
+    for (int childY = 0; childY < 2; childY++) {
+        for (int childX = 0; childX < 2; childX++) {
+            const QImage child =
+                _tileImages.value(TileMath::TileKey{(key.x * 2) + childX, (key.y * 2) + childY, key.zoom + 1});
+            if (!child.isNull()) {
+                // Tile y grows south and image row 0 is north, so child y maps to top half directly
+                painter.drawImage(QRect((childX * kCanvas) / 2, (childY * kCanvas) / 2, kCanvas / 2, kCanvas / 2),
+                                  child);
             }
         }
-        return canvas;
     }
+    return canvas;
+}
 
-    // Blurrier: crop the covering region out of the nearest available ancestor
+QImage SurfacePatchModel::_cropFromAncestor(const TileMath::TileKey& key) const
+{
     for (int up = 1; (up <= kMaxAncestorFallbackLevels) && ((key.zoom - up) >= 0); up++) {
         const TileMath::TileKey ancestor{key.x >> up, key.y >> up, key.zoom - up};
         const QImage image = _tileImages.value(ancestor);

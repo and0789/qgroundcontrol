@@ -27,6 +27,11 @@ constexpr double kRangefinderMaxMetres = 12.0;
 constexpr const char *kStandInMaxParameter = "EK3_ALT_M_NSE";
 constexpr const char *kStandInVelocityParameter = "EK3_SRC1_VELXY";
 
+// Same trick for the return altitude: the mock vehicle carries no RTL_ALT at all. What is under test
+// is the comparison -- a return that climbs past the height reference -- not which parameter the
+// number was read from.
+constexpr const char *kStandInReturnAltParameter = "EK3_VELD_M_NSE";
+
 /// Applies a parameter the way the vehicle reports one, without a write down the link
 void setParameter(Vehicle *vehicle, const QString &name, const QVariant &value)
 {
@@ -79,6 +84,7 @@ QObject *createLimit(QQmlComponent &component, Vehicle *vehicle, QString &error)
         { QStringLiteral("vehicle"), QVariant::fromValue(vehicle) },
         { QStringLiteral("rangefinderMaxParameterName"), QString::fromLatin1(kStandInMaxParameter) },
         { QStringLiteral("velocitySourceParameterName"), QString::fromLatin1(kStandInVelocityParameter) },
+        { QStringLiteral("returnAltitudeParameterName"), QString::fromLatin1(kStandInReturnAltParameter) },
     });
     if (!limit) {
         error = component.errorString();
@@ -323,6 +329,52 @@ void LocalGridAltitudeLimitTest::_rangefinderIsPreferredOverTheFlowHeight_test()
     QCOMPARE(limit->property("currentHeightMetres").toDouble(), 3.0);
     QVERIFY2(!limit->property("aboveCeiling").toBool(),
              "the sensor that is reporting decides, not the stand-in for its silence");
+}
+
+/// A return to launch climbs to RTL_ALT before it starts home, and that altitude lives in a
+/// parameter rather than in the plan -- so the ceiling this object holds every waypoint under has no
+/// way to clamp it. On an aircraft navigating on a rangefinder it is the one item an operator can
+/// add to a plan that leaves the height reference behind with nothing in QGC able to stop it.
+void LocalGridAltitudeLimitTest::_returnAltitudeAboveTheCeilingIsFlagged_test()
+{
+    QVERIFY(vehicle());
+    setParameter(vehicle(), QStringLiteral("EK3_SRC1_POSZ"), kSourceRangefinder);
+    setParameter(vehicle(), QString::fromLatin1(kStandInVelocityParameter), kVelocityNone);
+    setParameter(vehicle(), QString::fromLatin1(kStandInMaxParameter), kRangefinderMaxMetres);
+    setParameter(vehicle(), QString::fromLatin1(kStandInReturnAltParameter), kRangefinderMaxMetres + 8.0);
+
+    MAKE_LIMIT(limit);
+
+    QVERIFY(limit->property("returnAltitudeKnown").toBool());
+    QCOMPARE(limit->property("returnAltitudeMetres").toDouble(), kRangefinderMaxMetres + 8.0);
+    QVERIFY2(limit->property("returnAltitudeAboveCeiling").toBool(),
+             "a return that climbs past the rangefinder's range has to be reported");
+
+    // Brought under the range, it is an ordinary item again
+    setParameter(vehicle(), QString::fromLatin1(kStandInReturnAltParameter), kRangefinderMaxMetres - 4.0);
+    QVERIFY(!limit->property("returnAltitudeAboveCeiling").toBool());
+
+    // Exactly at the range is still in range, the same answer a waypoint at that height gets
+    setParameter(vehicle(), QString::fromLatin1(kStandInReturnAltParameter), kRangefinderMaxMetres);
+    QVERIFY(!limit->property("returnAltitudeAboveCeiling").toBool());
+}
+
+/// Where no ceiling applies the return altitude says nothing. A vehicle holding its position on GNSS
+/// climbs to RTL_ALT with a source that does not care how high it is, and flagging that would be
+/// noise the operator learns to click past -- which is how a real warning gets missed.
+void LocalGridAltitudeLimitTest::_returnAltitudeIsSilentWhereNoCeilingApplies_test()
+{
+    QVERIFY(vehicle());
+    setParameter(vehicle(), QStringLiteral("EK3_SRC1_POSZ"), kSourceBaro);
+    setParameter(vehicle(), QString::fromLatin1(kStandInVelocityParameter), kVelocityNone);
+    setParameter(vehicle(), QString::fromLatin1(kStandInMaxParameter), kRangefinderMaxMetres);
+    setParameter(vehicle(), QString::fromLatin1(kStandInReturnAltParameter), kRangefinderMaxMetres + 8.0);
+
+    MAKE_LIMIT(limit);
+
+    QVERIFY(!limit->property("limitApplies").toBool());
+    QVERIFY2(!limit->property("returnAltitudeAboveCeiling").toBool(),
+             "no height reference to lose means no reason to refuse a return");
 }
 
 UT_REGISTER_TEST(LocalGridAltitudeLimitTest, TestLabel::Integration, TestLabel::Vehicle)

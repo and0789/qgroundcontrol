@@ -31,6 +31,7 @@ public:
     DEFINE_SETTINGFACT(localGridPlanAnchorNorth)
     DEFINE_SETTINGFACT(localGridPlanAnchorEast)
     DEFINE_SETTINGFACT(showLocalGridView)
+    DEFINE_SETTINGFACT(showLocalGridPlanHelp)
     DEFINE_SETTINGFACT(showNonGpsStatusPanel)
     DEFINE_SETTINGFACT(updateHomePosition)
     DEFINE_SETTINGFACT(instrumentQmlFile2)

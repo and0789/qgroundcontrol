@@ -1,7 +1,9 @@
 #include "SetEstimatorOriginTest.h"
 
+#include <QtCore/QRegularExpression>
 #include <QtCore/QtNumeric>
 #include <QtPositioning/QGeoCoordinate>
+#include <QtTest/QSignalSpy>
 
 #include "FirmwarePlugin.h"
 #include "MockLink.h"
@@ -251,6 +253,71 @@ void SetEstimatorOriginTest::_requestAfterOriginLost_clearsStaleValue()
 
     _vehicle->requestEstimatorOrigin();
     QVERIFY_TRUE_WAIT(!_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
+}
+
+/// A statement of where the aircraft is standing covers exactly one flight.
+///
+/// An estimate carried forward by dead reckoning creeps over a flight, and landing does not undo the
+/// creep. The frame the next mission would be flown in is the frame the last one drifted into, so
+/// letting the statement survive the landing sends the second flight out on the first flight's
+/// answer. That failure is invisible from the ground: the aircraft reports itself exactly where the
+/// plan says it should be, and it is found by watching it fly the right shape in the wrong place.
+void SetEstimatorOriginTest::_statedPosition_coversOneFlightOnly()
+{
+    QVERIFY(_vehicle);
+    QVERIFY(_mockLink);
+
+    // Going flying builds QGCPressure, which warns on a host with no pressure backend. Nothing to do
+    // with the position being stated.
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Failed to connect to pressure backend")));
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Error Initializing Pressure Sensor")));
+
+    QVERIFY2(!_vehicle->positionConfirmedSinceLastFlight(),
+             "a vehicle QGC has just met has not been stood anywhere by this operator");
+
+    // Placing the origin puts it on the point the aircraft is launching from, which is the statement
+    _vehicle->setEstimatorOrigin(kOrigin);
+    QVERIFY(_vehicle->positionConfirmedSinceLastFlight());
+
+    // MockLink decides landed state from altitude above home, so a takeoff to 10 m is how it flies
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, false /* showError */,
+                             0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 10.0F /* altitude */);
+    QVERIFY_TRUE_WAIT(_vehicle->flying(), TestTimeout::longMs());
+    QVERIFY2(_vehicle->positionConfirmedSinceLastFlight(),
+             "the statement has to stand for the flight it was made for");
+
+    // And back to home altitude, which is how it lands
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, false /* showError */,
+                             0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F /* altitude */);
+    QVERIFY_TRUE_WAIT(!_vehicle->flying(), TestTimeout::longMs());
+    QVERIFY2(!_vehicle->positionConfirmedSinceLastFlight(),
+             "touching down is what makes the statement stale");
+}
+
+/// A correction the estimator refused has moved nothing: the frame is still where it drifted to.
+/// Counting the attempt would clear the one check that was about to catch it.
+void SetEstimatorOriginTest::_refusedCorrection_doesNotStateThePosition()
+{
+    QVERIFY(_vehicle);
+
+    QSignalSpy resultSpy(_vehicle, &Vehicle::externalPositionEstimateResult);
+    QVERIFY(resultSpy.isValid());
+
+    // MockLink has no implementation of the command, so what comes back is a real refusal
+    _vehicle->sendExternalPositionEstimate(kOrigin);
+    QVERIFY_SIGNAL_WAIT(resultSpy, TestTimeout::longMs());
+    QVERIFY2(!resultSpy.at(0).at(0).toBool(), "the premise of this test is a refusal");
+
+    QVERIFY(!_vehicle->positionConfirmedSinceLastFlight());
+
+    // The accepted answer is what states the position. Raised directly because MockLink has nothing
+    // to accept the command with; the path from sending to this answer is covered by
+    // VehicleExternalPositionEstimateTest.
+    QVERIFY(QMetaObject::invokeMethod(_vehicle, "externalPositionEstimateResult",
+                                      Q_ARG(bool, true), Q_ARG(QString, QString())));
+    QVERIFY(_vehicle->positionConfirmedSinceLastFlight());
 }
 
 UT_REGISTER_TEST(SetEstimatorOriginTest, TestLabel::Integration, TestLabel::Vehicle)

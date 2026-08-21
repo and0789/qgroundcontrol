@@ -21,6 +21,11 @@ Button {
     checked:        toolStripAction ? toolStripAction.checked : false
     checkable:      toolStripAction ? (toolStripAction.dropPanelComponent || (modelData && modelData.checkable)) : false
 
+    /// Whether checking this button leaves the rest of the strip alone, and survives one of them
+    /// being checked. A mode switch is not one of the tools it switches between: the fly view's Plan
+    /// button stays lit while a plan tool is armed underneath it.
+    property bool   nonExclusive:       toolStripAction ? toolStripAction.nonExclusive : false
+
     property var    toolStripAction:    undefined
     property var    dropPanel:          undefined
     property alias  radius:             buttonBkRect.radius

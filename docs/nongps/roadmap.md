@@ -35,7 +35,7 @@ Tim: Gabriel (informatika) — algoritma misi, modifikasi QGroundControl, analis
 | **Status** | **SELESAI ✔** |
 | **Tujuan** | Lingkungan pengembangan siap dan tervalidasi; dasar teori navigasi non-GPS dikuasai. |
 | **Kegiatan utama** | Build ArduPilot SITL di macOS (M1 Pro, Tahoe); build QGroundControl dari source (branch master, Qt 6.11.1, GStreamer 1.28.4, bootstrap uv); setup CLion (toolchain AppleClang + ccache) dan PyCharm; studi EKF3, optical flow odometry, local NED frame. |
-| **Deliverable** | Dokumentasi setup (dokumentasi-setup-gps-denied.md); SITL berjalan dengan MAVProxy console + map; QGC build sukses dan terhubung ke SITL. |
+| **Deliverable** | Dokumentasi setup — lingkungan tercatat di [project-brief.md](project-brief.md) §6, prosedur menjalankannya di [prosedur-terbang-non-gps-sitl.md](prosedur-terbang-non-gps-sitl.md); SITL berjalan dengan MAVProxy console + map; QGC build sukses dan terhubung ke SITL. |
 | **Kriteria selesai** | Semua toolchain build tanpa error; koneksi QGC–SITL terverifikasi. (Tercapai 15 Juli 2026.) |
 | **Alat yang dibutuhkan** | MacBook Pro M1 Pro (macOS Tahoe), CLion, PyCharm, Qt 6.11.1, CMake ≥3.25, Ninja, ccache, uv, Python 3.10 (pyenv), GStreamer 1.28.4, Git. |
 

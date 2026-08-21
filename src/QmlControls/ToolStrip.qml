@@ -61,11 +61,16 @@ Rectangle {
 
                     onCheckedChanged: {
                         // We deal with exclusive check state manually since usinug autoExclusive caused all sorts of crazt problems
-                        if (checked) {
+                        if (checked && !nonExclusive) {
                             for (var i=0; i<repeater.count; i++) {
                                 if (i != index) {
                                     var button = repeater.itemAt(i)
-                                    if (button.checked) {
+                                    // A button outside the group neither clears it nor is cleared by
+                                    // it. Honours ToolStripAction's nonExclusive, which has been
+                                    // declared since the class was written but never read: without
+                                    // it a strip can only hold one kind of checked button, and a
+                                    // mode switch and the tools it switches between are two.
+                                    if (button.checked && !button.nonExclusive) {
                                         button.checked = false
                                     }
                                 }

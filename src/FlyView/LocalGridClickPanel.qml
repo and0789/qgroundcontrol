@@ -4,13 +4,21 @@ import QtQuick.Layouts
 import QGroundControl
 import QGroundControl.Controls
 
-/// What a click on the local grid offers: the point clicked, stated in metres north and east of the
-/// origin, and the option to make a waypoint of it.
+/// Where a point on the local grid is, and whether the aircraft is standing on it.
 ///
-/// The numbers are the point. A waypoint placed this way is briefed, flown and measured as an offset
-/// in metres, so the operator should see the offset before committing to it rather than after.
+/// A position panel, not a mission one. Placing items used to live here too, which meant a plain tap
+/// on the grid opened a menu of mission choices -- and it was that path, not the plan tool strip,
+/// that an operator met when the order of a plan came out wrong. Items are placed from the tool
+/// strip's Plan mode now: arm Waypoint or ROI there and tap the grid.
+///
+/// What is left is the thing nothing else offers. The origin marker can say "the aircraft is here"
+/// about the origin, and the readout can set an origin, but only this panel can say it about an
+/// arbitrary point -- which is the whole drift-correction workflow: mark a spot on the ground, stand
+/// the aircraft on it, tap that spot, read back the same two numbers, and only then commit.
 Rectangle {
     id: _root
+
+    objectName: "localGrid_clickPanel"
 
     property var gridView: null
 
@@ -35,37 +43,6 @@ Rectangle {
     property real _north: NaN
     property real _east:  NaN
 
-    readonly property var  _missionController: gridView ? gridView.missionController : null
-    readonly property bool _canPlace:      gridView ? gridView.canPlaceWaypoints : false
-    // Compared against true rather than taken as-is: a controller that does not carry these answers
-    // undefined, which is not a bool and would be refused with a warning on every rebuild
-    readonly property bool _takeoffValid:  _missionController ? (_missionController.isInsertTakeoffValid === true) : false
-    readonly property bool _landValid:     _missionController ? (_missionController.isInsertLandValid === true) : false
-    readonly property bool _isMultiRotor:  (gridView && gridView.vehicle) ? gridView.vehicle.multiRotor : false
-
-    readonly property bool _syncing: gridView ? gridView.planSyncInProgress : false
-
-    function _add(kind) {
-        if (gridView) {
-            gridView.addMissionItemAt(kind, _north, _east)
-        }
-        visible = false
-    }
-
-    /// Why nothing can be placed right now. Left unsaid, the transfer case is the one that costs a
-    /// flight: the buttons go dead for a second or two in the middle of building a plan, and an
-    /// operator who reads that as a stuck click keeps working -- into a list the vehicle's reply is
-    /// about to overwrite.
-    function _cannotPlaceReason() {
-        if (_syncing) {
-            return qsTr("The plan is being transferred. Anything placed now would be overwritten by the vehicle's copy when it finishes.")
-        }
-        if (gridView && !gridView.originKnown) {
-            return qsTr("The vehicle has no estimator origin, so this grid is not anchored to anything a mission can be stored against.")
-        }
-        return qsTr("No plan is loaded.")
-    }
-
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     readonly property var _transform: gridView ? gridView.gridTransform : null
@@ -78,9 +55,28 @@ Rectangle {
         _north = _transform.northForPixelY(pixelY)
         _east = _transform.eastForPixelX(pixelX)
 
-        // Kept inside the view, so a click near an edge does not put the panel half off screen
-        x = Math.max(0, Math.min(pixelX, parent.width - width))
-        y = Math.max(0, Math.min(pixelY, parent.height - height))
+        // Kept inside the view, and clear of whatever chrome is anchored to its edges -- the tool
+        // strip in the top-left corner, the flight controls that share the bottom on a phone -- so a
+        // click near a corner does not open a panel under a button it then covers, or that cannot be
+        // reached past to dismiss it.
+        const left   = gridView ? gridView.safeAreaLeft   : 0
+        const top    = gridView ? gridView.safeAreaTop    : 0
+        const right  = parent.width  - (gridView ? gridView.safeAreaRight  : 0)
+        const bottom = parent.height - (gridView ? gridView.safeAreaBottom : 0)
+
+        // Set clear of the point that was touched rather than starting at it. The panel used to open
+        // with its top-left corner exactly under the finger that summoned it, which on a phone means
+        // it opens underneath the hand still resting there -- and the two numbers at the top of it,
+        // the whole reason this panel exists, are the part the fingertip covers. Offset by a touch
+        // target down and to the right, so the point stays visible beside the panel describing it.
+        //
+        // The clamps below still win at the edges: pushed past the right or bottom margin the panel
+        // comes back inside, which puts it above or left of the touch instead. Either way it is not
+        // under the finger.
+        const offset = ScreenTools.minTouchPixels
+
+        x = Math.max(left, Math.min(pixelX + offset, right - width))
+        y = Math.max(top, Math.min(pixelY + offset, bottom - height))
         visible = true
     }
 
@@ -118,56 +114,6 @@ Rectangle {
                 Layout.fillWidth:       true
                 text:                   _root._distanceText(_root._east)
             }
-        }
-
-        // The same three the Plan view's insert strip offers. A plan needs more than waypoints to
-        // fly itself, and having to leave the grid for the takeoff was the point at which building
-        // a mission here stopped being possible.
-        QGCButton {
-            Layout.fillWidth:   true
-            text:               qsTr("Add waypoint")
-            enabled:            _root._canPlace
-            onClicked:          _root._add("waypoint")
-        }
-
-        // Named for where it lands rather than for where it was clicked. A multirotor climbs in
-        // place whatever coordinate is uploaded with NAV_TAKEOFF, so the takeoff goes on the origin
-        // -- and the operator should read that off the button rather than discover it afterwards.
-        QGCButton {
-            Layout.fillWidth:   true
-            text:               qsTr("Add takeoff at origin")
-            enabled:            _root._canPlace && _root._takeoffValid
-            onClicked:          _root._add("takeoff")
-        }
-
-        QGCButton {
-            Layout.fillWidth:   true
-            // A multirotor's landing item is a return to launch, which is what the Plan view
-            // inserts here and what it calls it
-            text:               _root._isMultiRotor ? qsTr("Add return") : qsTr("Add landing")
-            enabled:            _root._canPlace && _root._landValid
-            onClicked:          _root._add("land")
-        }
-
-        // Only where the button above does not already mean this. On a multirotor that button
-        // returns the aircraft to launch, which is the wrong ending for a pattern meant to finish at
-        // its far corner -- and QGC offers no other way to say it.
-        QGCButton {
-            Layout.fillWidth:   true
-            visible:            _root._isMultiRotor
-            text:               qsTr("Land here")
-            enabled:            _root._canPlace
-            onClicked:          _root._add("landHere")
-        }
-
-        // Shown rather than left as a dead button, and saying which of the three reasons it is.
-        QGCLabel {
-            Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 24
-            visible:                !_root._canPlace
-            wrapMode:               Text.WordWrap
-            font.pointSize:         ScreenTools.smallFontPointSize
-            color:                  qgcPal.colorOrange
-            text:                   _root._cannotPlaceReason()
         }
 
         // Not a waypoint but a statement about where the aircraft already is, which is why it sits

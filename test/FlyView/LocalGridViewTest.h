@@ -46,6 +46,8 @@ private slots:
     void _takeoffIsHeldOnTheOrigin_test();
     void _itemTypeChangesInPlace_test();
     void _altitudeCanBeAppliedToEveryItem_test();
+    void _landingTakesTheAltitudeOfTheItemBeforeIt_test();
+    void _gridSaysWhetherThePlanAlreadyHasATakeoff_test();
     void _everyItemAboveTheCeilingIsFound_test();
     void _missionItemRowOpensOnlyWhenCurrent_test();
     void _missionItemRowNamesTheItemItHolds_test();
@@ -76,6 +78,53 @@ private slots:
     void _planSaysWhereTheVehicleWouldPickItUp_test();
     void _uploadIsRefusedWhenThePreCheckSaysSo_test();
     void _planAnchorOutlivesTheView_test();
+
+    // Bagian 3: mission-creation parity (Lampiran D)
+    void _insertAfterSelectedItem_landsInTheMiddleOfThePlan_test();
+    void _insertAfterSelectedItem_selectsTheNewItemNotTheLastOne_test();
+    void _nothingCanBeInsertedBeforeTheTakeoff_test();
+    void _landHere_refusesAMidPlanSpot_test();
+    void _armedTool_placesAfterTheSelectionWithoutClearingIt_test();
+    void _armedTool_chainsSeveralPlacementsInARow_test();
+    void _everyArmableToolPlacesSomething_test();
+    void _theListFollowsTheItemBeingFlownTo_test();
+    void _rowEditIconsAppearOnlyWhereTheEditIsAllowed_test();
+    void _backgroundNotesWaitToBeAskedFor_test();
+    void _thePlanPanelStandsDownWhileArmed_test();
+    void _theFoldedReadoutStaysWideEnoughToFind_test();
+    void _theHelpSwitchTakesTheTapItIsGiven_test();
+    void _planEditMode_dropsTheArmedToolWhenItEnds_test();
+    void _planEditMode_endsWhenTheAircraftArms_test();
+    void _planEditMode_endsWhenTheGridIsHidden_test();
+    void _planNeedsTakeoffFirst_clearsOnceTheTakeoffIsPlaced_test();
+    void _roiIsDrawnButNotFlownThrough_test();
+    void _selectionIsClearedWhenThePlanArrivesWhole_test();
+    void _duplicateItem_copiesPositionAltitudeAndSpeed_test();
+    void _insertBetween_splitsTheLegAtItsMidpoint_test();
+
+    // Bagian 4: item detail and plan totals (Lampiran E)
+    void _holdTimeIsOfferedOnWaypointsAlone_test();
+    void _holdSecondsAreSummedAcrossThePlan_test();
+    void _planTotalsIncludeTheWaits_test();
+    void _yawItemCarriesAHeadingAndNoLeg_test();
+
+    // Bagian 5: pattern tools (Lampiran F)
+    void _rotatePlan_turnsThePatternAboutWhereItStarts_test();
+    void _rotatePlan_turnsYawHeadingsWithThePattern_test();
+    void _nudgePlan_movesTheAnchorWithThePattern_test();
+    void _patternShapingIsRefusedWhileArmedOrSyncing_test();
+
+    // Bagian 6b: undo (Lampiran H)
+    void _undoTakesBackAPlacement_test();
+    void _undoPutsAMovedWaypointBack_test();
+    void _undoRestoresADeletedItemWholly_test();
+    void _undoTurnsThePatternBack_test();
+    void _undoRestoresTheAltitudesOneTapReplaced_test();
+    void _undoIsDroppedWhenThePlanArrivesFromTheVehicle_test();
+    void _undoRemembersOnlyTheLastAction_test();
+
+    // Regression: a waypoint carrying a speed spans two mission sequence numbers
+    void _insertAppendsWhenAnItemSpansTwoSequenceNumbers_test();
 
 private:
     static bool _showInWindow(QQuickWindow &window, QObject *list);

@@ -24,4 +24,6 @@ private slots:
     void _liveHeightIsSilentWhereNoCeilingApplies_test();
     void _flowHeightStandsInForASilentRangefinder_test();
     void _rangefinderIsPreferredOverTheFlowHeight_test();
+    void _returnAltitudeAboveTheCeilingIsFlagged_test();
+    void _returnAltitudeIsSilentWhereNoCeilingApplies_test();
 };

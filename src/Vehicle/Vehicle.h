@@ -218,6 +218,7 @@ public:
     Q_PROPERTY(bool                 allSensorsHealthy           READ allSensorsHealthy                                              NOTIFY allSensorsHealthyChanged)    //< true: all sensors in SYS_STATUS reported as healthy
     Q_PROPERTY(bool                 requiresGpsFix              READ requiresGpsFix                                                 NOTIFY requiresGpsFixChanged)
     Q_PROPERTY(bool                 navigatingWithoutGNSS       READ navigatingWithoutGNSS                                          NOTIFY navigatingWithoutGNSSChanged)
+    Q_PROPERTY(bool                 positionConfirmedSinceLastFlight READ positionConfirmedSinceLastFlight                          NOTIFY positionConfirmedSinceLastFlightChanged)
     Q_PROPERTY(double               loadProgress                READ loadProgress                                                   NOTIFY loadProgressChanged)
     Q_PROPERTY(bool                 initialConnectComplete      READ isInitialConnectComplete                                       NOTIFY initialConnectComplete)
 
@@ -495,6 +496,20 @@ public:
     /// cannot resolve a mission altitude that is relative to home -- an auto takeoff started in
     /// that state climbs and then never reports completion, stalling the mission on its first item.
     QGeoCoordinate estimatorOrigin() const { return _estimatorOrigin; }
+
+    /// True while the operator has said where the vehicle is standing and it has not flown since.
+    ///
+    /// An aircraft navigating on optical flow carries its position forward by dead reckoning, so the
+    /// estimate creeps -- and landing does not undo the creep. The frame the next mission is flown
+    /// in is the frame the last one drifted into, and because the plan is drawn against the origin,
+    /// a frame that has slid puts every waypoint out by the same distance in the same direction. The
+    /// pattern is right and the ground track is not, with nothing on screen to say so: the aircraft
+    /// reports itself exactly where the plan says it should be.
+    ///
+    /// Set by stating a position -- either the origin, which is placed where the aircraft stands, or
+    /// a correction sent with sendExternalPositionEstimate and accepted. Cleared the moment the
+    /// vehicle touches down, so the statement covers one flight and is made again before the next.
+    bool positionConfirmedSinceLastFlight() const { return _positionConfirmedSinceLastFlight; }
 
     /// Asks the vehicle to report its estimator origin. ArduPilot emits GPS_GLOBAL_ORIGIN when the
     /// origin is first set and whenever it is requested, so QGC asks once the initial connection
@@ -789,6 +804,7 @@ public:
 
     void _setFlying(bool flying);
     void _setLanding(bool landing);
+    void _setPositionConfirmedSinceLastFlight(bool confirmed);
     void _setHomePosition(QGeoCoordinate& homeCoord);
 
     /// Vehicle is about to be deleted
@@ -832,6 +848,10 @@ signals:
     ///     @param accepted True when the correction was applied
     ///     @param reason   Why it was not, in words the operator can act on; empty when accepted
     void externalPositionEstimateResult  (bool accepted, const QString& reason);
+
+    /// Raised when the operator states where the vehicle is, and again when it lands and that
+    /// statement stops covering the next flight.
+    void positionConfirmedSinceLastFlightChanged();
     void armedPositionChanged();
     void armedChanged                   (bool armed);
     void flightModeChanged              (const QString& flightMode);
@@ -1031,6 +1051,11 @@ private:
     QGeoCoordinate  _homePosition;
     QGeoCoordinate  _estimatorOrigin;
     QGeoCoordinate  _armedPosition;
+
+    /// Starts false: a vehicle QGC has just met has not been stood anywhere by this operator, and
+    /// an estimate that has been running while nobody was watching is exactly the one worth
+    /// restating.
+    bool            _positionConfirmedSinceLastFlight = false;
 
     qreal           _initialGCSPressure = 0.;
     qreal           _initialGCSTemperature = 0.;
