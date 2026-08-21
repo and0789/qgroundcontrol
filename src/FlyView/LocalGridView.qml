@@ -1640,7 +1640,6 @@ Item {
     readonly property int commandWaypoint:      16  // MAV_CMD_NAV_WAYPOINT
     readonly property int commandLand:          21  // MAV_CMD_NAV_LAND
     readonly property int commandTakeoff:       22  // MAV_CMD_NAV_TAKEOFF
-    readonly property int commandReturnToLaunch: 20 // MAV_CMD_NAV_RETURN_TO_LAUNCH
     readonly property int commandConditionYaw: 115  // MAV_CMD_CONDITION_YAW
 
     /// @return the command of a mission item, or -1 for one that does not carry a settable command

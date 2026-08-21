@@ -545,36 +545,6 @@ void MissionController::removeVisualItem(int viIndex)
     }
 }
 
-void MissionController::moveVisualItem(int fromVIIndex, int toVIIndex)
-{
-    // Index 0 is the mission settings item. It carries the planned home position rather than a leg
-    // of the route, so it neither moves nor makes room for anything moved on top of it.
-    if (fromVIIndex <= 0 || fromVIIndex >= _visualItems->count() ||
-        toVIIndex   <= 0 || toVIIndex   >= _visualItems->count() ||
-        fromVIIndex == toVIIndex) {
-        qWarning() << "MissionController::moveVisualItem called with bad indices - count:from:to"
-                   << _visualItems->count() << fromVIIndex << toVIIndex;
-        return;
-    }
-
-    _visualItems->move(fromVIIndex, toVIIndex);
-
-    // The order is what every one of these is derived from: sequence numbers, the child item
-    // hierarchy, and the flight path segments drawn between item pairs. Moving the item without
-    // this leaves a plan whose items are in the new order and whose numbering still describes the
-    // old one -- which uploads, and flies the order the numbers say.
-    _recalcAll();
-
-    // Kept on the item that moved rather than on whatever now sits at the index it left. The
-    // operator is working on that item; it is the one that should stay open.
-    VisualMissionItem* const movedItem = _visualItems->value<VisualMissionItem*>(toVIIndex);
-    if (movedItem) {
-        setCurrentPlanViewSeqNum(movedItem->sequenceNumber(), true);
-    }
-
-    setDirty(true);
-}
-
 void MissionController::_setupNewVisualItems(QmlObjectListModel* newItems)
 {
     QmlObjectListModel* oldItems = _visualItems;
