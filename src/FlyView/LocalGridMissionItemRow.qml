@@ -59,30 +59,16 @@ Rectangle {
     readonly property real _margins:    ScreenTools.defaultFontPixelHeight / 4
     readonly property real _iconSize:   ScreenTools.defaultFontPixelHeight
 
-    /// Whether this item may move at all: the takeoff has to stay first and the item that finishes
-    /// the mission has to stay last, so neither offers the controls.
-    readonly property bool _canReorder: (gridView !== null) && (visualItemIndex >= 0)
-                                            && gridView.waypointIsReorderable(visualItemIndex)
-
-    /// Where this item sits among the ones that may move, so the buttons can grey themselves out at
-    /// the ends rather than offering a move that would be refused
-    readonly property var  _reorderRange: (gridView && _canReorder) ? gridView.reorderRangeForPoints() : null
-    readonly property int  _reorderPosition: {
-        if (!gridView || !_canReorder) {
-            return -1
-        }
-        const points = gridView.missionPoints
-        for (var i = 0; i < points.length; i++) {
-            if (points[i].index === visualItemIndex) {
-                return i
-            }
-        }
-        return -1
-    }
-
-    readonly property bool _canMoveUp:   _reorderRange && (_reorderPosition > _reorderRange.first)
-    readonly property bool _canMoveDown: _reorderRange && (_reorderPosition >= 0)
-                                            && (_reorderPosition < _reorderRange.last)
+    /// How much width one header icon reserves, which on a touch screen is more than it draws.
+    ///
+    /// QGCMouseArea listens outwards to ScreenTools.minTouchPixels on mobile, and three icons a half
+    /// space apart are closer together than that: the areas overlap, and the last one declared wins
+    /// the tap. That last one is delete. Reserving the touch width in the layout instead keeps every
+    /// tap inside the icon it landed on -- the glyph still draws at icon height, centred in the
+    /// wider box, because the image fits itself to the height.
+    readonly property real _iconTouchSize: ScreenTools.isMobile
+                                            ? Math.max(_iconSize, ScreenTools.minTouchPixels)
+                                            : _iconSize
 
     /// Which row is open is said by the header strip alone, not by colouring the whole row.
     ///
@@ -221,12 +207,62 @@ Rectangle {
                     onActivated: (index) => _root._applyType(index)
                 }
 
+                // The two edits made while a pattern is built one leg at a time -- split the leg
+                // after this item, or repeat this one -- as icons on the row's own header rather
+                // than as a row of full-width buttons under the editor. Icon-sized and on the open
+                // row alone, the same rule the delete control beside them follows.
+                QGCColoredImage {
+                    objectName:             "localGrid_rowInsertAfterButton"
+                    Layout.preferredWidth:  _root._iconTouchSize
+                    Layout.preferredHeight: _root._iconSize
+                    Layout.alignment:       Qt.AlignVCenter
+                    sourceSize.height:      _root._iconSize
+                    fillMode:               Image.PreserveAspectFit
+                    mipmap:                 true
+                    smooth:                 true
+                    source:                 "/InstrumentValueIcons/add-outline.svg"
+                    color:                  _root._textColor
+                    // The plan's last flown-through item has no leg after it to split, so the control
+                    // is dropped there rather than shown doing nothing
+                    visible:                _root.isCurrentItem && _root.gridView
+                                                && _root.gridView.hasLegAfter(_root.visualItemIndex)
+
+                    QGCMouseArea {
+                        objectName: "localGrid_rowInsertAfterTouchArea"
+                        fillItem:   parent
+                        onClicked:  _root.gridView.insertWaypointBetween(_root.visualItemIndex)
+                    }
+                }
+
+                QGCColoredImage {
+                    objectName:             "localGrid_rowDuplicateButton"
+                    Layout.preferredWidth:  _root._iconTouchSize
+                    Layout.preferredHeight: _root._iconSize
+                    Layout.alignment:       Qt.AlignVCenter
+                    sourceSize.height:      _root._iconSize
+                    fillMode:               Image.PreserveAspectFit
+                    mipmap:                 true
+                    smooth:                 true
+                    source:                 "/InstrumentValueIcons/duplicate.svg"
+                    color:                  _root._textColor
+                    // Not offered for the takeoff: only a plan's first item may be one, and the same
+                    // rule that refuses a second takeoff refuses a duplicate of it
+                    visible:                _root.isCurrentItem && _root.gridView
+                                                && !_root.gridView.waypointIsPinned(_root.visualItemIndex)
+
+                    QGCMouseArea {
+                        objectName: "localGrid_rowDuplicateTouchArea"
+                        fillItem:   parent
+                        onClicked:  _root.gridView.duplicateItem(_root.visualItemIndex)
+                    }
+                }
+
                 // On the trailing edge, away from the leading edge the row is tapped on to open and
                 // close it. A delete control under the thumb that is already opening rows is one
                 // gloved mis-tap away from taking a waypoint out of the plan.
                 QGCColoredImage {
                     objectName:             "localGrid_rowDeleteButton"
-                    Layout.preferredWidth:  _root._iconSize
+                    Layout.preferredWidth:  _root._iconTouchSize
                     Layout.preferredHeight: _root._iconSize
                     Layout.alignment:       Qt.AlignVCenter
                     sourceSize.height:      _root._iconSize
@@ -260,79 +296,6 @@ Rectangle {
             Layout.fillWidth:       true
             Layout.margins:         _root._margins
             visible:                _root.isCurrentItem
-        }
-
-        // Building a pattern one leg at a time means the common edit is splitting a leg or repeating
-        // a point, and both belong at the item's own foot rather than in the header (already full:
-        // the number disc, the type combo, the delete icon) or in LocalGridWaypointEditor, whose own
-        // opening comment restricts it to measurements alone. Only on the open row, the same rule
-        // the delete icon already follows -- a second row of controls on every collapsed line is a
-        // gloved finger's mis-tap waiting to happen.
-        RowLayout {
-            id:                 actionRow
-            Layout.fillWidth:   true
-            Layout.margins:     _root._margins
-            Layout.topMargin:   0
-            visible:            _root.isCurrentItem
-            spacing:            ScreenTools.defaultFontPixelWidth / 2
-
-            QGCButton {
-                objectName:         "localGrid_rowInsertAfterButton"
-                Layout.fillWidth:   true
-                pointSize:          ScreenTools.smallFontPointSize
-                text:               qsTr("Insert after")
-                // The plan's last flown-through item has no leg after it to split
-                visible:            _root.gridView && _root.gridView.hasLegAfter(_root.visualItemIndex)
-                onClicked:          _root.gridView.insertWaypointBetween(_root.visualItemIndex)
-            }
-
-            QGCButton {
-                objectName:         "localGrid_rowDuplicateButton"
-                Layout.fillWidth:   true
-                pointSize:          ScreenTools.smallFontPointSize
-                text:               qsTr("Duplicate")
-                // Not offered for the takeoff: only a plan's first item may be one, and a duplicate
-                // of it is refused by the same rule that stops a second one being added anywhere
-                visible:            _root.gridView && !_root.gridView.waypointIsPinned(_root.visualItemIndex)
-                onClicked:          _root.gridView.duplicateItem(_root.visualItemIndex)
-            }
-        }
-
-        // Reordering, as two buttons rather than as a drag.
-        //
-        // The plan called for drag-to-reorder. Measured against what this list actually is, buttons
-        // win: the rows live inside a QGCFlickable that scrolls vertically, and a vertical drag on a
-        // row is the same gesture as a scroll of the list holding it. Resolving that means a
-        // press-and-hold before the drag takes -- which is the gesture 6a just gave to placing a
-        // waypoint on the grid, so it would mean two different things one finger apart. Two buttons
-        // have no gesture to lose, size themselves to a touch target through QGCButton, grey out at
-        // the ends of the range instead of failing silently, and can be tested by pressing them.
-        //
-        // Only on the open row, the same rule the delete icon and the two buttons above follow.
-        RowLayout {
-            Layout.fillWidth:   true
-            Layout.margins:     _root._margins
-            Layout.topMargin:   0
-            visible:            _root.isCurrentItem && _root._canReorder
-            spacing:            ScreenTools.defaultFontPixelWidth / 2
-
-            QGCButton {
-                objectName:         "localGrid_rowMoveUpButton"
-                Layout.fillWidth:   true
-                pointSize:          ScreenTools.smallFontPointSize
-                text:               qsTr("Move up")
-                enabled:            _root._canMoveUp
-                onClicked:          _root.gridView.moveWaypointByRows(_root.visualItemIndex, -1)
-            }
-
-            QGCButton {
-                objectName:         "localGrid_rowMoveDownButton"
-                Layout.fillWidth:   true
-                pointSize:          ScreenTools.smallFontPointSize
-                text:               qsTr("Move down")
-                enabled:            _root._canMoveDown
-                onClicked:          _root.gridView.moveWaypointByRows(_root.visualItemIndex, 1)
-            }
         }
     }
 

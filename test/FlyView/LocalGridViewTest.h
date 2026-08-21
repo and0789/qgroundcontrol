@@ -88,6 +88,7 @@ private slots:
     void _armedTool_chainsSeveralPlacementsInARow_test();
     void _everyArmableToolPlacesSomething_test();
     void _theListFollowsTheItemBeingFlownTo_test();
+    void _rowEditIconsAppearOnlyWhereTheEditIsAllowed_test();
     void _backgroundNotesWaitToBeAskedFor_test();
     void _planEditMode_dropsTheArmedToolWhenItEnds_test();
     void _planEditMode_endsWhenTheGridIsHidden_test();
@@ -117,12 +118,6 @@ private slots:
     void _undoRestoresTheAltitudesOneTapReplaced_test();
     void _undoIsDroppedWhenThePlanArrivesFromTheVehicle_test();
     void _undoRemembersOnlyTheLastAction_test();
-
-    // Bagian 7: reordering (Lampiran I)
-    void _reorderMovesAnItemUpAndDownThePlan_test();
-    void _takeoffAndMissionEndAreNotReorderable_test();
-    void _reorderCannotCrossTheTakeoffOrTheEnding_test();
-    void _undoPutsAReorderedItemBack_test();
 
     // Regression: a waypoint carrying a speed spans two mission sequence numbers
     void _insertAppendsWhenAnItemSpansTwoSequenceNumbers_test();
