@@ -1922,8 +1922,10 @@ Item {
         if (planSyncInProgress) {
             return qsTr("The plan can be moved once the transfer finishes.")
         }
+        // Nothing to say while it is armed. The panel this is read in stands down entirely rather than
+        // showing the control refusing, so there is no line under it to write.
         if (vehicleArmed) {
-            return qsTr("The plan can be moved once the aircraft is disarmed. Moving it under an aircraft already flying it changes where it is going mid-flight.")
+            return ""
         }
         if (!positionValid) {
             return qsTr("The plan can be moved once the aircraft is reporting a position.")

@@ -98,10 +98,19 @@ QRectF LocalGridResponsiveLayoutTest::_windowRectFor(const QString &objectName)
 /// The most anchor-dependent panel is watched for settling -- missionActions, which is positioned off
 /// the scale bar's measured height as well as the window's edges -- because every panel here reflows
 /// in the same polish pass; there is nothing to gain from watching more than one.
+///
+/// The scale bar stands in when that panel is not on screen. missionActions is between-flights work
+/// and takes itself off the grid while the aircraft is armed, and a settle helper that reported "the
+/// layout never settled" for a panel that had correctly gone away would blame the layout for a state
+/// the view is supposed to have. The scale bar is anchored to the same corner and reflows in the same
+/// pass, so it answers the same question.
 bool LocalGridResponsiveLayoutTest::_resizeAndSettle(int width, int height)
 {
     _window->resize(width, height);
-    QQuickItem *const settleTarget = findVisibleItem(_rootItem, QStringLiteral("localGrid_missionActions"), 1000);
+    QQuickItem *settleTarget = findVisibleItem(_rootItem, QStringLiteral("localGrid_missionActions"), 1000);
+    if (settleTarget == nullptr) {
+        settleTarget = findVisibleItem(_rootItem, QStringLiteral("localGrid_scaleBar"), 1000);
+    }
     if (settleTarget == nullptr) {
         return false;
     }
@@ -174,11 +183,13 @@ void LocalGridResponsiveLayoutTest::_panelsStayInsideThePhoneWindow_test()
 /// No two of the checked panels are allowed to cover each other. A control hidden under another
 /// panel is indistinguishable, from the operator's seat, from a control that was never built.
 ///
-/// Checked with the vehicle armed, not disarmed: missionActions carries no cap on how tall it grows,
-/// and armed is the state that makes it tallest -- the between-flights controls are locked while
-/// armed, and the reason given for that ("Only on the ground. A correction is a step change...") is
-/// the longest wrapped label the panel ever shows. Disarmed and empty, the panel is short enough that
-/// it does not yet collide with anything; armed is the realistic state this is checked against.
+/// Checked disarmed, which is now the state that makes missionActions tallest -- and the only one in
+/// which it is on screen at all. It used to be checked armed, on the opposite reasoning: the panel
+/// carries no cap on how tall it grows, and armed added the longest wrapped label it ever showed (the
+/// reason its between-flights controls were locked). That whole panel is between-flights work and now
+/// stands down while the aircraft is armed, so armed is the state with the least on this edge, not
+/// the most. Disarmed it carries every control it has, which is what the tool strip above it can
+/// collide with.
 void LocalGridResponsiveLayoutTest::_panelsDoNotOverlapAtAnySize_test()
 {
     SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
@@ -191,9 +202,6 @@ void LocalGridResponsiveLayoutTest::_panelsDoNotOverlapAtAnySize_test()
 
             QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
             QVERIFY2(gridView, "the local grid never became visible with the setting on");
-
-            vehicle->setArmedShowError(true);
-            QTRY_VERIFY_WITH_TIMEOUT(vehicle->armed(), TestTimeout::longMs());
 
             for (const WindowSize &size : kSizesToCheck) {
                 QVERIFY2(_resizeAndSettle(size.width, size.height),

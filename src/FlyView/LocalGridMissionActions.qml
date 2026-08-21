@@ -26,6 +26,7 @@ Rectangle {
     /// the top of the view or into the tool strip that shares this corner. Zero for no limit.
     property real maximumHeight: 0
 
+
     /// Folded away to leave the grid clear, keeping the title so it can be found again -- the same
     /// idiom the readout and the mission list already use, rather than a drawer of its own.
     ///
@@ -83,7 +84,16 @@ Rectangle {
     color:          qgcPal.window
     opacity:        0.9
     radius:         ScreenTools.defaultFontPixelHeight / 4
-    visible:        _hasController
+    // On screen while there is a plan controller behind it, and only while the aircraft is disarmed.
+    //
+    // Everything this panel holds is work done between flights. Upload is refused outright while the
+    // vehicle is flying a mission -- ArduPilot rewrites its mission store in place -- Load and Clear
+    // would leave the grid drawing a pattern the aircraft is not flying, and neither after-flight
+    // control can be used in the air at all. What would be left in the air is a titled box holding a
+    // warning about what to lower before flying and a transfer bar for a transfer that cannot start,
+    // which reads as a panel that has failed rather than as one with nothing to do. It comes back on
+    // disarm with the operator's own fold left as they set it.
+    visible:        _hasController && !_vehicleArmed
 
     property real _margins: ScreenTools.defaultFontPixelHeight / 3
 
@@ -170,22 +180,10 @@ Rectangle {
     readonly property bool _canStandOnOrigin: (_vehicle !== null) && _originKnown && !_vehicleArmed
                                                 && !_awaitingOriginReply
 
-    /// Why it cannot be done right now, or empty while it can
-    function _cannotStandOnOriginReason() {
-        if (_canStandOnOrigin || _awaitingOriginReply) {
-            return ""
-        }
-        if (!_vehicle) {
-            return qsTr("No vehicle connected.")
-        }
-        if (!_originKnown) {
-            return qsTr("The vehicle has no estimator origin yet, so there is no frame to state a position inside.")
-        }
-        if (_vehicleArmed) {
-            return qsTr("Only on the ground. A correction is a step change in where the aircraft believes it is, and a mode holding position reads that as having been blown off course — it flies the whole of it back at once.")
-        }
-        return ""
-    }
+    /// The button carries no line saying why it is shut, because there is no case left in which it is
+    /// shut and on screen. It appears only once the estimator has an origin -- which needs a vehicle
+    /// -- and the whole after-flight section stands down while that vehicle is armed. What is left is
+    /// a button that is either pressable or already correcting, and its own label says which.
 
     function _standOnOrigin() {
         if (!_canStandOnOrigin) {
@@ -455,6 +453,16 @@ Rectangle {
             implicitWidth:      titleRow.implicitWidth
             implicitHeight:     titleRow.implicitHeight
 
+            // Declared before the row rather than after it, so the controls in the row are the ones
+            // on top. A mouse area covering the whole header and declared last takes every press in
+            // it, including the presses meant for the help switch beside the title -- which then
+            // folds the panel instead of answering.
+            QGCMouseArea {
+                objectName: "localGrid_missionActionsHeader"
+                fillItem:   parent
+                onClicked:  _root.collapsed = !_root.collapsed
+            }
+
             RowLayout {
                 id:                     titleRow
                 anchors.left:           parent.left
@@ -473,16 +481,11 @@ Rectangle {
 
                 QGCLabel {
                     Layout.alignment:   Qt.AlignVCenter
+                    Layout.fillWidth:   true
                     font.pointSize:     ScreenTools.smallFontPointSize
                     font.bold:          true
                     text:               qsTr("Mission")
                 }
-            }
-
-            QGCMouseArea {
-                objectName: "localGrid_missionActionsHeader"
-                fillItem:   parent
-                onClicked:  _root.collapsed = !_root.collapsed
             }
         }
 
@@ -600,92 +603,96 @@ Rectangle {
 
                 // Everything above moves a plan between the grid, a file and the vehicle. Everything below is
                 // what an operator does between two flights, and the two were reading as one undifferentiated
-                // stack of buttons. Named so the post-flight controls can be found as a group -- which is
-                // when they are looked for.
-                QGCLabel {
-                    Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
-                    font.pointSize:     ScreenTools.smallFontPointSize
-                    font.bold:          true
-                    text:               qsTr("After a flight")
-                }
+                // stack of buttons.
+                //
+                // Stood down while the aircraft is armed. The panel as a whole goes with it today, so this
+                // is not what takes the section off the screen -- it is the section keeping the rule that
+                // belongs to it rather than borrowing the panel's. Neither control here can be used in the
+                // air whatever else is on show: a position correction is a step change the position
+                // controller flies straight out, and moving the plan under an aircraft already flying it
+                // changes where it is going mid-flight. The resume warning below has always said so this
+                // way; this is the rest of the section saying it too.
+                ColumnLayout {
+                    objectName:             "localGrid_afterFlightSection"
+                    Layout.fillWidth:       true
+                    spacing:                bodyLayout.spacing
+                    visible:                !_root._vehicleArmed
 
-                // First of the two remedies for a drifted frame, because it repairs the estimate rather than
-                // working around it. One press: there is nothing here to confirm that the button does not
-                // already say.
-                QGCButton {
-                    objectName:         "localGrid_standOnOriginButton"
-                    Layout.fillWidth:   true
-                    visible:            _root._originKnown
-                    text:               _root._awaitingOriginReply
-                                            ? qsTr("Correcting…")
-                                            : qsTr("Vehicle is on the origin")
-                    enabled:            _root._canStandOnOrigin
-                    onClicked:          _root._standOnOrigin()
-                }
+                    QGCLabel {
+                        Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 3
+                        font.pointSize:     ScreenTools.smallFontPointSize
+                        font.bold:          true
+                        text:               qsTr("After a flight")
+                    }
 
-                QGCLabel {
-                    objectName:             "localGrid_standOnOriginReason"
-                    Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 28
-                    visible:                _root._originKnown && (_root._cannotStandOnOriginReason() !== "")
-                    wrapMode:               Text.WordWrap
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    color:                  qgcPal.colorGrey
-                    text:                   _root._cannotStandOnOriginReason()
-                }
+                    // First of the two remedies for a drifted frame, because it repairs the estimate rather than
+                    // working around it. One press: there is nothing here to confirm that the button does not
+                    // already say.
+                    QGCButton {
+                        objectName:         "localGrid_standOnOriginButton"
+                        Layout.fillWidth:   true
+                        visible:            _root._originKnown
+                        text:               _root._awaitingOriginReply
+                                                ? qsTr("Correcting…")
+                                                : qsTr("Vehicle is on the origin")
+                        enabled:            _root._canStandOnOrigin
+                        onClicked:          _root._standOnOrigin()
+                    }
 
-                // Names the distance that was repaired, not just that something happened. On a flight flown
-                // to measure how far an estimator wanders, that number is the result -- and it is gone the
-                // moment the correction lands, so this is the only place it can be read.
-                QGCLabel {
-                    objectName:             "localGrid_standOnOriginResult"
-                    Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 28
-                    visible:                _root._originReplied
-                    wrapMode:               Text.WordWrap
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    color:                  _root._originAccepted ? qgcPal.colorGreen : qgcPal.colorOrange
-                    text:                   _root._originAccepted
-                                                ? qsTr("Position corrected. The estimator had drifted %1.")
-                                                    .arg(_root._offsetText(_root._correctedNorth, _root._correctedEast))
-                                                : _root._originReason
-                }
+                    // Names the distance that was repaired, not just that something happened. On a flight flown
+                    // to measure how far an estimator wanders, that number is the result -- and it is gone the
+                    // moment the correction lands, so this is the only place it can be read.
+                    QGCLabel {
+                        objectName:             "localGrid_standOnOriginResult"
+                        Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 28
+                        visible:                _root._originReplied
+                        wrapMode:               Text.WordWrap
+                        font.pointSize:         ScreenTools.smallFontPointSize
+                        color:                  _root._originAccepted ? qgcPal.colorGreen : qgcPal.colorOrange
+                        text:                   _root._originAccepted
+                                                    ? qsTr("Position corrected. The estimator had drifted %1.")
+                                                        .arg(_root._offsetText(_root._correctedNorth, _root._correctedEast))
+                                                    : _root._originReason
+                    }
 
-                // The fallback, under the repair it falls back from. It is the one control here that rewrites
-                // the pattern rather than moving it between the grid and the vehicle.
-                QGCButton {
-                    objectName:         "localGrid_flyFromHereButton"
-                    Layout.fillWidth:   true
-                    text:               qsTr("Fly this plan from here")
-                    // Shut while armed as well as while a transfer runs. Moving the plan under an aircraft
-                    // that is already flying it changes where it is going mid-flight, which is not what
-                    // anyone reaching for this between flights means by it.
-                    enabled:            _root._canReanchor && !_root._syncing
-                    onClicked:          _root._reanchor()
-                }
+                    // The fallback, under the repair it falls back from. It is the one control here that rewrites
+                    // the pattern rather than moving it between the grid and the vehicle.
+                    QGCButton {
+                        objectName:         "localGrid_flyFromHereButton"
+                        Layout.fillWidth:   true
+                        text:               qsTr("Fly this plan from here")
+                        // Shut while armed as well as while a transfer runs. Moving the plan under an aircraft
+                        // that is already flying it changes where it is going mid-flight, which is not what
+                        // anyone reaching for this between flights means by it.
+                        enabled:            _root._canReanchor && !_root._syncing
+                        onClicked:          _root._reanchor()
+                    }
 
-                // Why it is shut, for the case an operator meets after every flight. A button that goes
-                // dead with no reason teaches them the feature is broken.
-                QGCLabel {
-                    objectName:             "localGrid_flyFromHereReason"
-                    Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 28
-                    visible:                _root._reanchorBlockedReason !== ""
-                    wrapMode:               Text.WordWrap
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    color:                  qgcPal.colorGrey
-                    text:                   _root._reanchorBlockedReason
-                }
+                    // Why it is shut, for the case an operator meets after every flight. A button that goes
+                    // dead with no reason teaches them the feature is broken.
+                    QGCLabel {
+                        objectName:             "localGrid_flyFromHereReason"
+                        Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 28
+                        visible:                _root._reanchorBlockedReason !== ""
+                        wrapMode:               Text.WordWrap
+                        font.pointSize:         ScreenTools.smallFontPointSize
+                        color:                  qgcPal.colorGrey
+                        text:                   _root._reanchorBlockedReason
+                    }
 
-                // What the move did, and the half of it that is still outstanding. The pattern shifting on
-                // the grid is easy to miss, and a plan moved but not sent is the plan the aircraft already
-                // has -- which is the one the operator was trying to get away from.
-                QGCLabel {
-                    objectName:             "localGrid_flyFromHereResult"
-                    Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 28
-                    visible:                _root._reanchoredItemCount >= 0
-                    wrapMode:               Text.WordWrap
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    color:                  qgcPal.colorGreen
-                    text:                   qsTr("%1 item(s) moved. Upload the plan to fly it from here.")
-                                                .arg(_root._reanchoredItemCount)
+                    // What the move did, and the half of it that is still outstanding. The pattern shifting on
+                    // the grid is easy to miss, and a plan moved but not sent is the plan the aircraft already
+                    // has -- which is the one the operator was trying to get away from.
+                    QGCLabel {
+                        objectName:             "localGrid_flyFromHereResult"
+                        Layout.maximumWidth:    ScreenTools.defaultFontPixelWidth * 28
+                        visible:                _root._reanchoredItemCount >= 0
+                        wrapMode:               Text.WordWrap
+                        font.pointSize:         ScreenTools.smallFontPointSize
+                        color:                  qgcPal.colorGreen
+                        text:                   qsTr("%1 item(s) moved. Upload the plan to fly it from here.")
+                                                    .arg(_root._reanchoredItemCount)
+                    }
                 }
 
                 // Where the aircraft would pick this plan up if it were started as it stands. ArduPilot

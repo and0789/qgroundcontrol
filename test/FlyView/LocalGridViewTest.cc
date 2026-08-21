@@ -3897,6 +3897,82 @@ void LocalGridViewTest::_rowEditIconsAppearOnlyWhereTheEditIsAllowed_test()
              "the row that was closed must have taken its icons with it");
 }
 
+/// Everything the plan panel holds is work done between flights. Upload is refused outright while the
+/// vehicle is flying a mission, Load and Clear would leave the grid drawing a pattern the aircraft is
+/// not flying, and neither after-flight control can be used in the air at all -- a position
+/// correction is a step change the position controller flies straight out, and moving the plan under
+/// an aircraft already flying it changes where it is going mid-flight.
+///
+/// So the panel goes, rather than standing there refusing. The resume warning inside it has always
+/// stood itself down this way; this is the rest of the panel following it, and it comes back the
+/// moment the aircraft is disarmed.
+void LocalGridViewTest::_thePlanPanelStandsDownWhileArmed_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    plan->setProperty("missionController", QVariant::fromValue(stub.get()));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    // A pattern to move, so the section has something to offer in the first place
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    const auto shown = [gridItem](const QString &name) {
+        const QList<QQuickItem *> found = collectItemsNamed(gridItem, name);
+        return !found.isEmpty() && found.first()->isVisible();
+    };
+
+    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_missionActions")), TestTimeout::mediumMs());
+    QVERIFY(shown(QStringLiteral("localGrid_afterFlightSection")));
+    QVERIFY(shown(QStringLiteral("localGrid_standOnOriginButton")));
+    QVERIFY(shown(QStringLiteral("localGrid_flyFromHereButton")));
+    QVERIFY(shown(QStringLiteral("localGrid_uploadMissionButton")));
+
+    vehicle()->setArmedShowError(true);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
+
+    QTRY_VERIFY_WITH_TIMEOUT(!shown(QStringLiteral("localGrid_missionActions")), TestTimeout::mediumMs());
+    QVERIFY2(!shown(QStringLiteral("localGrid_afterFlightSection")),
+             "a control that cannot be used in the air was still on the grid in the air");
+    QVERIFY2(!shown(QStringLiteral("localGrid_standOnOriginButton")), "and so was the button in it");
+    QVERIFY2(!shown(QStringLiteral("localGrid_flyFromHereButton")), "and the one under that");
+
+    // The plan's own file and transfer controls go with them: none of them is something to reach for
+    // over an aircraft that is flying
+    QVERIFY(!shown(QStringLiteral("localGrid_uploadMissionButton")));
+    QVERIFY(!shown(QStringLiteral("localGrid_downloadMissionButton")));
+    QVERIFY(!shown(QStringLiteral("localGrid_clearMissionButton")));
+
+    vehicle()->setArmedShowError(false);
+    QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_afterFlightSection")), TestTimeout::mediumMs());
+    QVERIFY2(shown(QStringLiteral("localGrid_flyFromHereButton")),
+             "the section is named for the moment it came back for");
+    QVERIFY(shown(QStringLiteral("localGrid_uploadMissionButton")));
+}
+
 /// The switch that puts the background notes back is inside the mission list's header, and the whole
 /// of that header is a click target that folds the panel. The header's own mouse area was declared
 /// after the row holding the switch, which puts it on top of the switch: every press meant for the
