@@ -135,8 +135,17 @@ void PlanViewLayerUITest::_testEditingLayerSwitching()
     }, QStringLiteral("2.2 takeoff added"));
     if (QTest::currentTestFailed()) return;
 
+    // The auto-expanded mission group now sits between the mission header and
+    // the fence/rally headers, so unlike 2.1 one scroll cannot reach all three.
+    // Scroll each header into existence immediately before checking it.
+    QVERIFY2(findVisibleItemScrolled(QLatin1String(kMissionHeader), QStringLiteral("planView_planTree")),
+             "Mission group header not found");
     verifyEnabled(QLatin1String(kMissionHeader), true, QStringLiteral("2.2 takeoff added"));
+    QVERIFY2(findVisibleItemScrolled(QLatin1String(kFenceHeader), QStringLiteral("planView_planTree")),
+             "GeoFence group header not found");
     verifyEnabled(QLatin1String(kFenceHeader),   true, QStringLiteral("2.2 takeoff added"));
+    QVERIFY2(findVisibleItemScrolled(QLatin1String(kRallyHeader), QStringLiteral("planView_planTree")),
+             "Rally group header not found");
     verifyEnabled(QLatin1String(kRallyHeader),   true, QStringLiteral("2.2 takeoff added"));
     if (QTest::currentTestFailed()) return;
 
