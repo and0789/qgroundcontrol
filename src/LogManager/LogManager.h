@@ -60,6 +60,9 @@ public:
     [[nodiscard]] static bool hasCapturedCritical(const QString& category);
     [[nodiscard]] static bool hasCapturedUncategorizedMessage();
     static void captureIfEnabled(QtMsgType type, const QMessageLogContext& context, const QString& msg);
+    /// Records a message into the capture buffer and the QML log model.
+    /// Shared with the unit test handler, which QTest would otherwise leave bypassed.
+    static void recordMessage(QtMsgType type, const QMessageLogContext& context, const QString& msg);
 
 signals:
     void hasErrorChanged();

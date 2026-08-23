@@ -704,15 +704,17 @@ int UnitTest::run(QStringView singleTest, const QString& outputFile, TestLabels 
 // Our LogManager::msgHandler is therefore NOT called during test execution.
 // We work around this by installing a thin wrapper ON TOP of QTest's handler
 // inside initTestCase() and restoring it in cleanupTestCase().
-// The wrapper captures messages for the test log‑capture API and then chains
-// to QTest's handler so QWARN / QCRITICAL output keeps working.
+// The wrapper records messages the way LogManager::msgHandler would — into the
+// test log‑capture API and into the QML log model — and then chains to QTest's
+// handler so QWARN / QCRITICAL output keeps working.
 
 static std::atomic<QtMessageHandler> s_qtestHandler{nullptr};
 
 static void testCaptureHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
-    // Capture for unit‑test introspection
-    LogManager::captureIfEnabled(type, context, msg);
+    // Record for unit‑test introspection and for the QML log model. Routing
+    // through LogManager keeps the model fed while QTest owns the handler.
+    LogManager::recordMessage(type, context, msg);
 
     // Chain to QTest's handler for normal test output
     const QtMessageHandler handler = s_qtestHandler.load(std::memory_order_acquire);

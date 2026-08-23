@@ -43,6 +43,20 @@ static QElapsedTimer s_elapsedTimer = []() { QElapsedTimer t; t.start(); return 
 static QtMessageHandler s_defaultHandler = nullptr;
 static std::atomic<bool> s_echoToStderr{false};
 
+void LogManager::recordMessage(QtMsgType type, const QMessageLogContext& context, const QString& msg)
+{
+    // Suppress noisy Qt Quick internals (also matches qt.quickcontrols, etc.)
+    if (context.category && std::strncmp(context.category, "qt.quick", 8) == 0) {
+        return;
+    }
+
+    LogManager::captureIfEnabled(type, context, msg);
+
+    if (auto* inst = s_instance.load(std::memory_order_acquire)) {
+        inst->log(type, context, msg);
+    }
+}
+
 void LogManager::msgHandler(QtMsgType type, const QMessageLogContext& context, const QString& msg)
 {
     auto* inst = s_instance.load(std::memory_order_acquire);
@@ -60,13 +74,7 @@ void LogManager::msgHandler(QtMsgType type, const QMessageLogContext& context, c
         return;
     }
 
-    // Suppress noisy Qt Quick internals (also matches qt.quickcontrols, etc.)
-    if (context.category && std::strncmp(context.category, "qt.quick", 8) == 0) {
-        return;
-    }
-
-    LogManager::captureIfEnabled(type, context, msg);
-    inst->log(type, context, msg);
+    LogManager::recordMessage(type, context, msg);
 }
 
 // ---------------------------------------------------------------------------
