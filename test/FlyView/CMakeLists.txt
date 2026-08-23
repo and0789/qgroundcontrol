@@ -31,7 +31,10 @@ add_qgc_test(LocalGridAltitudeLimitTest LABELS Integration Vehicle)
 add_qgc_test(LocalGridProjectionTest LABELS Unit)
 add_qgc_test(LocalGridTrailTest LABELS Unit)
 add_qgc_test(LocalGridTransformTest LABELS Unit)
-add_qgc_test(LocalGridViewTest LABELS Integration Vehicle)
+# 94 subtests, each building QML in its own window: ~110s locally against the
+# 120s Integration default, so an unrelated rebuild or a busy machine is enough
+# to trip it. EXTENDED also scales to 360s under sanitizers.
+add_qgc_test(LocalGridViewTest LABELS Integration Vehicle TIMEOUT ${QGC_TEST_TIMEOUT_EXTENDED})
 add_qgc_test(NonGpsFlowHealthTest LABELS Integration Vehicle)
 add_qgc_test(NonGpsPreFlightChecksTest LABELS Integration Vehicle)
 add_qgc_test(NonGpsStatusPanelTest LABELS Integration Vehicle)
