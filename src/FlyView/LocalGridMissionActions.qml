@@ -104,6 +104,12 @@ Rectangle {
 
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
+    // Same reason as LocalGridMissionList: the actions body scrolls when the panel is capped, and a
+    // Flickable at its bounds lets the wheel through to the grid's zoom underneath.
+    DeadMouseArea {
+        anchors.fill: parent
+    }
+
     function _confirm(title, message, action) {
         QGroundControl.showMessageDialog(_root, title, message, Dialog.Yes | Dialog.Cancel, action)
     }
