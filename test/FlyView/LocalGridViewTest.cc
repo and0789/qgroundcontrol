@@ -4064,13 +4064,30 @@ void LocalGridViewTest::_theFoldedReadoutStaysWideEnoughToFind_test()
     QVERIFY(title);
 
     // Open first, which is where telemetry leaves it, so the fold below is the operator's own
+    // The button row is the widest thing the fold hides, so "the panel has caught up with being
+    // open" is exactly "the panel is at least as wide as that row". Waited on rather than read once
+    // after the title reports a width: the panel reaches its own width on a later polish pass than
+    // the one that sizes the labels, and an openWidth sampled in between is a mid-layout number that
+    // the folded width below can then beat for no better reason than timing.
+    QQuickItem* const viewButtons =
+        collectItemsNamed(readoutItem, QStringLiteral("localGrid_readoutViewButtons")).value(0);
+    QVERIFY(viewButtons);
+
     readout->setProperty("collapsed", false);
     QTRY_VERIFY_WITH_TIMEOUT(title->implicitWidth() > 0, TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        viewButtons->isVisible() && (viewButtons->width() > 0) && (readoutItem->width() >= viewButtons->width()),
+        TestTimeout::mediumMs());
     const qreal openWidth = readoutItem->width();
     QVERIFY(openWidth > 0);
 
     readout->setProperty("collapsed", true);
+    QTRY_VERIFY_WITH_TIMEOUT(!viewButtons->isVisible(), TestTimeout::mediumMs());
     QTRY_VERIFY_WITH_TIMEOUT(readoutItem->width() < openWidth, TestTimeout::mediumMs());
+    QVERIFY2(readoutItem->width() < openWidth,
+             qPrintable(QStringLiteral("folded to %1 from an open %2 -- folding freed no width at all")
+                            .arg(readoutItem->width())
+                            .arg(openWidth)));
 
     QVERIFY2(readoutItem->width() >= title->implicitWidth(),
              "the folded panel is narrower than its own name, so there is nothing on the grid to aim at");
@@ -5470,4 +5487,63 @@ void LocalGridViewTest::_insertAppendsWhenAnItemSpansTwoSequenceNumbers_test()
              "the first waypoint must stay first");
     QVERIFY2(qAbs(points.property(2).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05,
              "the second waypoint must land after it, not in front of the whole plan");
+}
+
+/// The readout is the top of the right-hand column, and everything below it -- the plan list, the
+/// totals -- is anchored under it and capped by whatever height is left down to the bottom edge. So
+/// an open readout is not merely a panel taking room: it is the plan list unable to open far enough
+/// to read, which is what an operator building a pattern is looking at the column for.
+///
+/// It stands open while it is the job in hand, which is only ever before an origin exists, and gets
+/// out of the way once it is not. Building a plan is the other case: the mode says outright what the
+/// operator is doing, and it is not reading position.
+void LocalGridViewTest::_theReadoutStandsAsideOnceTheFrameIsSetAndWhileAPlanIsBuilt_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+
+    MAKE_GRID_VIEW(gridView);
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto* const gridItem = qobject_cast<QQuickItem*>(gridView.get());
+    QVERIFY(gridItem);
+    QObject* const readout = gridItem->findChild<QObject*>(QStringLiteral("localGrid_readout"));
+    QVERIFY2(readout, "the readout has to be findable, or nothing below is testing it");
+
+    // No origin yet, and a position arriving: the one state where this panel is the task rather than
+    // a reference, so it takes the column and opens itself
+    QVERIFY2(!gridView->property("originKnown").toBool(), "this test starts before there is an origin");
+    sendLocalPosition(vehicle(), 12.0F, -5.0F, -2.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("positionValid").toBool(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(!readout->property("collapsed").toBool(), TestTimeout::mediumMs());
+
+    // Setting the frame ends that. The numbers stop being the thing being worked on, and the header
+    // goes on carrying the range and bearing a return leg is flown on either way.
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("originKnown").toBool(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(readout->property("collapsed").toBool(), TestTimeout::mediumMs());
+
+    QObject* const summary = gridItem->findChild<QObject*>(QStringLiteral("localGrid_readoutSummary"));
+    QVERIFY(summary);
+    QVERIFY2(summary->property("visible").toBool(),
+             "folded, the pair a return leg is flown on has to still be on the header");
+
+    // Opened again by hand -- the operator's call, and nothing may take it back off them while the
+    // state that folded it has not changed
+    readout->setProperty("collapsed", false);
+    QVERIFY(!readout->property("collapsed").toBool());
+
+    // Entering plan mode folds it, because the column it heads is where the plan is read
+    gridView->setProperty("planEditMode", true);
+    QTRY_VERIFY_WITH_TIMEOUT(readout->property("collapsed").toBool(), TestTimeout::mediumMs());
+
+    // And leaving the mode does not shove it back over the grid: an unfold here would undo a fold the
+    // operator may well have made for themselves
+    readout->setProperty("collapsed", false);
+    gridView->setProperty("planEditMode", false);
+    QVERIFY2(!readout->property("collapsed").toBool(),
+             "leaving plan mode refolded the panel the operator had just opened");
 }

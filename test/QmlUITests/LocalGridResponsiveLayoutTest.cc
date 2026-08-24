@@ -45,21 +45,25 @@ struct WindowSize {
     int height;
 
     /// The most the standing panels may cover of this size, in _chromeStaysWithinBudgetAtAnySize_test.
-    /// Unused by the other tests here. 15% everywhere except phone landscape, which gets 18% -- of the
-    /// four sizes it has the least height to work with (400px, against 800/768/900 for the others),
-    /// and the readout panel is expected to be open there: it opens itself whenever live telemetry
-    /// arrives (see LocalGridReadout.qml's on_ValidChanged) and stays open independent of window
-    /// size, which is the correct behaviour for a panel whose job is showing where the aircraft is.
-    /// Folding it to chase one more size under the same flat number would mean hiding live position
-    /// data on exactly the size a phone is most likely to actually be held in.
+    /// Unused by the other tests here. 15% everywhere except phone landscape, which gets 18% -- of
+    /// these sizes it has the least height to work with (400px, against 800/768/800/900 for the
+    /// others), and these tests give the vehicle an origin, which is the state the readout folds
+    /// itself in (see LocalGridReadout.qml's _standOpen). What is left standing there is the header
+    /// and whatever warnings the vehicle is raising, and on 400px of height that is still a larger
+    /// share of the window than the same panel is anywhere else.
     double chromeBudgetPercent;
 };
 
-/// Four points on the shape the app actually has to run in, not just the desktop it was built on.
+/// Points on the shape the app actually has to run in, not just the desktop it was built on.
+///
+/// The 10-inch entry is a real ground station rather than a category: 1280x800 is the size this
+/// feature is flown on, and it sits in the gap the other four leave -- wider than the tablet but
+/// shorter than the desktop, which is the combination the right-hand column has the least room in.
 const QList<WindowSize> kSizesToCheck = {
     {.name = "phone portrait", .width = 400, .height = 800, .chromeBudgetPercent = 15.0},
     {.name = "phone landscape", .width = 800, .height = 400, .chromeBudgetPercent = 18.0},
     {.name = "tablet", .width = 1024, .height = 768, .chromeBudgetPercent = 15.0},
+    {.name = "10-inch ground station", .width = 1280, .height = 800, .chromeBudgetPercent = 15.0},
     {.name = "desktop", .width = 1600, .height = 900, .chromeBudgetPercent = 15.0},
 };
 

@@ -120,15 +120,44 @@ Rectangle {
         return (rounded + 0).toFixed(1) + " " + _transform.displayUnits
     }
 
-    /// Opens itself when telemetry starts arriving and folds away again when there is none, so the
-    /// panel stands in front of the grid only while it has something to say. A toggle in between is
-    /// the operator's and is left alone.
-    property bool _wasValid: false
+    /// True while this panel is the job in hand rather than a reference: telemetry is arriving, and
+    /// the frame those numbers are measured in has not been set yet. That is the one state where
+    /// this panel is what the operator has to deal with before anything else on the view means
+    /// anything, so it earns the whole of the right-hand column.
+    ///
+    /// Setting the origin ends it. From then on the six numbers are read now and then rather than
+    /// worked on, and the header still carries the range and bearing a return leg is flown on --
+    /// which is the pair actually read in the air. Standing open past that point costs the column
+    /// its height: LocalGridMissionList is anchored under this panel and capped by what is left down
+    /// to the bottom edge, so an open readout is a plan list that cannot be opened far enough to
+    /// read.
+    readonly property bool _standOpen: _valid && !(gridView && gridView.originKnown)
 
-    on_ValidChanged: {
-        if (_valid !== _wasValid) {
-            collapsed = !_valid
-            _wasValid = _valid
+    /// Acted on at the transitions only, never bound straight to collapsed: a fold or an unfold in
+    /// between belongs to the operator, and a binding would take it back off them on the next frame.
+    property bool _wasStandOpen: false
+
+    on_StandOpenChanged: {
+        if (_standOpen !== _wasStandOpen) {
+            collapsed = !_standOpen
+            _wasStandOpen = _standOpen
+        }
+    }
+
+    /// Building a plan folds it, because the column it sits at the top of is where the plan is read.
+    ///
+    /// One way only. Entering the mode is a statement about what the operator is doing now, so it
+    /// may take the space; leaving it is not a request to have this panel back over the grid, and an
+    /// unfold there would undo a fold the operator had made for themselves. The header keeps saying
+    /// the range and bearing throughout either way.
+    Connections {
+        target:  _root.gridView
+        enabled: _root.gridView !== null
+
+        function onPlanEditModeChanged() {
+            if (_root.gridView.planEditMode) {
+                _root.collapsed = true
+            }
         }
     }
 
@@ -408,35 +437,38 @@ Rectangle {
         // them. They stay here rather than joining the mission strip in the far corner: that panel
         // already carries a Clear that wipes the flight plan, and a Clear trail beside it would be two
         // buttons a glance apart with very different consequences.
-        // A row of three buttons was the one thing in this panel that maximumWidth and compactColumns
-        // above could not touch: none of the three wraps or shrinks, so the row's width was always
-        // three buttons wide regardless of how narrow the numbers above it had been made to fit. Given
-        // the same trade as those numbers -- two to a row instead of three, the odd one on a row of
-        // its own -- rather than left as the one thing this panel could not actually be narrowed past.
-        GridLayout {
+        // One row, and one row on every width. Wrapping the odd button onto a second row narrowed the
+        // panel by exactly one button and lengthened it by a whole row -- the wrong way round for the
+        // column this panel is the top of, where every row taken here is a row the plan list below
+        // cannot open into. The three share the width the numbers and warnings above have already
+        // settled instead of each insisting on its own text width, so the row costs one button's
+        // height whatever the view is doing.
+        RowLayout {
             objectName:         "localGrid_readoutViewButtons"
             visible:            !_root.collapsed
+            Layout.fillWidth:   true
             Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
-            columns:            _root.compactColumns ? 2 : 3
-            columnSpacing:      ScreenTools.defaultFontPixelWidth
-            rowSpacing:         ScreenTools.defaultFontPixelHeight / 4
+            spacing:            ScreenTools.defaultFontPixelWidth
 
             QGCButton {
-                text:       qsTr("Vehicle")
-                enabled:    _root._valid && _root.gridView && !_root.gridView.followVehicle
-                onClicked:  _root.gridView.centreOnVehicle()
+                Layout.fillWidth: true
+                text:             qsTr("Vehicle")
+                enabled:          _root._valid && _root.gridView && !_root.gridView.followVehicle
+                onClicked:        _root.gridView.centreOnVehicle()
             }
 
             QGCButton {
-                text:       qsTr("Origin")
-                enabled:    _root.gridView !== null
-                onClicked:  _root.gridView.centreOnOrigin()
+                Layout.fillWidth: true
+                text:             qsTr("Origin")
+                enabled:          _root.gridView !== null
+                onClicked:        _root.gridView.centreOnOrigin()
             }
 
             QGCButton {
-                text:       qsTr("Clear trail")
-                enabled:    _root.gridView && (_root.gridView.trailPointCount > 0)
-                onClicked:  _root.gridView.clearTrail()
+                Layout.fillWidth: true
+                text:             qsTr("Clear trail")
+                enabled:          _root.gridView && (_root.gridView.trailPointCount > 0)
+                onClicked:        _root.gridView.clearTrail()
             }
         }
     }
