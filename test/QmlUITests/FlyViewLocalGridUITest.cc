@@ -2,13 +2,16 @@
 
 #include <QtCore/QSet>
 #include <QtGui/QImage>
+#include <QtGui/QPointingDevice>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
 #include <QtTest/QTest>
 
 #include "FlyViewSettings.h"
+#include "LocalGridTestSupport.h"
 #include "MockLink.h"
 #include "SettingsManager.h"
+#include "Vehicle.h"
 
 UT_REGISTER_TEST(FlyViewLocalGridUITest, TestLabel::Integration)
 
@@ -332,3 +335,275 @@ void FlyViewLocalGridUITest::_shapingThePatternIsReachableInPlanMode_test()
         });
 }
 
+/// A finger and a mouse are the same gesture to the operator, so the grid has to treat them that
+/// way: tap to open the panel that reads out a point, drag to pan.
+///
+/// Driven with both devices in one test, and asserted against each other rather than against fixed
+/// numbers. What broke on a touch screen was never the gesture logic -- it is the same code either
+/// way -- but whether the touch reached that code at all, and a mouse pass standing beside the touch
+/// pass is what tells those two failures apart.
+void FlyViewLocalGridUITest::_aFingerWorksTheGridTheSameWayAMouseDoes_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink>& /*mockLink*/, Vehicle* /*vehicle*/) {
+            QQuickItem* const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            QObject* const transform = gridView->property("gridTransform").value<QObject*>();
+            QVERIFY2(transform, "the grid has no transform to pan");
+
+            // Left to itself the grid recentres on the vehicle, which would move the centre this test
+            // measures for a reason that has nothing to do with the gesture under test
+            gridView->setProperty("followVehicle", false);
+
+            // Clear of the tool strip down the left edge, the readout column on the right, and the
+            // origin marker at the centre -- a press landing on any of them is a press the grid
+            // itself never sees
+            const QPoint target =
+                gridView->mapToScene(QPointF(gridView->width() * 0.3, gridView->height() * 0.35)).toPoint();
+
+            const auto panDistance = [transform]() {
+                return qAbs(transform->property("centreEast").toReal()) +
+                       qAbs(transform->property("centreNorth").toReal());
+            };
+
+            /// Runs the drag as a press, ten steps, and a release, so the view sees the same stream of
+            /// moves a hand produces rather than one jump from start to finish
+            constexpr int kDragSteps = 10;
+            constexpr int kDragPixels = 150;
+
+            // --- The mouse pass, which is the behaviour being matched ---
+
+            QTest::mouseClick(_window, Qt::LeftButton, Qt::NoModifier, target);
+            QVERIFY2(verifyVisibility(QStringLiteral("localGrid_clickPanel"), true, QStringLiteral("after a click")),
+                     "a mouse click on bare grid did not open the click panel");
+
+            QTest::mousePress(_window, Qt::LeftButton, Qt::NoModifier, target);
+            for (int step = 1; step <= kDragSteps; step++) {
+                QTest::mouseMove(_window, target + QPoint((kDragPixels * step) / kDragSteps, 0));
+            }
+            QTest::mouseRelease(_window, Qt::LeftButton, Qt::NoModifier, target + QPoint(kDragPixels, 0));
+
+            QTRY_VERIFY_WITH_TIMEOUT(panDistance() > 0.0, TestTimeout::longMs());
+            const qreal mousePan = panDistance();
+
+            // --- The same two gestures from a finger ---
+
+            transform->setProperty("centreEast", 0.0);
+            transform->setProperty("centreNorth", 0.0);
+            gridView->setProperty("followVehicle", false);
+
+            // The drag above already put the panel the click opened away -- a press on the grid closes
+            // it. Asserted rather than assumed, because a tap tested against a panel that was still on
+            // screen would pass without the tap having done anything at all.
+            QVERIFY2(verifyVisibility(QStringLiteral("localGrid_clickPanel"), false, QStringLiteral("after a drag")),
+                     "the click panel stayed open through a drag, leaving the tap below with nothing to prove");
+
+            QPointingDevice* const finger = QTest::createTouchDevice();
+
+            {
+                QTest::QTouchEventSequence drag = QTest::touchEvent(_window, finger);
+                drag.press(0, target).commit();
+                for (int step = 1; step <= kDragSteps; step++) {
+                    drag.move(0, target + QPoint((kDragPixels * step) / kDragSteps, 0)).commit();
+                }
+                drag.release(0, target + QPoint(kDragPixels, 0)).commit();
+            }
+
+            QTRY_VERIFY_WITH_TIMEOUT(panDistance() > 0.0, TestTimeout::longMs());
+            // The same drag over the same pixels, so the ground covered has to match what the mouse
+            // covered. A finger that pans a fraction of the distance is as broken as one that does
+            // not pan at all.
+            QVERIFY2(qAbs(panDistance() - mousePan) < (mousePan * 0.05),
+                     qPrintable(QStringLiteral("a finger panned %1 m where the mouse panned %2 m")
+                                    .arg(panDistance())
+                                    .arg(mousePan)));
+
+            {
+                QTest::QTouchEventSequence tap = QTest::touchEvent(_window, finger);
+                tap.press(0, target).commit();
+                tap.release(0, target).commit();
+            }
+            QVERIFY2(verifyVisibility(QStringLiteral("localGrid_clickPanel"), true, QStringLiteral("after a tap")),
+                     "a tap on bare grid did not open the click panel, though a mouse click does");
+
+            // --- Zoom, which is the one gesture the two devices do differently ---
+            //
+            // A wheel notch and a pinch spread both mean zoom in, and both have to arrive: the pinch
+            // is what a single finger was competing with for the same touch points, so a fix that
+            // gave the finger its tap back by taking the pinch away would trade one half of the
+            // gesture set for the other.
+
+            const auto zoom = [transform]() { return transform->property("metresPerPixel").toReal(); };
+
+            const qreal zoomBeforeWheel = zoom();
+            QTest::wheelEvent(_window, QPointF(target), QPoint(0, 120));
+            QTRY_VERIFY_WITH_TIMEOUT(zoom() < zoomBeforeWheel, TestTimeout::longMs());
+
+            const qreal zoomBeforePinch = zoom();
+            {
+                constexpr int kSpread = 50;
+                constexpr int kSteps = 10;
+                QTest::QTouchEventSequence pinch = QTest::touchEvent(_window, finger);
+                pinch.press(0, target + QPoint(-kSpread, 0)).press(1, target + QPoint(kSpread, 0)).commit();
+                for (int step = 1; step <= kSteps; step++) {
+                    pinch.move(0, target + QPoint(-kSpread - (step * 10), 0))
+                        .move(1, target + QPoint(kSpread + (step * 10), 0))
+                        .commit();
+                }
+                pinch.release(0, target + QPoint(-kSpread - (kSteps * 10), 0))
+                    .release(1, target + QPoint(kSpread + (kSteps * 10), 0))
+                    .commit();
+            }
+            QTRY_VERIFY_WITH_TIMEOUT(zoom() < zoomBeforePinch, TestTimeout::longMs());
+        });
+}
+
+/// Picking a marker up and putting it somewhere else is the gesture the grid exists for, and the one
+/// furthest from a mouse: it is a press, a travel and a release on a target the size of a fingertip.
+///
+/// It runs through the marker's own MouseArea rather than the grid's, so it fails and recovers
+/// separately from the tap and the pan -- a view that pans under a finger while every waypoint on it
+/// is nailed down is still a view a pattern cannot be built on.
+void FlyViewLocalGridUITest::_aFingerCanPickUpAWaypointAndMoveIt_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink([] { return MockLink::startAPMArduCopterMockLink(); },
+                    [this](const QPointer<MockLink>& mockLink, Vehicle* vehicle) {
+                        QVERIFY(vehicle);
+                        // Nothing can be placed on a grid with no origin -- the frame the point would be measured
+                        // in does not exist yet
+                        QVERIFY2(LocalGridTestSupport::giveTheVehicleAnOrigin(vehicle, mockLink),
+                                 "the vehicle never took an origin");
+
+                        QQuickItem* const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+                        QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+                        QObject* const transform = gridView->property("gridTransform").value<QObject*>();
+                        QVERIFY2(transform, "the grid has no transform to place a waypoint through");
+
+                        gridView->setProperty("followVehicle", false);
+
+                        // Placed through the view's own function rather than by tapping, so a regression in the
+                        // tap cannot take this test down with it -- what is under test here is the marker
+                        const QPointF placeAt(gridView->width() * 0.35, gridView->height() * 0.4);
+                        QVariant added;
+                        QVERIFY(QMetaObject::invokeMethod(gridView, "addWaypointAtPixel", Q_RETURN_ARG(QVariant, added),
+                                                          Q_ARG(QVariant, QVariant(placeAt.x())),
+                                                          Q_ARG(QVariant, QVariant(placeAt.y()))));
+                        QVERIFY2(added.toBool(), "the grid refused the waypoint this test is about to drag");
+
+                        /// Where the one waypoint on the grid says it is, in metres east of the origin
+                        const auto waypointEast = [gridView]() {
+                            const QVariantList points = gridView->property("missionPoints").toList();
+                            for (const QVariant& point : points) {
+                                const QVariantMap fields = point.toMap();
+                                if (!fields.value(QStringLiteral("isPinned")).toBool()) {
+                                    return fields.value(QStringLiteral("east")).toReal();
+                                }
+                            }
+                            return qQNaN();
+                        };
+
+                        const qreal eastBefore = waypointEast();
+                        QVERIFY2(!qIsNaN(eastBefore), "the waypoint that was just added is not on the grid");
+
+                        // Nothing has panned or zoomed since it was placed, and the marker is bound to the same
+                        // transform the placement went through, so it is still under the pixel it was put at
+                        const QPoint marker = gridView->mapToScene(placeAt).toPoint();
+
+                        constexpr int kDragSteps = 10;
+                        constexpr int kDragPixels = 90;
+
+                        QPointingDevice* const finger = QTest::createTouchDevice();
+                        {
+                            QTest::QTouchEventSequence drag = QTest::touchEvent(_window, finger);
+                            drag.press(0, marker).commit();
+                            for (int step = 1; step <= kDragSteps; step++) {
+                                drag.move(0, marker + QPoint((kDragPixels * step) / kDragSteps, 0)).commit();
+                            }
+                            drag.release(0, marker + QPoint(kDragPixels, 0)).commit();
+                        }
+
+                        QTRY_VERIFY_WITH_TIMEOUT(waypointEast() > eastBefore, TestTimeout::longMs());
+
+                        // Dragging east must move the waypoint, not the view under it: a marker that stays put
+                        // while the grid pans is the same gesture producing the opposite result
+                        QVERIFY2(qFuzzyIsNull(transform->property("centreEast").toReal()),
+                                 "dragging a waypoint panned the grid instead of moving the point");
+                    });
+}
+
+/// The toolbar hands MainStatusIndicator and FlightModeIndicator's corner to the grid's own
+/// Upload/Download/Save/Clear -- but only in the one situation those buttons have nowhere else to
+/// reach: the screen is too small to carry LocalGridMissionActions open as well as everything else,
+/// a plan is being built, and the aircraft is on the ground. Any one of those not holding, the
+/// indicators an operator about to fly reads off this corner have to be the ones standing there.
+void FlyViewLocalGridUITest::_theToolbarSwapsForPlanActionsOnlyWhenCompactAndDisarmed_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink>& /*mockLink*/, Vehicle* vehicle) {
+            QQuickItem* const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_planButton")), "the Plan button could not be clicked");
+            QVERIFY_TRUE_WAIT(gridView->property("planEditMode").toBool(), TestTimeout::longMs());
+
+            // At the test window's default size the grid is not compact, and the flying indicators
+            // are the ones an operator on a desktop-sized screen has always seen here -- plan mode
+            // or not. Checked before touching the window at all, so a gate that swapped
+            // unconditionally on plan mode would be caught right here rather than only below.
+            QVERIFY2(!gridView->property("compact").toBool(), "the default test window is already compact");
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_mainStatusIndicator"), true,
+                                      QStringLiteral("plan mode, not compact")),
+                     "the status indicator gave up its corner outside compact layout");
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_localGridPlanActions"), false,
+                                      QStringLiteral("plan mode, not compact")),
+                     "the plan action row appeared outside compact layout");
+
+            // Shrunk to a size the grid itself reports as compact -- the same condition
+            // LocalGridResponsiveLayoutTest drives its phone-portrait cases from
+            _window->resize(400, 800);
+            QVERIFY_TRUE_WAIT(gridView->property("compact").toBool(), TestTimeout::longMs());
+
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_mainStatusIndicator"), false,
+                                      QStringLiteral("plan mode, compact, disarmed")),
+                     "the status indicator kept its corner once the grid went compact in plan mode");
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_flightModeIndicator"), false,
+                                      QStringLiteral("plan mode, compact, disarmed")),
+                     "the flight mode indicator kept its corner once the grid went compact in plan mode");
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_localGridPlanActions"), true,
+                                      QStringLiteral("plan mode, compact, disarmed")),
+                     "the plan action row never took the corner once the grid went compact in plan mode");
+            for (const QString& button :
+                 {QStringLiteral("toolbar_localGridUploadButton"), QStringLiteral("toolbar_localGridDownloadButton"),
+                  QStringLiteral("toolbar_localGridSaveButton"), QStringLiteral("toolbar_localGridClearButton")}) {
+                QVERIFY2(findVisibleItem(_rootItem, button, 0),
+                         qPrintable(button + QStringLiteral(" is missing from the toolbar row")));
+            }
+
+            // Arming puts the indicators straight back. The grid's own onVehicleArmedChanged already
+            // drops planEditMode the moment the aircraft arms -- see LocalGridView.qml -- so this
+            // also stands as the toolbar's gate agreeing with that guarantee rather than needing a
+            // second one: whichever of the two actually catches it, the indicators are what an
+            // operator watching an aircraft leave the ground has to see in this corner.
+            vehicle->setArmed(true, false);
+            QTRY_VERIFY_WITH_TIMEOUT(vehicle->armed(), TestTimeout::longMs());
+
+            QVERIFY_TRUE_WAIT(!gridView->property("planEditMode").toBool(), TestTimeout::longMs());
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_mainStatusIndicator"), true, QStringLiteral("armed")),
+                     "the status indicator was still off its corner with the aircraft armed");
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_localGridPlanActions"), false, QStringLiteral("armed")),
+                     "the plan action row kept the corner with the aircraft armed");
+
+            vehicle->setArmed(false, false);
+            QTRY_VERIFY_WITH_TIMEOUT(!vehicle->armed(), TestTimeout::longMs());
+        });
+}

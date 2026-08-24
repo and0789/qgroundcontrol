@@ -24,4 +24,7 @@ private slots:
     void _theAirspeedPanelFollowsTheSensor_test();
     void _planModeSwapsTheStripWithoutLosingTheMode_test();
     void _shapingThePatternIsReachableInPlanMode_test();
+    void _aFingerWorksTheGridTheSameWayAMouseDoes_test();
+    void _aFingerCanPickUpAWaypointAndMoveIt_test();
+    void _theToolbarSwapsForPlanActionsOnlyWhenCompactAndDisarmed_test();
 };

@@ -476,6 +476,9 @@ Item {
     readonly property alias gridTransform: transform
     readonly property alias trailPointCount:   trail.pointCount
     readonly property alias trailLengthMetres: trail.pathLengthMetres
+    /// The plan's Upload/Download/Save/Clear and their pre-checks, for LocalGridToolBarActions to
+    /// drive from the toolbar without a second copy of any of it
+    readonly property alias missionActions: missionActionsPanel
 
     function clearTrail() {
         trail.reset()
@@ -2542,19 +2545,34 @@ Item {
         }
     }
 
-    PinchArea {
-        anchors.fill:   parent
-        enabled:        true
+    /// Pinch to zoom, as a handler rather than a PinchArea.
+    ///
+    /// A PinchArea filling the view sat over dragArea and took every touch point that landed on the
+    /// grid, including the single ones it has no use for. dragArea is a MouseArea, so on a touch
+    /// screen it lives entirely on the mouse events Qt synthesises from a touch that no item claimed
+    /// -- and none were left to synthesise. Tapping to place a waypoint and dragging to pan both did
+    /// nothing on a touch screen while both worked under a mouse, which is the state the grid shipped
+    /// in. A handler takes a passive grab instead and only claims the gesture once a second finger
+    /// makes it a pinch, so one finger still reaches the MouseArea beneath.
+    PinchHandler {
+        // Nothing is being transformed directly: the zoom goes through the transform's own pivot
+        // arithmetic so the ground under the fingers stays under them
+        target: null
 
         property real _previousScale: 1
 
-        onPinchStarted: { _previousScale = 1 }
-        onPinchUpdated: (pinch) => {
-            if (pinch.scale <= 0) {
+        onActiveChanged: {
+            if (active) {
+                _previousScale = 1
+            }
+        }
+
+        onActiveScaleChanged: {
+            if (!(activeScale > 0)) {
                 return
             }
-            transform.zoomBy(_previousScale / pinch.scale, pinch.center.x, pinch.center.y)
-            _previousScale = pinch.scale
+            transform.zoomBy(_previousScale / activeScale, centroid.position.x, centroid.position.y)
+            _previousScale = activeScale
             _root.followVehicle = false
         }
     }
@@ -2867,6 +2885,7 @@ Item {
     // tool strip's edge reads a whole toolbar's height higher than it actually sits, and the cap
     // this exists to enforce comes out too generous by exactly that much.
     LocalGridMissionActions {
+        id:                     missionActionsPanel
         objectName:             "localGrid_missionActions"
         anchors.left:           parent.left
         anchors.bottom:         parent.bottom

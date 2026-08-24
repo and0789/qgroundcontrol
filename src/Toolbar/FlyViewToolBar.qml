@@ -20,6 +20,19 @@ Item {
     property real   _leftRightMargin:   ScreenTools.defaultFontPixelWidth * 0.75
     property var    _guidedController:  globals.guidedControllerFlyView
 
+    readonly property var  _gridView: globals.localGridViewFlyView
+
+    /// True while the local grid is mid-edit on a screen too small to carry its own Upload,
+    /// Download, Save and Clear as well as everything else open on it -- and only while the
+    /// aircraft is disarmed. Armed is the harder line than leaving plan mode: nothing here turns it
+    /// off on its own, and MainStatusIndicator's arming state and FlightModeIndicator's mode are
+    /// exactly what an operator needs on screen the moment the aircraft could be in the air, plan
+    /// mode or not.
+    readonly property bool _showLocalGridPlanActions: _gridView
+                                                        ? (_gridView.planEditMode && _gridView.compact
+                                                            && !_gridView.vehicleArmed)
+                                                        : false
+
     function dropMainStatusIndicatorTool() {
         mainStatusIndicator.dropMainStatusIndicator();
     }
@@ -87,6 +100,7 @@ Item {
                             id:                 mainStatusIndicator
                             objectName:         "toolbar_mainStatusIndicator"
                             Layout.fillHeight:  true
+                            visible:            !control._showLocalGridPlanActions
                         }
                     }
 
@@ -100,7 +114,17 @@ Item {
                     FlightModeIndicator {
                         objectName:         "toolbar_flightModeIndicator"
                         Layout.fillHeight:  true
-                        visible:            _activeVehicle
+                        visible:            _activeVehicle && !control._showLocalGridPlanActions
+                    }
+
+                    // Stands in for the pair above while the grid's own Upload/Download/Save/Clear
+                    // have nowhere else to go on a screen this small. See
+                    // _showLocalGridPlanActions for the full gate.
+                    LocalGridToolBarActions {
+                        objectName:         "toolbar_localGridPlanActions"
+                        Layout.fillHeight:  true
+                        visible:            control._showLocalGridPlanActions
+                        gridView:           control._gridView
                     }
                 }
             }
