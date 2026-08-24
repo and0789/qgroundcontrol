@@ -153,6 +153,14 @@ Rectangle {
 
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
+    // This panel sits over the grid's own wheel-to-zoom and drag-to-pan area. A Flickable that has
+    // reached its bounds stops accepting the wheel, so carrying on scrolling past the last row fell
+    // through to the grid and zoomed it -- the list appeared to stop and then drag the map with it.
+    // Swallowing here rather than at the grid keeps the test the panel's own geometry.
+    DeadMouseArea {
+        anchors.fill: parent
+    }
+
     ColumnLayout {
         id:                 contentColumn
         anchors.left:       parent.left

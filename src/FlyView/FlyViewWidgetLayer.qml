@@ -12,6 +12,7 @@ import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.FlyView
 import QGroundControl.FlightMap
+import QGroundControl.GeoMap
 import QGroundControl.Viewer3D
 
 // This is the ui overlay layer for the widgets/tools for Fly View
@@ -49,7 +50,7 @@ Item {
         rightEdgeCenterInset:   topRightPanel.visible ? topRightPanel.rightEdgeCenterInset : topRightColumnLayout.rightEdgeCenterInset
         rightEdgeBottomInset:   bottomRightRowLayout.rightEdgeBottomInset
         topEdgeLeftInset:       toolStrip.topEdgeLeftInset
-        topEdgeCenterInset:     mapScale.topEdgeCenterInset
+        topEdgeCenterInset:     mapScaleRow.topEdgeCenterInset
         topEdgeRightInset:      topRightPanel.visible ? topRightPanel.topEdgeRightInset : topRightColumnLayout.topEdgeRightInset
         bottomEdgeLeftInset:    virtualJoystickMultiTouch.visible ? virtualJoystickMultiTouch.bottomEdgeLeftInset : parentToolInsets.bottomEdgeLeftInset
         bottomEdgeCenterInset:  bottomRightRowLayout.bottomEdgeCenterInset
@@ -189,26 +190,46 @@ Item {
         visible:            !QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
     }
 
-    MapScale {
-        id:                 mapScale
+    Row {
+        id:                 mapScaleRow
         anchors.left:       toolStrip.right
         anchors.leftMargin: _toolsMargin
         anchors.top:        parent.top
-        mapControl:         _mapControl
-        autoHide:           true
-        // Hidden with the map it measures. The local grid carries its own scale bar in ground metres,
-        // and leaving this one up would put two different scales on screen, one of them describing a
-        // map that is not being shown.
-        visible:            !ScreenTools.isTinyScreen && QGroundControl.corePlugin.options.flyView.showMapScale && QGCViewer3DManager.displayMode !== QGCViewer3DManager.View3D && mapControl.pipState.state === mapControl.pipState.fullState && !QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
+        spacing:            _toolsMargin
 
-        property real topEdgeCenterInset: visible ? y + height : 0
+        property real topEdgeCenterInset: (geoMapControls.visible || mapScale.visible) ? y + height : 0
+
+        // Google Earth-style camera controls, GeoMap engine only
+        FlyViewGeoMapControls {
+            id:      geoMapControls
+            geoMap:  mapControl && mapControl.geoMap ? mapControl.geoMap : null
+            // Hidden with the map they steer, for the same reason the scale bar is: in local grid
+            // mode there is no map on screen for these controls to move.
+            visible: !!geoMap && !ScreenTools.isTinyScreen && QGCViewer3DManager.displayMode !== QGCViewer3DManager.View3D && mapControl.pipState.state === mapControl.pipState.fullState &&
+                     !QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
+        }
+
+        MapScale {
+            id:                     mapScale
+            anchors.verticalCenter: parent.verticalCenter
+            mapControl:             _mapControl
+            autoHide:               true
+            // geoMap check: scale is ill-defined under the GeoMap engine's 3D
+            // tilt; isTopDown keeps it hidden until the 3D->2D tilt animation lands.
+            // Local grid check: that view carries its own scale bar in ground metres, and leaving
+            // this one up would put two different scales on screen, one of them describing a map
+            // that is not being shown.
+            visible:                !ScreenTools.isTinyScreen && QGroundControl.corePlugin.options.flyView.showMapScale && QGCViewer3DManager.displayMode !== QGCViewer3DManager.View3D && mapControl && mapControl.pipState.state === mapControl.pipState.fullState &&
+                                    (!mapControl.geoMap || (mapControl.geoMap.camera.mode === GeoMapCamera.Mode2D && mapControl.geoMap.camera.isTopDown)) &&
+                                    !QGroundControl.settingsManager.flyViewSettings.showLocalGridView.rawValue
+        }
     }
 
     NonGpsStatusPanel {
         id:                 nonGpsStatusPanel
         anchors.left:       toolStrip.right
         anchors.leftMargin: _toolsMargin
-        anchors.top:        mapScale.visible ? mapScale.bottom : parent.top
+        anchors.top:        mapScaleRow.bottom
         anchors.topMargin:  _toolsMargin
         z:                  QGroundControl.zOrderWidgets
     }
