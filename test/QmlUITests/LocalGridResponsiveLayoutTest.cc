@@ -67,6 +67,12 @@ const QList<WindowSize> kSizesToCheck = {
     {.name = "desktop", .width = 1600, .height = 900, .chromeBudgetPercent = 15.0},
 };
 
+/// Heights the window is walked down, at a width wide enough that nothing on the right-hand column is
+/// what runs the left edge out of room. Each step is checked for the tool strip having taken the whole
+/// edge, and the first that has is the one the cap is tested at.
+const QList<int> kShrinkingHeights = {440, 400, 360, 320, 280, 240};
+constexpr int kFullEdgeWindowWidth = 800;
+
 /// Waits until \a item's mapped rect stops moving between two samples, so a measurement taken right
 /// after a resize is not caught mid-relayout. There is no animation on any of these panels' anchors,
 /// so two consecutive equal samples means the polish pass that follows a resize has already run.
@@ -232,6 +238,73 @@ void LocalGridResponsiveLayoutTest::_panelsDoNotOverlapAtAnySize_test()
                     }
                 }
             }
+        });
+}
+
+/// The state the panel's height cap exists for, and the one it used to switch itself off in: a tool
+/// strip tall enough to leave the bottom-left corner no room at all.
+///
+/// The cap is worked out from the strip's measured bottom edge and clamped at zero. Zero was also the
+/// panel's own word for "no cap at all", so with the edge full the panel stopped being held to
+/// anything and grew its whole body -- five buttons, a transfer bar and the after-flight section --
+/// back up through the strip it was being kept clear of.
+///
+/// Checked unfolded, because folded there is nothing under the title to outgrow the room and the cap
+/// is never consulted. That is not a contrived state: the panel starts folded on a view this small,
+/// and unfolding it is what an operator does to reach the buttons.
+///
+/// The window is shrunk until the strip actually fills the edge rather than checked at a named size:
+/// how many buttons the strip carries depends on the vehicle and on what the fly view has to offer, so
+/// a height that leaves no room on one build leaves room to spare on another. Whether the edge is full
+/// is read off the scale bar -- anchored in the same corner, sized by nothing but its own contents --
+/// so the panel under test is never asked where it thinks it goes.
+void LocalGridResponsiveLayoutTest::_missionActionsHonourACapOfNoRoomAtAll_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle *vehicle) {
+            QVERIFY(vehicle);
+            QVERIFY2(giveTheVehicleAnOrigin(vehicle, mockLink), "the vehicle never took an origin");
+
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            bool sawAFullEdge = false;
+            for (const int windowHeight : kShrinkingHeights) {
+                QVERIFY2(_resizeAndSettle(kFullEdgeWindowWidth, windowHeight),
+                         qPrintable(QStringLiteral("the layout never settled at %1x%2")
+                                        .arg(kFullEdgeWindowWidth).arg(windowHeight)));
+
+                QQuickItem *const missionActions =
+                    findVisibleItem(_rootItem, QStringLiteral("localGrid_missionActions"), 500);
+                if (missionActions == nullptr) {
+                    continue;
+                }
+                missionActions->setProperty("collapsed", false);
+                QVERIFY2(waitForLayoutToSettle(missionActions),
+                         "the panel never settled after being unfolded");
+
+                const QRectF toolStrip = _windowRectFor(QStringLiteral("flyView_toolStrip"));
+                const QRectF scaleBar  = _windowRectFor(QStringLiteral("localGrid_scaleBar"));
+                if (toolStrip.isEmpty() || scaleBar.isEmpty() || (scaleBar.top() > toolStrip.bottom())) {
+                    continue;   // Room still left under the strip: not the state this test is about
+                }
+                sawAFullEdge = true;
+
+                const qreal collapsedHeight = missionActions->property("collapsedHeight").toReal();
+                QVERIFY(collapsedHeight > 0);
+                QVERIFY2(missionActions->height() <= collapsedHeight,
+                         qPrintable(QStringLiteral("the tool strip leaves no room at %1x%2, and the "
+                                                   "unfolded panel took %3 against a title needing %4")
+                                        .arg(kFullEdgeWindowWidth).arg(windowHeight)
+                                        .arg(missionActions->height()).arg(collapsedHeight)));
+            }
+
+            QVERIFY2(sawAFullEdge,
+                     "the tool strip never filled the left edge at any height checked, so the cap this "
+                     "test exists for was never exercised");
         });
 }
 

@@ -23,8 +23,13 @@ Rectangle {
     property var gridView: null
 
     /// The most room this panel may take. Past it the body scrolls rather than the panel running off
-    /// the top of the view or into the tool strip that shares this corner. Zero for no limit.
-    property real maximumHeight: 0
+    /// the top of the view or into the tool strip that shares this corner. Negative for no limit.
+    ///
+    /// Negative rather than zero, because zero is what the caller works out when the tool strip has
+    /// taken the whole of this edge. Read as "no limit", that grew the panel to its full height
+    /// straight through the strip it was being held clear of -- the cap failing in the one state it
+    /// exists for.
+    property real maximumHeight: -1
 
 
     /// Folded away to leave the grid clear, keeping the title so it can be found again -- the same
@@ -39,7 +44,7 @@ Rectangle {
     readonly property real collapsedHeight: titleHeaderBlock.implicitHeight + (_margins * 2)
 
     /// What is left for the scrollable body once the fixed title and the outer margins have had theirs
-    readonly property real _bodyMaximumHeight: (maximumHeight > 0)
+    readonly property real _bodyMaximumHeight: (maximumHeight >= 0)
                                                 ? Math.max(0, maximumHeight - titleHeaderBlock.implicitHeight
                                                                 - layout.spacing - (_margins * 2))
                                                 : Number.POSITIVE_INFINITY
@@ -519,7 +524,10 @@ Rectangle {
         // short screen it grew straight into the tool strip that shares this corner.
         QGCFlickable {
             id:                 actionsFlickable
-            visible:            !_root.collapsed
+            // Also gone when the cap leaves it nothing, rather than kept as a body of no height: a
+            // scrollable nothing still costs the layout row above it, and there is no gesture that
+            // reaches content through zero pixels anyway.
+            visible:            !_root.collapsed && (_root._bodyMaximumHeight > 0)
             // Flickable does not pick up its contentItem's natural size the way a plain Item or a
             // Layout would, so without this the panel's own implicitWidth -- unconstrained, computed
             // bottom-up from its children -- would collapse to zero the moment the buttons and labels
