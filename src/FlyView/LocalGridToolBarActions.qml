@@ -31,11 +31,32 @@ RowLayout {
     readonly property bool _syncing:   (_actions !== null) && _actions.syncing
     readonly property bool _iconsOnly: gridView ? gridView.compact : false
 
+    /// Four fifths of the button QGC uses on a page.
+    ///
+    /// At full size these five read as slabs across the corner, heavier than the aircraft status they
+    /// sit beside -- and status is what an operator scans this corner for. A toolbar control is a
+    /// target for a deliberate press rather than something to be found in a hurry, so it can afford
+    /// to be the quieter of the two. Applied to the height, the glyph and the padding together, so
+    /// the proportions are the ones QGCButton was drawn with rather than a squashed version of them.
+    readonly property real _scale: 0.8
+
     spacing: ScreenTools.defaultFontPixelWidth / 2
 
-    QGCButton {
+    component PlanActionButton: QGCButton {
+        Layout.preferredHeight: Math.round(ScreenTools.toolbarHeight * _root._scale)
+        Layout.alignment:       Qt.AlignVCenter
+        // leftPadding/rightPadding rather than QGCButton's own _horizontalPadding, which is private
+        // to it. Assigning these overrides the bindings it puts on them, which is the supported way
+        // in and the only one that survives a change to how it works those out.
+        leftPadding:            Math.round(ScreenTools.defaultFontPixelWidth * 2 * _root._scale)
+        rightPadding:           leftPadding
+        // Carries the icon as well as the label: QGCButton sizes its glyph off the label's height,
+        // so this is the one handle that scales both and keeps them in proportion.
+        pointSize:              ScreenTools.defaultFontPointSize * _root._scale
+    }
+
+    PlanActionButton {
         objectName:         "toolbar_localGridOpenButton"
-        Layout.fillHeight:  true
         text:               _root._iconsOnly ? "" : qsTr("Open")
         iconSource:         "/qmlimages/Plan.svg"
         enabled:            (_root._actions !== null) && _root._actions.canLoad
@@ -44,9 +65,8 @@ RowLayout {
         onClicked:          _root._actions.requestLoad()
     }
 
-    QGCButton {
+    PlanActionButton {
         objectName:         "toolbar_localGridSaveButton"
-        Layout.fillHeight:  true
         text:               _root._iconsOnly ? "" : qsTr("Save")
         iconSource:         "/res/SaveToDisk.svg"
         enabled:            (_root._actions !== null) && _root._actions.canSave
@@ -55,9 +75,8 @@ RowLayout {
         onClicked:          _root._actions.requestSave()
     }
 
-    QGCButton {
+    PlanActionButton {
         objectName:         "toolbar_localGridUploadButton"
-        Layout.fillHeight:  true
         // Keeps its label through a transfer even where the others have given theirs up. An icon
         // that is merely greyed says the button is unavailable; it does not say a transfer is
         // running, which is the one thing an operator watching this corner needs to be told.
@@ -70,9 +89,8 @@ RowLayout {
         onClicked:          _root._actions.requestUpload()
     }
 
-    QGCButton {
+    PlanActionButton {
         objectName:         "toolbar_localGridClearButton"
-        Layout.fillHeight:  true
         text:               _root._iconsOnly ? "" : qsTr("Clear")
         iconSource:         "/res/TrashCan.svg"
         enabled:            (_root._actions !== null) && _root._actions.canClear
@@ -84,9 +102,8 @@ RowLayout {
     // Download sits behind the overflow rather than in the row, which is where the Plan view's
     // toolbar puts it too: it is the one of the five reached once in a session, if at all, and the
     // four it would widen this row past are reached over and over while a pattern is built.
-    QGCButton {
+    PlanActionButton {
         objectName:         "toolbar_localGridOverflowButton"
-        Layout.fillHeight:  true
         iconSource:         "qrc:/qmlimages/Hamburger.svg"
         ToolTip.text:       qsTr("More plan actions")
         ToolTip.visible:    hovered
