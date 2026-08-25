@@ -21,7 +21,14 @@ Rectangle {
     /// shrink its children to fit but lets them overflow, and a panel whose width is read off a
     /// layout anchored to both its edges is a loop that QML breaks by answering zero. The mission
     /// list below follows this width instead, which is what keeps the right edge one column.
-    implicitWidth:  layout.implicitWidth + (_margins * 2)
+    // Held to maximumWidth rather than merely sized from what it holds. Sizing alone was the bug: the
+    // cap was documented as a limit on the warning text, so anything else inside that insisted on its
+    // own width -- three buttons across a row, a column of numbers -- widened the panel past the share
+    // of the view the column says it may have, and the plan list that follows this width went with it.
+    // The pieces below are each able to give now, so the clamp narrows the panel rather than leaving
+    // its contents hanging over the edge of it.
+    implicitWidth:  Math.min(layout.implicitWidth + (_margins * 2),
+                             (maximumWidth > 0) ? maximumWidth : Number.POSITIVE_INFINITY)
     implicitHeight: layout.implicitHeight + (_margins * 2)
     color:          qgcPal.window
     opacity:        0.8
@@ -76,6 +83,18 @@ Rectangle {
     /// two pairs to a row instead of six rows of one, half the width for double the height -- taken
     /// the other way: full width, half the columns.
     property bool compactColumns: false
+
+    /// Whether the three view buttons fit across the column side by side.
+    ///
+    /// Measured off what each button asks for on its own, never off the row's own width: a row that is
+    /// three across is wider than one that is stacked, so asking the row would make the answer change
+    /// the question and leave the layout oscillating between the two.
+    readonly property bool _viewButtonsFitOneRow: (maximumWidth <= 0)
+                                                    || ((centreOnVehicleButton.implicitWidth
+                                                            + centreOnOriginButton.implicitWidth
+                                                            + clearTrailButton.implicitWidth
+                                                            + (ScreenTools.defaultFontPixelWidth * 2))
+                                                        <= (maximumWidth - (_margins * 2)))
 
     /// How wide a warning is allowed to make this panel.
     ///
@@ -194,6 +213,9 @@ Rectangle {
         id:                 layout
         anchors.margins:    _root._margins
         anchors.left:       parent.left
+        // Anchored to both edges, so a clamped panel hands the clamp down to what it holds instead of
+        // letting it draw past the background
+        anchors.right:      parent.right
         anchors.top:        parent.top
         spacing:            0
 
@@ -284,242 +306,282 @@ Rectangle {
                 width:      bodyFlickable.width
                 spacing:    layout.spacing
 
-            GridLayout {
-                objectName:     "localGrid_readoutNumbers"
-                visible:        !_root.collapsed
-                // Two pairs to a row rather than six rows of one. The first two rows each hold one idea
-                // whole: where the vehicle is in the frame's own axes, then the same position said as the
-                // range and bearing a return leg is flown on. The third pairs the two that are left over
-                // and means nothing by being together -- which is the price of the halved height, and
-                // cheap at six numbers.
+                GridLayout {
+                    objectName:     "localGrid_readoutNumbers"
+                    visible:        !_root.collapsed
+                    // Two pairs to a row rather than six rows of one. The first two rows each hold one idea
+                    // whole: where the vehicle is in the frame's own axes, then the same position said as the
+                    // range and bearing a return leg is flown on. The third pairs the two that are left over
+                    // and means nothing by being together -- which is the price of the halved height, and
+                    // cheap at six numbers.
+                    //
+                    // compactColumns takes the same trade the other way: one pair to a row, full width for
+                    // each label, half again the height. maximumWidth alone cannot narrow this panel -- a
+                    // Layout does not shrink its children to fit -- so on a narrow view the column count
+                    // itself has to be what changes.
+                    Layout.fillWidth: true
+                    columns:        _root.compactColumns ? 2 : 4
+                    columnSpacing:  ScreenTools.defaultFontPixelWidth
+                    rowSpacing:     0
+
+                    QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("North") }
+                    QGCLabel {
+                        font.pointSize:         ScreenTools.smallFontPointSize
+                        horizontalAlignment:    Text.AlignRight
+                        Layout.fillWidth:       true
+                        // The value column is what has to give when the labels beside it and the
+                        // column's own share of the view leave it short. A reading long enough to
+                        // elide is one an aircraft flying on optical flow is already well outside.
+                        Layout.minimumWidth:    0
+                        elide:                  Text.ElideRight
+                        text:                   _root._distanceText(_root._north)
+                    }
+
+                    QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("East") }
+                    QGCLabel {
+                        font.pointSize:         ScreenTools.smallFontPointSize
+                        horizontalAlignment:    Text.AlignRight
+                        Layout.fillWidth:       true
+                        // The value column is what has to give when the labels beside it and the
+                        // column's own share of the view leave it short. A reading long enough to
+                        // elide is one an aircraft flying on optical flow is already well outside.
+                        Layout.minimumWidth:    0
+                        elide:                  Text.ElideRight
+                        text:                   _root._distanceText(_root._east)
+                    }
+
+                    QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Range") }
+                    QGCLabel {
+                        font.pointSize:         ScreenTools.smallFontPointSize
+                        horizontalAlignment:    Text.AlignRight
+                        Layout.fillWidth:       true
+                        // The value column is what has to give when the labels beside it and the
+                        // column's own share of the view leave it short. A reading long enough to
+                        // elide is one an aircraft flying on optical flow is already well outside.
+                        Layout.minimumWidth:    0
+                        elide:                  Text.ElideRight
+                        text:                   _root._distanceText(_root._range)
+                    }
+
+                    // Beside the range, because the two are read as one figure: how far, and which way.
+                    QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Bearing") }
+                    QGCLabel {
+                        font.pointSize:         ScreenTools.smallFontPointSize
+                        horizontalAlignment:    Text.AlignRight
+                        Layout.fillWidth:       true
+                        // The value column is what has to give when the labels beside it and the
+                        // column's own share of the view leave it short. A reading long enough to
+                        // elide is one an aircraft flying on optical flow is already well outside.
+                        Layout.minimumWidth:    0
+                        elide:                  Text.ElideRight
+                        text:                   isNaN(_root._bearing) ? qsTr("--") : Math.round(_root._bearing) + "°"
+                    }
+
+                    // Kept as a number rather than a rose of its own -- the fly view's instrument panel
+                    // already draws one, and reading a heading off a dial by eye is the estimate this whole
+                    // grid exists to replace.
+                    QGCLabel { objectName: "localGrid_headingLabel"; font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Heading") }
+                    QGCLabel {
+                        objectName:             "localGrid_headingValue"
+                        font.pointSize:         ScreenTools.smallFontPointSize
+                        horizontalAlignment:    Text.AlignRight
+                        Layout.fillWidth:       true
+                        // The value column is what has to give when the labels beside it and the
+                        // column's own share of the view leave it short. A reading long enough to
+                        // elide is one an aircraft flying on optical flow is already well outside.
+                        Layout.minimumWidth:    0
+                        elide:                  Text.ElideRight
+                        // Dashes rather than a zero. The instrument panel's compass reads its heading as
+                        // zero when the vehicle has not sent one, which points confidently at north; this
+                        // one says it does not know.
+                        text:                   isNaN(_root._heading) ? qsTr("--") : Math.round(_root._heading) + "°"
+                    }
+
+                    // Distance along the trail rather than from the origin. Drift on this kind of navigation
+                    // accumulates with ground covered, so this is the denominator the error is quoted
+                    // against -- and "range 0.4 m after flying 80 m" is a very different result from
+                    // "range 0.4 m after hovering".
+                    QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Flown") }
+                    QGCLabel {
+                        font.pointSize:         ScreenTools.smallFontPointSize
+                        horizontalAlignment:    Text.AlignRight
+                        Layout.fillWidth:       true
+                        // The value column is what has to give when the labels beside it and the
+                        // column's own share of the view leave it short. A reading long enough to
+                        // elide is one an aircraft flying on optical flow is already well outside.
+                        Layout.minimumWidth:    0
+                        elide:                  Text.ElideRight
+                        text:                   _root.gridView ? _root._distanceText(_root.gridView.trailLengthMetres) : qsTr("--")
+                    }
+                }
+
+                // Spelled out rather than left as an empty grid: a view with no vehicle data looks exactly
+                // like a view of a vehicle sitting on the origin.
+                QGCLabel {
+                    Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
+                    visible:            !_root._valid
+                    font.pointSize:     ScreenTools.smallFontPointSize
+                    color:              qgcPal.colorOrange
+                    text:               qsTr("No local position telemetry")
+                }
+
+                // The numbers above are the last ones that arrived, and every one of them still reads as a
+                // measurement. Said in words with an age against it, because the figures themselves cannot
+                // say how old they are -- and a frozen readout is indistinguishable from a steady hover.
+                QGCLabel {
+                    objectName:             "localGrid_staleWarning"
+                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+                    Layout.fillWidth:       true
+                    Layout.maximumWidth:    _root._warningWidth
+                    visible:                _root._stale
+                    wrapMode:               Text.WordWrap
+                    font.pointSize:         ScreenTools.smallFontPointSize
+                    font.bold:              true
+                    color:                  qgcPal.colorOrange
+                    text:                   qsTr("Position %1 s old — not current").arg(
+                                                isNaN(_root._ageSeconds) ? "--" : Math.round(_root._ageSeconds))
+                }
+
+                // What the estimator thinks of its own solution. Kept here rather than left to the non-GPS
+                // status panel: that panel is a separate window the operator cannot watch while flying the
+                // grid, and this is the one fact that decides whether anything else on this grid means
+                // anything. Silent while the solution is healthy, so it is never background noise.
+                QGCLabel {
+                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+                    Layout.fillWidth:       true
+                    Layout.maximumWidth:    _root._warningWidth
+                    visible:                _root._estimatorDegraded && (_root._estimatorWarning !== "")
+                    wrapMode:               Text.WordWrap
+                    font.pointSize:         ScreenTools.smallFontPointSize
+                    font.bold:              _root._estimatorSevere
+                    // Matched to the vehicle marker, which goes to a red outline for the same conditions.
+                    // Two different colours for one state reads as two different problems.
+                    color:                  _root._estimatorSevere ? qgcPal.colorRed : qgcPal.colorOrange
+                    text:                   _root._estimatorWarning
+                }
+
+                // Said here rather than left to the operator to spot in the Range figure above. That figure
+                // is as large for an aircraft parked away from the origin as for one whose frame has slid,
+                // and only one of those is a fault -- so the number alone cannot raise this, and a warning
+                // built on it would fire every flight and be learned away.
+                QGCLabel {
+                    objectName:             "localGrid_driftWarning"
+                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+                    Layout.fillWidth:       true
+                    Layout.maximumWidth:    _root._warningWidth
+                    visible:                _root._drifting
+                    wrapMode:               Text.WordWrap
+                    font.pointSize:         ScreenTools.smallFontPointSize
+                    color:                  qgcPal.colorOrange
+                    text:                   _root._driftWarning
+                }
+
+                // The ceiling the plan was checked against, now checked against where the vehicle actually
+                // is. A plan flown exactly as drawn still arrives here when the operator climbs by hand or
+                // the ground falls away under a level pattern -- and above the rangefinder's range the
+                // estimator has no height source at all.
+                QGCLabel {
+                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+                    Layout.fillWidth:       true
+                    Layout.maximumWidth:    _root._warningWidth
+                    visible:                _root._nearCeiling
+                    wrapMode:               Text.WordWrap
+                    font.pointSize:         ScreenTools.smallFontPointSize
+                    font.bold:              _root._aboveCeiling
+                    color:                  _root._aboveCeiling ? qgcPal.colorRed : qgcPal.colorOrange
+                    text:                   _root._aboveCeiling
+                                                ? qsTr("%1 — above the rangefinder's %2 range. The estimator has no height reference. Descend.")
+                                                    .arg(_root._distanceText(_root._height))
+                                                    .arg(_root._limitText)
+                                                : qsTr("%1 — nearing the rangefinder's %2 range.")
+                                                    .arg(_root._distanceText(_root._height))
+                                                    .arg(_root._limitText)
+                }
+
+                // Kept here rather than left to the banner the fly view already has for it. That banner
+                // stands in the middle of the view for thirty-five seconds and then takes the reason away
+                // with it, so an operator who was watching the aircraft rather than the screen is told
+                // nothing; this line stays for as long as the vehicle is refusing. It sits directly above the
+                // origin button because the commonest reason on this way of flying -- the estimator having no
+                // position to arm against -- is the one that button fixes.
+                QGCLabel {
+                    objectName:             "localGrid_armingWarning"
+                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
+                    Layout.fillWidth:       true
+                    Layout.maximumWidth:    _root._warningWidth
+                    visible:                _root._armingWarning !== ""
+                    wrapMode:               Text.WordWrap
+                    font.pointSize:         ScreenTools.smallFontPointSize
+                    // Orange rather than red: the aircraft is on the ground and being kept there, which is
+                    // the check working. Red on this panel means the picture cannot be trusted.
+                    color:                  qgcPal.colorOrange
+                    text:                   _root._armingWarning
+                }
+
+                // Only while there is no origin, which is the one state where nothing else on this view means
+                // anything -- so it earns the width and the highlight. Once an origin exists, changing it is
+                // a rare and consequential thing that moves the frame every position and waypoint is measured
+                // in, and it moves to the correction dialog on the origin marker rather than standing in the
+                // middle of a panel of live numbers.
+                QGCButton {
+                    objectName:         "localGrid_setOriginButton"
+                    Layout.fillWidth:   true
+                    Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
+                    visible:            _root.gridView ? !_root.gridView.originKnown : false
+                    primary:            true
+                    text:               qsTr("Set Estimator Origin…")
+                    onClicked:          _root.setOriginRequested()
+                }
+
+                // Folded away with the numbers. These aim the camera and clear a drawn line -- nothing about
+                // them is urgent, and an operator who has folded the panel to see the grid is not looking for
+                // them. They stay here rather than joining the mission strip in the far corner: that panel
+                // already carries a Clear that wipes the flight plan, and a Clear trail beside it would be two
+                // buttons a glance apart with very different consequences.
                 //
-                // compactColumns takes the same trade the other way: one pair to a row, full width for
-                // each label, half again the height. maximumWidth alone cannot narrow this panel -- a
-                // Layout does not shrink its children to fit -- so on a narrow view the column count
-                // itself has to be what changes.
-                Layout.fillWidth: true
-                columns:        _root.compactColumns ? 2 : 4
-                columnSpacing:  ScreenTools.defaultFontPixelWidth
-                rowSpacing:     0
+                // One row where three of them fit across the column, and one per row where they do not. They
+                // were one row on every width, and that is what pushed this whole panel past the width the
+                // column says it may have: three buttons carrying their own labels need 213px, and a third of
+                // a 400px view is 133. A Layout does not shrink its children to fit -- the same rule the
+                // numbers above change their column count for -- so the arrangement is what has to give.
+                //
+                // The trade is deliberately the opposite way round on a narrow view than on a short one.
+                // Stacking spends height to save width, and a view narrow enough to force it is a phone in
+                // portrait, which has height to spare and none of the width. Driven off each button's own
+                // natural width rather than off the row's, because the row's changes with the answer.
+                GridLayout {
+                    objectName:         "localGrid_readoutViewButtons"
+                    visible:            !_root.collapsed
+                    Layout.fillWidth:   true
+                    Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
+                    columnSpacing:      ScreenTools.defaultFontPixelWidth
+                    rowSpacing:         ScreenTools.defaultFontPixelHeight / 4
+                    columns:            _root._viewButtonsFitOneRow ? 3 : 1
 
-                QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("North") }
-                QGCLabel {
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    horizontalAlignment:    Text.AlignRight
-                    Layout.fillWidth:       true
-                    text:                   _root._distanceText(_root._north)
+                    QGCButton {
+                        id:               centreOnVehicleButton
+                        Layout.fillWidth: true
+                        text:             qsTr("Vehicle")
+                        enabled:          _root._valid && _root.gridView && !_root.gridView.followVehicle
+                        onClicked:        _root.gridView.centreOnVehicle()
+                    }
+
+                    QGCButton {
+                        id:               centreOnOriginButton
+                        Layout.fillWidth: true
+                        text:             qsTr("Origin")
+                        enabled:          _root.gridView !== null
+                        onClicked:        _root.gridView.centreOnOrigin()
+                    }
+
+                    QGCButton {
+                        id:               clearTrailButton
+                        Layout.fillWidth: true
+                        text:             qsTr("Clear trail")
+                        enabled:          _root.gridView && (_root.gridView.trailPointCount > 0)
+                        onClicked:        _root.gridView.clearTrail()
+                    }
                 }
-
-                QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("East") }
-                QGCLabel {
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    horizontalAlignment:    Text.AlignRight
-                    Layout.fillWidth:       true
-                    text:                   _root._distanceText(_root._east)
-                }
-
-                QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Range") }
-                QGCLabel {
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    horizontalAlignment:    Text.AlignRight
-                    Layout.fillWidth:       true
-                    text:                   _root._distanceText(_root._range)
-                }
-
-                // Beside the range, because the two are read as one figure: how far, and which way.
-                QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Bearing") }
-                QGCLabel {
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    horizontalAlignment:    Text.AlignRight
-                    Layout.fillWidth:       true
-                    text:                   isNaN(_root._bearing) ? qsTr("--") : Math.round(_root._bearing) + "°"
-                }
-
-                // Kept as a number rather than a rose of its own -- the fly view's instrument panel
-                // already draws one, and reading a heading off a dial by eye is the estimate this whole
-                // grid exists to replace.
-                QGCLabel { objectName: "localGrid_headingLabel"; font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Heading") }
-                QGCLabel {
-                    objectName:             "localGrid_headingValue"
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    horizontalAlignment:    Text.AlignRight
-                    Layout.fillWidth:       true
-                    // Dashes rather than a zero. The instrument panel's compass reads its heading as
-                    // zero when the vehicle has not sent one, which points confidently at north; this
-                    // one says it does not know.
-                    text:                   isNaN(_root._heading) ? qsTr("--") : Math.round(_root._heading) + "°"
-                }
-
-                // Distance along the trail rather than from the origin. Drift on this kind of navigation
-                // accumulates with ground covered, so this is the denominator the error is quoted
-                // against -- and "range 0.4 m after flying 80 m" is a very different result from
-                // "range 0.4 m after hovering".
-                QGCLabel { font.pointSize: ScreenTools.smallFontPointSize; text: qsTr("Flown") }
-                QGCLabel {
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    horizontalAlignment:    Text.AlignRight
-                    Layout.fillWidth:       true
-                    text:                   _root.gridView ? _root._distanceText(_root.gridView.trailLengthMetres) : qsTr("--")
-                }
-            }
-
-            // Spelled out rather than left as an empty grid: a view with no vehicle data looks exactly
-            // like a view of a vehicle sitting on the origin.
-            QGCLabel {
-                Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
-                visible:            !_root._valid
-                font.pointSize:     ScreenTools.smallFontPointSize
-                color:              qgcPal.colorOrange
-                text:               qsTr("No local position telemetry")
-            }
-
-            // The numbers above are the last ones that arrived, and every one of them still reads as a
-            // measurement. Said in words with an age against it, because the figures themselves cannot
-            // say how old they are -- and a frozen readout is indistinguishable from a steady hover.
-            QGCLabel {
-                objectName:             "localGrid_staleWarning"
-                Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                Layout.fillWidth:       true
-                Layout.maximumWidth:    _root._warningWidth
-                visible:                _root._stale
-                wrapMode:               Text.WordWrap
-                font.pointSize:         ScreenTools.smallFontPointSize
-                font.bold:              true
-                color:                  qgcPal.colorOrange
-                text:                   qsTr("Position %1 s old — not current").arg(
-                                            isNaN(_root._ageSeconds) ? "--" : Math.round(_root._ageSeconds))
-            }
-
-            // What the estimator thinks of its own solution. Kept here rather than left to the non-GPS
-            // status panel: that panel is a separate window the operator cannot watch while flying the
-            // grid, and this is the one fact that decides whether anything else on this grid means
-            // anything. Silent while the solution is healthy, so it is never background noise.
-            QGCLabel {
-                Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                Layout.fillWidth:       true
-                Layout.maximumWidth:    _root._warningWidth
-                visible:                _root._estimatorDegraded && (_root._estimatorWarning !== "")
-                wrapMode:               Text.WordWrap
-                font.pointSize:         ScreenTools.smallFontPointSize
-                font.bold:              _root._estimatorSevere
-                // Matched to the vehicle marker, which goes to a red outline for the same conditions.
-                // Two different colours for one state reads as two different problems.
-                color:                  _root._estimatorSevere ? qgcPal.colorRed : qgcPal.colorOrange
-                text:                   _root._estimatorWarning
-            }
-
-            // Said here rather than left to the operator to spot in the Range figure above. That figure
-            // is as large for an aircraft parked away from the origin as for one whose frame has slid,
-            // and only one of those is a fault -- so the number alone cannot raise this, and a warning
-            // built on it would fire every flight and be learned away.
-            QGCLabel {
-                objectName:             "localGrid_driftWarning"
-                Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                Layout.fillWidth:       true
-                Layout.maximumWidth:    _root._warningWidth
-                visible:                _root._drifting
-                wrapMode:               Text.WordWrap
-                font.pointSize:         ScreenTools.smallFontPointSize
-                color:                  qgcPal.colorOrange
-                text:                   _root._driftWarning
-            }
-
-            // The ceiling the plan was checked against, now checked against where the vehicle actually
-            // is. A plan flown exactly as drawn still arrives here when the operator climbs by hand or
-            // the ground falls away under a level pattern -- and above the rangefinder's range the
-            // estimator has no height source at all.
-            QGCLabel {
-                Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                Layout.fillWidth:       true
-                Layout.maximumWidth:    _root._warningWidth
-                visible:                _root._nearCeiling
-                wrapMode:               Text.WordWrap
-                font.pointSize:         ScreenTools.smallFontPointSize
-                font.bold:              _root._aboveCeiling
-                color:                  _root._aboveCeiling ? qgcPal.colorRed : qgcPal.colorOrange
-                text:                   _root._aboveCeiling
-                                            ? qsTr("%1 — above the rangefinder's %2 range. The estimator has no height reference. Descend.")
-                                                .arg(_root._distanceText(_root._height))
-                                                .arg(_root._limitText)
-                                            : qsTr("%1 — nearing the rangefinder's %2 range.")
-                                                .arg(_root._distanceText(_root._height))
-                                                .arg(_root._limitText)
-            }
-
-            // Kept here rather than left to the banner the fly view already has for it. That banner
-            // stands in the middle of the view for thirty-five seconds and then takes the reason away
-            // with it, so an operator who was watching the aircraft rather than the screen is told
-            // nothing; this line stays for as long as the vehicle is refusing. It sits directly above the
-            // origin button because the commonest reason on this way of flying -- the estimator having no
-            // position to arm against -- is the one that button fixes.
-            QGCLabel {
-                objectName:             "localGrid_armingWarning"
-                Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                Layout.fillWidth:       true
-                Layout.maximumWidth:    _root._warningWidth
-                visible:                _root._armingWarning !== ""
-                wrapMode:               Text.WordWrap
-                font.pointSize:         ScreenTools.smallFontPointSize
-                // Orange rather than red: the aircraft is on the ground and being kept there, which is
-                // the check working. Red on this panel means the picture cannot be trusted.
-                color:                  qgcPal.colorOrange
-                text:                   _root._armingWarning
-            }
-
-            // Only while there is no origin, which is the one state where nothing else on this view means
-            // anything -- so it earns the width and the highlight. Once an origin exists, changing it is
-            // a rare and consequential thing that moves the frame every position and waypoint is measured
-            // in, and it moves to the correction dialog on the origin marker rather than standing in the
-            // middle of a panel of live numbers.
-            QGCButton {
-                objectName:         "localGrid_setOriginButton"
-                Layout.fillWidth:   true
-                Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
-                visible:            _root.gridView ? !_root.gridView.originKnown : false
-                primary:            true
-                text:               qsTr("Set Estimator Origin…")
-                onClicked:          _root.setOriginRequested()
-            }
-
-            // Folded away with the numbers. These aim the camera and clear a drawn line -- nothing about
-            // them is urgent, and an operator who has folded the panel to see the grid is not looking for
-            // them. They stay here rather than joining the mission strip in the far corner: that panel
-            // already carries a Clear that wipes the flight plan, and a Clear trail beside it would be two
-            // buttons a glance apart with very different consequences.
-            // One row, and one row on every width. Wrapping the odd button onto a second row narrowed the
-            // panel by exactly one button and lengthened it by a whole row -- the wrong way round for the
-            // column this panel is the top of, where every row taken here is a row the plan list below
-            // cannot open into. The three share the width the numbers and warnings above have already
-            // settled instead of each insisting on its own text width, so the row costs one button's
-            // height whatever the view is doing.
-            RowLayout {
-                objectName:         "localGrid_readoutViewButtons"
-                visible:            !_root.collapsed
-                Layout.fillWidth:   true
-                Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
-                spacing:            ScreenTools.defaultFontPixelWidth
-
-                QGCButton {
-                    Layout.fillWidth: true
-                    text:             qsTr("Vehicle")
-                    enabled:          _root._valid && _root.gridView && !_root.gridView.followVehicle
-                    onClicked:        _root.gridView.centreOnVehicle()
-                }
-
-                QGCButton {
-                    Layout.fillWidth: true
-                    text:             qsTr("Origin")
-                    enabled:          _root.gridView !== null
-                    onClicked:        _root.gridView.centreOnOrigin()
-                }
-
-                QGCButton {
-                    Layout.fillWidth: true
-                    text:             qsTr("Clear trail")
-                    enabled:          _root.gridView && (_root.gridView.trailPointCount > 0)
-                    onClicked:        _root.gridView.clearTrail()
-                }
-            }
             }
         }
     }

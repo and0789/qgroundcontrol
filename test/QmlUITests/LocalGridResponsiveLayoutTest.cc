@@ -268,6 +268,62 @@ void LocalGridResponsiveLayoutTest::_panelsDoNotOverlapAtAnySize_test()
         });
 }
 
+/// The right-hand column states how wide it is allowed to be -- a third of the view, or 30 characters,
+/// whichever is narrower -- and the readout at the top of it did not keep to it. On a 400px view that
+/// third is 133px and the readout took 225, better than half the window, squeezing the grid the whole
+/// view exists to show and leaving nothing across the top for anything else to stand in.
+///
+/// The cause is the one its own comments warn about: a Layout does not shrink its children to fit, so
+/// a cap on the panel is not a cap on what is inside it. Checked as a width the panel actually
+/// measures rather than as a property it has been given, since the given one was already correct.
+///
+/// Checked with the readout open, which is when it holds the rows and buttons that drive its width.
+void LocalGridResponsiveLayoutTest::_theRightColumnKeepsToItsShareOfTheWidth_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink> &mockLink, Vehicle *vehicle) {
+            QVERIFY(vehicle);
+            QVERIFY2(giveTheVehicleAnOrigin(vehicle, mockLink), "the vehicle never took an origin");
+
+            QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+            for (const WindowSize &size : kSizesToCheck) {
+                QVERIFY2(_resizeAndSettle(size.width, size.height),
+                         qPrintable(QStringLiteral("the layout never settled at %1 (%2x%3)")
+                                        .arg(size.name).arg(size.width).arg(size.height)));
+
+                QQuickItem *const readout = findVisibleItem(_rootItem, QStringLiteral("localGrid_readout"), 1000);
+                QVERIFY2(readout, "the readout never appeared");
+                readout->setProperty("collapsed", false);
+                QVERIFY2(waitForLayoutToSettle(readout), "the readout never settled after being opened");
+
+
+                const qreal columnMaximum = gridView->property("_rightColumnMaximumWidth").toReal();
+                QVERIFY(columnMaximum > 0);
+
+                for (const QString &panelName : {QStringLiteral("localGrid_readout"),
+                                                 QStringLiteral("localGrid_missionList"),
+                                                 QStringLiteral("localGrid_missionStats")}) {
+                    const QRectF panel = _windowRectFor(panelName);
+                    if (panel.isEmpty()) {
+                        continue;
+                    }
+                    QVERIFY2(panel.width() <= columnMaximum,
+                             qPrintable(QStringLiteral("%1 took %2 of the column's %3 at %4 (%5x%6)")
+                                            .arg(panelName).arg(panel.width()).arg(columnMaximum)
+                                            .arg(size.name).arg(size.width).arg(size.height)));
+                }
+
+                readout->setProperty("collapsed", true);
+                QVERIFY2(waitForLayoutToSettle(readout), "the readout never settled after being folded");
+            }
+        });
+}
+
 /// The non-GPS readout is opened over this view more than any other -- it is the panel of values a
 /// GNSS-denied flight is judged by -- and it had no ceiling of its own. On a short window its last
 /// sections, the EKF innovation ratios among them, were drawn past the bottom edge and could not be
