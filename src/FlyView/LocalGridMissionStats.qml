@@ -40,6 +40,11 @@ Rectangle {
     /// so a phone does not spend its width on a number read once per plan.
     property bool collapsed: true
 
+    /// What this panel takes while folded, so the panels above it in the column can reserve room for
+    /// it without asking how tall its contents would be -- which is what would close the loop, since
+    /// its own position comes from theirs.
+    readonly property real collapsedHeight: visible ? (headerBlock.implicitHeight + (_margins * 2)) : 0
+
     readonly property var  _transform: gridView ? gridView.gridTransform : null
     readonly property int  _itemCount: gridView ? gridView.missionPoints.length : 0
     readonly property bool _hasPlan:   _itemCount > 0

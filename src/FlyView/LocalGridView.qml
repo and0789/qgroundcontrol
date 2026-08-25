@@ -158,6 +158,14 @@ Item {
     /// should look different; on a phone it is a third of a much smaller number.
     readonly property real _rightColumnMaximumWidth: Math.min(width / 3, ScreenTools.defaultFontPixelWidth * 30)
 
+    /// Where the right-hand column has to stop.
+    ///
+    /// The fly view stacks the instrument panel and the telemetry bar into the bottom-right corner and
+    /// publishes their top edge as bottomEdgeRightInset. Every panel in this column is anchored to the
+    /// one above it, so without a shared floor the column simply ran on past that edge -- an opened
+    /// readout put its own view buttons, and the plan list under them, behind the compass.
+    readonly property real _rightColumnBottom: height - _margins - _inset("bottomEdgeRightInset")
+
     /// True while this view is too small to carry every panel open at once.
     ///
     /// Derived from this view's own size, never from ScreenTools.isMobile: --fake-mobile flips that
@@ -2688,8 +2696,7 @@ Item {
         // sizes itself from its own contents and never from this panel, so reading its height here
         // closes no loop.
         maximumHeight:          Math.max(collapsedHeight,
-                                         _root.height - y - _root._margins
-                                             - _root._inset("bottomEdgeRightInset")
+                                         _root._rightColumnBottom - y
                                              - (missionStats.visible ? missionStats.height + _root._margins : 0))
         z:                      2
         gridView:               _root
@@ -2894,6 +2901,42 @@ Item {
         }
     }
 
+    /// The plan's transfer workflow and the between-flights work. Draws nothing: the toolbar presses
+    /// the first through it and the prompt below opens the second.
+    LocalGridMissionActions {
+        id:                     missionActionsPanel
+        objectName:             "localGrid_missionActions"
+        planMasterController:   _root.planMasterController
+        gridView:               _root
+    }
+
+    /// One line across the top saying a flight has left something to repair, and opening the dialog
+    /// that repairs it.
+    ///
+    /// The controls behind it were a panel in the bottom-left corner and then in the right-hand
+    /// column, and neither corner is free -- the tool strip grows down the whole left edge on a short
+    /// window, and on an 800x400 view the right column has 138px to divide between the readout, its
+    /// warnings and the plan list. What the panel got was a title with its buttons squeezed out: the
+    /// same failure, moved. This view has no standing room to give on a small screen, so this stops
+    /// asking for it.
+    ///
+    /// Costing a line when there is something to say and nothing when there is not is the same shape
+    /// the undo button and the plan hint are built on, and it is what lets it sit in the top-centre
+    /// band without a width that has to be negotiated against either column.
+    QGCButton {
+        objectName:             "localGrid_afterFlightPrompt"
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top:            planHint.visible ? planHint.bottom : parent.top
+        anchors.topMargin:      _root._margins + (planHint.visible
+                                                    ? 0
+                                                    : _root.topEdgeOffset + _root._inset("topEdgeCenterInset"))
+        z:                      3
+        primary:                true
+        visible:                missionActionsPanel.hasAfterFlightWork
+        text:                   qsTr("After a flight…")
+        onClicked:              missionActionsPanel.showAfterFlightDialog()
+    }
+
     // Bottom left, the corner the waypoint panel gave up when it moved under the readout. Declared
     // first so missionActions below can sit its bottom margin on this panel's actual measured height
     // rather than on a number guessed to be tall enough -- which stopped being tall enough the moment
@@ -2907,32 +2950,14 @@ Item {
         gridTransform:          transform
     }
 
-    // Sits above the scale bar it is measured from. Its own height is capped rather than left to grow
-    // as tall as its content wants: this is the one panel on the grid anchored to the bottom that
-    // grows upward, and the tool strip -- anchored to the top of this same left edge -- is what it
-    // grows into. topEdgeLeftInset is the tool strip's own bottom edge, published for exactly this: a
-    // panel on the same edge knowing where the other one ends.
-    //
-    // topEdgeOffset is added on top of it for the same reason the readout's topMargin adds it to
-    // topEdgeRightInset: the inset is measured in the fly view's own frame, which starts below the
-    // toolbar, while this view's frame -- and so this panel's own y -- starts above it. Left out, the
-    // tool strip's edge reads a whole toolbar's height higher than it actually sits, and the cap
-    // this exists to enforce comes out too generous by exactly that much.
-    LocalGridMissionActions {
-        id:                     missionActionsPanel
-        objectName:             "localGrid_missionActions"
-        anchors.left:           parent.left
-        anchors.bottom:         parent.bottom
-        anchors.leftMargin:     _root._margins + _root._inset("leftEdgeBottomInset")
-        anchors.bottomMargin:   scaleBar.anchors.bottomMargin + scaleBar.height + _root._margins
-        height:                 implicitHeight
-        maximumHeight:          Math.max(0, (_root.height - anchors.bottomMargin)
-                                                - _root.topEdgeOffset - _root._inset("topEdgeLeftInset")
-                                                - _root._margins)
-        z:                      2
-        planMasterController:   _root.planMasterController
-        gridView:               _root
-    }
+    /// How much of the bottom-left edge this view is standing on, for the fly view's own panels on
+    /// that edge to keep clear of.
+    ///
+    /// Read directly rather than published as a tool inset: the insets flow one way -- the widget
+    /// layer works them out and the overlays, this view among them, lay out against them -- so
+    /// feeding one back would close the circle. This is a plain number off a panel whose height comes
+    /// from nothing but its own contents, so nothing here depends on what reads it.
+    readonly property real bottomLeftReserved: visible ? (scaleBar.height + (_margins * 2)) : 0
 
     // Pinned to the top right corner, and deliberately not set back by the right edge inset. That
     // inset reserves room for the instrument panel whether or not it is open, which left the readout
@@ -2951,6 +2976,15 @@ Item {
         anchors.rightMargin:    _root._margins
         anchors.topMargin:      _root.topEdgeOffset + _root._margins + _root._inset("topEdgeRightInset")
         maximumWidth:           _root._rightColumnMaximumWidth
+        // What is left down to the column's floor once the panels below have been given the room they
+        // take folded. Their folded heights rather than their actual ones: each of them is anchored
+        // under this panel, so reading what they currently measure would close a loop through this
+        // panel's own height. Folded is also the honest reservation -- an operator who opens the plan
+        // list is choosing to spend room this panel would otherwise have.
+        maximumHeight:          Math.max(0, _root._rightColumnBottom - y
+                                                - (airspeed.visible ? airspeed.height + _root._margins : 0)
+                                                - (missionList.collapsedHeight + _root._margins)
+                                                - (missionStats.visible ? missionStats.collapsedHeight + _root._margins : 0))
         compactColumns:         _root.compact
         gridView:               _root
         onSetOriginRequested:   _root.showSetOriginDialog()

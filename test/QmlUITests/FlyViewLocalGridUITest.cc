@@ -538,6 +538,44 @@ void FlyViewLocalGridUITest::_aFingerCanPickUpAWaypointAndMoveIt_test()
                     });
 }
 
+/// The after-flight work is a prompt across the top and a dialog behind it, rather than a panel
+/// standing on the view.
+///
+/// A panel was tried in both corners this view has and neither is free -- the tool strip grows down
+/// the whole left edge on a short window, and the right-hand column has 138px to divide between the
+/// readout, its warnings and the plan list on an 800x400 view. Both times what the panel got was a
+/// title with its buttons squeezed out. The prompt costs a line and the dialog has room at any window
+/// size, which is what this checks: that pressing the one opens the other with both repairs in it.
+void FlyViewLocalGridUITest::_theAfterFlightPromptOpensItsRepairs_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink>& mockLink, Vehicle* vehicle) {
+            QQuickItem* const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+            QVERIFY2(gridView, "the local grid never became visible with the setting on");
+            QVERIFY2(LocalGridTestSupport::giveTheVehicleAnOrigin(vehicle, mockLink),
+                     "the vehicle never took an origin");
+
+            // MockLink flies its reported position five metres either side of the origin, which is the
+            // drift the correction exists to repair -- so the prompt has something to offer without a
+            // plan being drawn at all.
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("localGrid_afterFlightPrompt"), 5000),
+                     "the prompt never appeared with the estimator reporting drift off the origin");
+            QVERIFY2(clickButton(QStringLiteral("localGrid_afterFlightPrompt")),
+                     "the after-flight prompt could not be clicked");
+
+            QVERIFY2(waitForDialog(QStringLiteral("After a flight")), "the after-flight dialog never opened");
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("localGrid_standOnOriginButton"), 2000),
+                     "the dialog opened without the correction that made the prompt appear");
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("localGrid_afterFlightSection"), 1000),
+                     "the dialog opened without its after-flight section");
+
+            QTest::keyClick(_window, Qt::Key_Escape);
+        });
+}
+
 /// The plan's transfers live in the toolbar, in one place, for as long as the grid is showing an
 /// aircraft on the ground -- desktop or phone, plan mode or not.
 ///
@@ -593,9 +631,9 @@ void FlyViewLocalGridUITest::_theToolbarCarriesThePlanActionsAtEverySize_test()
             // to offer. Its confirmations still have to reach the operator: parented to that panel
             // they would go wherever it went, which is the whole of the toolbar's Clear, Download and
             // Upload silently doing nothing.
-            QVERIFY2(verifyVisibility(QStringLiteral("localGrid_missionActions"), false,
+            QVERIFY2(verifyVisibility(QStringLiteral("localGrid_afterFlightPrompt"), false,
                                       QStringLiteral("no origin, no plan")),
-                     "the after-flight panel was on screen with nothing to repair");
+                     "the after-flight prompt was on screen with nothing to repair");
             QVERIFY2(clickButton(QStringLiteral("toolbar_localGridDownloadButton")),
                      "Download could not be clicked in the overflow panel");
             QVERIFY2(waitForDialog(QStringLiteral("Download")),

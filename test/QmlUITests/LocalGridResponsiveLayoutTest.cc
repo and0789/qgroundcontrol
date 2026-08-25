@@ -29,15 +29,28 @@ const QStringList kStandingPanels = {
     QStringLiteral("localGrid_readout"),
     QStringLiteral("localGrid_airspeed"),
     QStringLiteral("localGrid_missionList"),
-    QStringLiteral("localGrid_missionActions"),
     QStringLiteral("localGrid_scaleBar"),
 };
 
-/// The tool strip is not one of the grid's own panels -- it belongs to the fly view as a whole, and
-/// stays on screen in map mode too. It is checked here anyway: it is anchored top-left, missionActions
-/// is anchored bottom-left with nothing capping how tall it grows, and the two sharing that edge is
-/// exactly the collision an operator meets, not a hypothetical one.
-const QStringList kOverlapCheckedPanels = kStandingPanels + QStringList{QStringLiteral("flyView_toolStrip")};
+/// Two of the fly view's own widgets are checked alongside the grid's, because the grid's panels are
+/// anchored against their edges and a mistake there lands on top of them rather than off the window.
+///
+/// The tool strip is anchored top-left and grows down that edge; on a short window it reaches the
+/// bottom, which is what drove the after-flight panel out of that corner.
+///
+/// The bottom-right row -- the telemetry bar and the instrument panel -- is the floor the whole
+/// right-hand column is measured against. Leaving it out of this list is why an opened readout could
+/// put its own view buttons, and the plan list under them, behind the compass with every test here
+/// still passing.
+const QStringList kOverlapCheckedPanels = kStandingPanels + QStringList{
+    QStringLiteral("flyView_toolStrip"),
+    QStringLiteral("flyView_bottomRightRowLayout"),
+    // The after-flight prompt is transient, so it is not one of the standing panels the chrome budget
+    // is measured against -- but it is centred across the top between two columns whose widths follow
+    // their own contents, which is exactly the arrangement that turns out to be luck rather than
+    // layout. Checked here whenever it is on screen; skipped, like any hidden panel, when it is not.
+    QStringLiteral("localGrid_afterFlightPrompt"),
+};
 
 struct WindowSize {
     const char *name;
@@ -66,12 +79,6 @@ const QList<WindowSize> kSizesToCheck = {
     {.name = "10-inch ground station", .width = 1280, .height = 800, .chromeBudgetPercent = 15.0},
     {.name = "desktop", .width = 1600, .height = 900, .chromeBudgetPercent = 15.0},
 };
-
-/// Heights the window is walked down, at a width wide enough that nothing on the right-hand column is
-/// what runs the left edge out of room. Each step is checked for the tool strip having taken the whole
-/// edge, and the first that has is the one the cap is tested at.
-const QList<int> kShrinkingHeights = {440, 400, 360, 320, 280, 240};
-constexpr int kFullEdgeWindowWidth = 800;
 
 /// Waits until \a item's mapped rect stops moving between two samples, so a measurement taken right
 /// after a resize is not caught mid-relayout. There is no animation on any of these panels' anchors,
@@ -105,19 +112,18 @@ QRectF LocalGridResponsiveLayoutTest::_windowRectFor(const QString &objectName)
     return {item->mapToScene(QPointF(0, 0)), QSizeF(item->width(), item->height())};
 }
 
-/// The most anchor-dependent panel is watched for settling -- missionActions, which is positioned off
-/// the scale bar's measured height as well as the window's edges -- because every panel here reflows
-/// in the same polish pass; there is nothing to gain from watching more than one.
+/// The plan list is watched for settling: it is the panel furthest down the chain of anchors on the
+/// right-hand edge, so it is the last to stop moving, and every panel here reflows in the same polish
+/// pass anyway.
 ///
-/// The scale bar stands in when that panel is not on screen. missionActions is between-flights work
-/// and takes itself off the grid while the aircraft is armed, and a settle helper that reported "the
-/// layout never settled" for a panel that had correctly gone away would blame the layout for a state
-/// the view is supposed to have. The scale bar is anchored to the same corner and reflows in the same
-/// pass, so it answers the same question.
+/// The scale bar stands in when the list is not on screen -- it is on the opposite corner and reflows
+/// in the same pass, so it answers the same question, and a settle helper that reported "the layout
+/// never settled" for a panel that had correctly gone away would blame the layout for a state the view
+/// is supposed to have.
 bool LocalGridResponsiveLayoutTest::_resizeAndSettle(int width, int height)
 {
     _window->resize(width, height);
-    QQuickItem *settleTarget = findVisibleItem(_rootItem, QStringLiteral("localGrid_missionActions"), 1000);
+    QQuickItem *settleTarget = findVisibleItem(_rootItem, QStringLiteral("localGrid_missionList"), 1000);
     if (settleTarget == nullptr) {
         settleTarget = findVisibleItem(_rootItem, QStringLiteral("localGrid_scaleBar"), 1000);
     }
@@ -193,13 +199,15 @@ void LocalGridResponsiveLayoutTest::_panelsStayInsideThePhoneWindow_test()
 /// No two of the checked panels are allowed to cover each other. A control hidden under another
 /// panel is indistinguishable, from the operator's seat, from a control that was never built.
 ///
-/// Checked disarmed, which is now the state that makes missionActions tallest -- and the only one in
-/// which it is on screen at all. It used to be checked armed, on the opposite reasoning: the panel
-/// carries no cap on how tall it grows, and armed added the longest wrapped label it ever showed (the
-/// reason its between-flights controls were locked). That whole panel is between-flights work and now
-/// stands down while the aircraft is armed, so armed is the state with the least on this edge, not
-/// the most. Disarmed it carries every control it has, which is what the tool strip above it can
-/// collide with.
+/// Checked disarmed, which is the state the grid's own panels are on screen in at all -- the
+/// after-flight panel stands down while the aircraft is armed, and with it the tallest thing the
+/// right-hand column carries.
+///
+/// Each size is checked twice: once with the readout folded, which is how it starts, and once with it
+/// open. Folded is not the interesting state and never was. The readout is the top of the right-hand
+/// column and everything else in that column is anchored under it, so its open height is what decides
+/// whether the column clears the instrument panel in the corner below -- and open is where an operator
+/// leaves it, since folded it shows a range and a bearing and nothing else.
 void LocalGridResponsiveLayoutTest::_panelsDoNotOverlapAtAnySize_test()
 {
     SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
@@ -218,47 +226,57 @@ void LocalGridResponsiveLayoutTest::_panelsDoNotOverlapAtAnySize_test()
                          qPrintable(QStringLiteral("the layout never settled at %1 (%2x%3)")
                                         .arg(size.name).arg(size.width).arg(size.height)));
 
-                QList<QPair<QString, QRectF>> visiblePanels;
-                for (const QString &panelName : kOverlapCheckedPanels) {
-                    const QRectF panelRect = _windowRectFor(panelName);
-                    if (!panelRect.isEmpty()) {
-                        visiblePanels.append({panelName, panelRect});
+                const auto checkNothingOverlaps = [this, &size](const QString &readoutState) {
+                    QList<QPair<QString, QRectF>> visiblePanels;
+                    for (const QString &panelName : kOverlapCheckedPanels) {
+                        const QRectF panelRect = _windowRectFor(panelName);
+                        if (!panelRect.isEmpty()) {
+                            visiblePanels.append({panelName, panelRect});
+                        }
                     }
+
+                    for (qsizetype i = 0; i < visiblePanels.size(); ++i) {
+                        for (qsizetype j = i + 1; j < visiblePanels.size(); ++j) {
+                            const QRectF overlap = visiblePanels[i].second.intersected(visiblePanels[j].second);
+                            QVERIFY2(overlap.isEmpty(),
+                                     qPrintable(QStringLiteral("%1 and %2 overlap at %3 (%4x%5), readout %6: "
+                                                               "%7 vs %8")
+                                                    .arg(visiblePanels[i].first, visiblePanels[j].first, size.name)
+                                                    .arg(size.width).arg(size.height).arg(readoutState,
+                                                         rectToString(visiblePanels[i].second),
+                                                         rectToString(visiblePanels[j].second))));
+                        }
+                    }
+                };
+
+                checkNothingOverlaps(QStringLiteral("folded"));
+                if (QTest::currentTestFailed()) {
+                    return;
                 }
 
-                for (qsizetype i = 0; i < visiblePanels.size(); ++i) {
-                    for (qsizetype j = i + 1; j < visiblePanels.size(); ++j) {
-                        const QRectF overlap = visiblePanels[i].second.intersected(visiblePanels[j].second);
-                        QVERIFY2(overlap.isEmpty(),
-                                 qPrintable(QStringLiteral("%1 and %2 overlap at %3 (%4x%5): %6 vs %7")
-                                                .arg(visiblePanels[i].first, visiblePanels[j].first, size.name)
-                                                .arg(size.width).arg(size.height)
-                                                .arg(rectToString(visiblePanels[i].second),
-                                                     rectToString(visiblePanels[j].second))));
-                    }
+                QQuickItem *const readout = findVisibleItem(_rootItem, QStringLiteral("localGrid_readout"), 1000);
+                QVERIFY2(readout, "the readout never appeared");
+                readout->setProperty("collapsed", false);
+                QVERIFY2(waitForLayoutToSettle(readout), "the column never settled after opening the readout");
+                checkNothingOverlaps(QStringLiteral("open"));
+                if (QTest::currentTestFailed()) {
+                    return;
                 }
+                readout->setProperty("collapsed", true);
+                QVERIFY2(waitForLayoutToSettle(readout), "the column never settled after folding the readout");
             }
         });
 }
 
-/// The state the panel's height cap exists for, and the one it used to switch itself off in: a tool
-/// strip tall enough to leave the bottom-left corner no room at all.
+/// The non-GPS readout is opened over this view more than any other -- it is the panel of values a
+/// GNSS-denied flight is judged by -- and it had no ceiling of its own. On a short window its last
+/// sections, the EKF innovation ratios among them, were drawn past the bottom edge and could not be
+/// reached at all, and on the way down it covered the grid's scale bar.
 ///
-/// The cap is worked out from the strip's measured bottom edge and clamped at zero. Zero was also the
-/// panel's own word for "no cap at all", so with the edge full the panel stopped being held to
-/// anything and grew its whole body -- five buttons, a transfer bar and the after-flight section --
-/// back up through the strip it was being kept clear of.
-///
-/// Unfolded explicitly, even though the panel now opens by default: folded there is nothing under the
-/// title to outgrow the room and the cap is never consulted, so a default that went back to folding on
-/// a small view would leave this test quietly measuring nothing.
-///
-/// The window is shrunk until the strip actually fills the edge rather than checked at a named size:
-/// how many buttons the strip carries depends on the vehicle and on what the fly view has to offer, so
-/// a height that leaves no room on one build leaves room to spare on another. Whether the edge is full
-/// is read off the scale bar -- anchored in the same corner, sized by nothing but its own contents --
-/// so the panel under test is never asked where it thinks it goes.
-void LocalGridResponsiveLayoutTest::_missionActionsHonourACapOfNoRoomAtAll_test()
+/// Opened through its setting rather than through the tool strip button, so what is checked is the
+/// panel's own bounds rather than whether a button in a strip that may itself be scrolled can be
+/// reached.
+void LocalGridResponsiveLayoutTest::_theNonGpsPanelStaysOnScreenAndOffTheScaleBar_test()
 {
     SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
 
@@ -271,40 +289,31 @@ void LocalGridResponsiveLayoutTest::_missionActionsHonourACapOfNoRoomAtAll_test(
             QQuickItem *const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
             QVERIFY2(gridView, "the local grid never became visible with the setting on");
 
-            bool sawAFullEdge = false;
-            for (const int windowHeight : kShrinkingHeights) {
-                QVERIFY2(_resizeAndSettle(kFullEdgeWindowWidth, windowHeight),
-                         qPrintable(QStringLiteral("the layout never settled at %1x%2")
-                                        .arg(kFullEdgeWindowWidth).arg(windowHeight)));
+            SettingsManager::instance()->flyViewSettings()->showNonGpsStatusPanel()->setRawValue(true);
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("flyView_nonGpsStatusPanel"), 3000),
+                     "the non-GPS panel never appeared with its setting on");
 
-                QQuickItem *const missionActions =
-                    findVisibleItem(_rootItem, QStringLiteral("localGrid_missionActions"), 500);
-                if (missionActions == nullptr) {
-                    continue;
-                }
-                missionActions->setProperty("collapsed", false);
-                QVERIFY2(waitForLayoutToSettle(missionActions),
-                         "the panel never settled after being unfolded");
+            for (const WindowSize &size : kSizesToCheck) {
+                QVERIFY2(_resizeAndSettle(size.width, size.height),
+                         qPrintable(QStringLiteral("the layout never settled at %1 (%2x%3)")
+                                        .arg(size.name).arg(size.width).arg(size.height)));
 
-                const QRectF toolStrip = _windowRectFor(QStringLiteral("flyView_toolStrip"));
-                const QRectF scaleBar  = _windowRectFor(QStringLiteral("localGrid_scaleBar"));
-                if (toolStrip.isEmpty() || scaleBar.isEmpty() || (scaleBar.top() > toolStrip.bottom())) {
-                    continue;   // Room still left under the strip: not the state this test is about
-                }
-                sawAFullEdge = true;
+                const QRectF panel    = _windowRectFor(QStringLiteral("flyView_nonGpsStatusPanel"));
+                const QRectF scaleBar = _windowRectFor(QStringLiteral("localGrid_scaleBar"));
+                QVERIFY2(!panel.isEmpty(), "the non-GPS panel went missing on a resize");
 
-                const qreal collapsedHeight = missionActions->property("collapsedHeight").toReal();
-                QVERIFY(collapsedHeight > 0);
-                QVERIFY2(missionActions->height() <= collapsedHeight,
-                         qPrintable(QStringLiteral("the tool strip leaves no room at %1x%2, and the "
-                                                   "unfolded panel took %3 against a title needing %4")
-                                        .arg(kFullEdgeWindowWidth).arg(windowHeight)
-                                        .arg(missionActions->height()).arg(collapsedHeight)));
+                QVERIFY2(panel.bottom() <= _window->height(),
+                         qPrintable(QStringLiteral("the non-GPS panel ran off the bottom at %1 (%2x%3): %4")
+                                        .arg(size.name).arg(size.width).arg(size.height)
+                                        .arg(rectToString(panel))));
+                QVERIFY2(scaleBar.isEmpty() || panel.intersected(scaleBar).isEmpty(),
+                         qPrintable(QStringLiteral("the non-GPS panel covered the scale bar at %1 (%2x%3): "
+                                                   "%4 vs %5")
+                                        .arg(size.name).arg(size.width).arg(size.height)
+                                        .arg(rectToString(panel), rectToString(scaleBar))));
             }
 
-            QVERIFY2(sawAFullEdge,
-                     "the tool strip never filled the left edge at any height checked, so the cap this "
-                     "test exists for was never exercised");
+            SettingsManager::instance()->flyViewSettings()->showNonGpsStatusPanel()->setRawValue(false);
         });
 }
 

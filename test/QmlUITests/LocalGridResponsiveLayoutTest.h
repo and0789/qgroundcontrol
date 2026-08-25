@@ -26,7 +26,7 @@ protected slots:
 private slots:
     void _panelsStayInsideThePhoneWindow_test();
     void _panelsDoNotOverlapAtAnySize_test();
-    void _missionActionsHonourACapOfNoRoomAtAll_test();
+    void _theNonGpsPanelStaysOnScreenAndOffTheScaleBar_test();
     void _clickPanelStaysInsideTheWindowNearAnEdge_test();
     void _clickPanelDoesNotCoverThePointItDescribes_test();
     void _chromeStaysWithinBudgetAtAnySize_test();
