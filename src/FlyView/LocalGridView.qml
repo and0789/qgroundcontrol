@@ -1922,6 +1922,25 @@ Item {
     readonly property bool canReanchorPlan: !vehicleArmed && canPlaceWaypoints && positionValid
                                                 && _hasMovablePlan && !planStartsAtVehicle
 
+    /// True while the pattern is drawn somewhere other than where the aircraft is standing: the state
+    /// "Fly this plan from here" exists to repair, whether or not it can be repaired this instant.
+    ///
+    /// The after-flight panel shows that control on this rather than on canReanchorPlan, so a
+    /// transient blocker -- a transfer running, a position not yet reported -- leaves a button that
+    /// says why instead of no button at all.
+    readonly property bool planIsDisplacedFromVehicle: _hasMovablePlan && !planStartsAtVehicle
+
+    /// True while the estimator is claiming a position far enough from the origin that standing the
+    /// aircraft back on it would move something.
+    ///
+    /// Held to the same floor as a plan move, and for the same reason: below it the correction on
+    /// offer is inside the noise a stationary estimator reports anyway. Before a flight it is false
+    /// by construction -- the origin was taken where the aircraft stands -- which is what keeps the
+    /// after-flight panel off a grid that has not been flown on yet.
+    readonly property bool originDriftWorthCorrecting: originKnown && positionValid
+                                                        && ((Math.abs(vehicleNorth) >= _reanchorMinimumMetres)
+                                                            || (Math.abs(vehicleEast) >= _reanchorMinimumMetres))
+
     /// Why the plan cannot be moved to the aircraft, or an empty string when it can -- and also when
     /// there is no plan at all, since a grid with nothing drawn on it explains itself.
     ///
@@ -2805,8 +2824,9 @@ Item {
         onClicked:              _root.undoLastAction()
     }
 
-    /// Why a plan button on the tool strip is dead, in the two states where it is dead for a reason
-    /// the operator can act on.
+    /// Why a button the plan needs is dead, in the states where it is dead for a reason the operator
+    /// can act on: two on the tool strip while a pattern is being built, and the altitude ceiling,
+    /// which holds the toolbar's Upload shut whatever mode the view is in.
     ///
     /// A grey button cannot say why, and this grid has already paid for that lesson: the panel this
     /// mode replaced grew refusal reasons of its own because an operator who met a dead button
@@ -2815,24 +2835,38 @@ Item {
     /// nothing-when-idle the undo control above is built on, so the chrome the responsive tests
     /// measure is untouched by default.
     ///
-    /// Silent when there is no origin: with nothing to measure from, the plan cannot be started at
-    /// all, and pointing at Take off would be pointing at a button just as dead as the rest.
+    /// Silent about the tool strip when there is no origin: with nothing to measure from, the plan
+    /// cannot be started at all, and pointing at Take off would be pointing at a button just as dead
+    /// as the rest.
     readonly property string planBlockedReason: _planBlockedReason()
 
     function _planBlockedReason() {
-        if (!planEditMode || !canPlaceWaypoints) {
-            return ""
+        if (planEditMode && canPlaceWaypoints) {
+            if (planNeedsTakeoffFirst) {
+                return qsTr("Start the plan with Take off — a mission is flown from its first item.")
+            }
+            // The one item an operator can add that the grid's altitude ceiling cannot reach and
+            // cannot clamp: a return climbs to RTL_ALT first, and that is a vehicle parameter rather
+            // than part of the plan. Above the rangefinder's range the estimator loses its height
+            // source and optical flow loses the height it scales velocity by, both at once and out
+            // of reach -- so Return is refused rather than warned about, and this is the way out of
+            // the refusal.
+            if (returnAltitudeAboveCeiling && vehicle && vehicle.multiRotor) {
+                return qsTr("A return would climb above the rangefinder's range. Lower RTL_ALT, or end the plan with Land instead.")
+            }
         }
-        if (planNeedsTakeoffFirst) {
-            return qsTr("Start the plan with Take off — a mission is flown from its first item.")
-        }
-        // The one item an operator can add that the grid's altitude ceiling cannot reach and cannot
-        // clamp: a return climbs to RTL_ALT first, and that is a vehicle parameter rather than part
-        // of the plan. Above the rangefinder's range the estimator loses its height source and
-        // optical flow loses the height it scales velocity by, both at once and out of reach -- so
-        // Return is refused rather than warned about, and this is the way out of the refusal.
-        if (returnAltitudeAboveCeiling && vehicle && vehicle.multiRotor) {
-            return qsTr("A return would climb above the rangefinder's range. Lower RTL_ALT, or end the plan with Land instead.")
+        // Deliberately outside the plan-mode gate above: this is the one that holds Upload shut, and
+        // Upload is in the toolbar now rather than behind the mode that built the plan. An operator
+        // who has just pressed a dead Upload needs to be told why wherever they are standing, and
+        // this line is the only place they are told at all.
+        if (itemsAboveAltitudeLimit.length > 0) {
+            return qsTr("Item %1 climbs past the rangefinder's %2 range — %3. Lower it before flying.")
+                        .arg(itemsAboveAltitudeLimit.join(", "))
+                        .arg(altitudeLimitKnown
+                                ? (gridTransform.toDisplay(altitudeLimitMetres).toFixed(1)
+                                   + " " + gridTransform.displayUnits)
+                                : qsTr("--"))
+                        .arg(altitudeLimitReason)
         }
         return ""
     }

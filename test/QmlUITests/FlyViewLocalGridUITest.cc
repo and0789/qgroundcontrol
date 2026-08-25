@@ -587,7 +587,31 @@ void FlyViewLocalGridUITest::_theToolbarCarriesThePlanActionsAtEverySize_test()
                      "the overflow button could not be clicked");
             QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("toolbar_localGridDownloadButton"), 2000),
                      "Download never appeared in the overflow panel");
-            QTest::keyClick(_window, Qt::Key_Escape);
+
+            // The workflow behind these buttons lives in the grid's after-flight panel, which is off
+            // the screen here -- no origin has been set and nothing has been drawn, so it has nothing
+            // to offer. Its confirmations still have to reach the operator: parented to that panel
+            // they would go wherever it went, which is the whole of the toolbar's Clear, Download and
+            // Upload silently doing nothing.
+            QVERIFY2(verifyVisibility(QStringLiteral("localGrid_missionActions"), false,
+                                      QStringLiteral("no origin, no plan")),
+                     "the after-flight panel was on screen with nothing to repair");
+            QVERIFY2(clickButton(QStringLiteral("toolbar_localGridDownloadButton")),
+                     "Download could not be clicked in the overflow panel");
+            QVERIFY2(waitForDialog(QStringLiteral("Download")),
+                     "the confirmation went missing with the panel that owns it");
+            QVERIFY2(rejectDialog(), "the confirmation could not be dismissed");
+
+            // The toolbar's transfer bar reads these three off the same panel, through a var
+            // property that answers undefined rather than failing for a name that is not there --
+            // so a rename here leaves a bar that never appears and nothing that says why.
+            QObject* const missionActions = gridView->property("missionActions").value<QObject*>();
+            QVERIFY2(missionActions, "the grid stopped publishing its mission actions");
+            for (const char* name : {"syncing", "syncProgress", "syncJustCompleted"}) {
+                QVERIFY2(missionActions->property(name).isValid(),
+                         qPrintable(QStringLiteral("the toolbar's transfer bar reads %1 and it is gone")
+                                        .arg(QLatin1StringView(name))));
+            }
 
             // Shrunk to a size the grid itself reports as compact -- the same condition
             // LocalGridResponsiveLayoutTest drives its phone-portrait cases from. The row stays put;
@@ -603,6 +627,26 @@ void FlyViewLocalGridUITest::_theToolbarCarriesThePlanActionsAtEverySize_test()
             QVERIFY2(uploadButton, "Upload left the toolbar once the grid went compact");
             QVERIFY2(uploadButton->property("text").toString().isEmpty(),
                      "the buttons kept their labels on a view with no room for them");
+            // The row is only worth adding to this corner if it does not push what was already there
+            // off the end of it. Checked at the shape a small ground station actually runs in rather
+            // than at the narrowest window Qt will make: the toolbar flicks horizontally, so an
+            // overflow does not clip anything, it just puts the battery behind a scroll -- which is
+            // no way to read a battery. Measured here at 470 for the row and 688 for the battery.
+            _window->resize(800, 440);
+            QVERIFY_TRUE_WAIT(gridView->property("compact").toBool(), TestTimeout::longMs());
+
+            const auto rightEdgeOf = [this](const QString& objectName) {
+                QQuickItem* const item = findVisibleItem(_rootItem, objectName, 1000);
+                return item ? (item->mapToScene(QPointF(0, 0)).x() + item->width()) : -1.0;
+            };
+            const qreal rowRight     = rightEdgeOf(QStringLiteral("toolbar_localGridPlanActions"));
+            const qreal batteryRight = rightEdgeOf(QStringLiteral("toolbar_batteryIndicator"));
+            QVERIFY2(rowRight > 0 && rowRight <= _window->width(),
+                     qPrintable(QStringLiteral("the plan actions ran off an 800x440 toolbar: right edge %1")
+                                    .arg(rowRight)));
+            QVERIFY2(batteryRight > 0 && batteryRight <= _window->width(),
+                     qPrintable(QStringLiteral("the plan actions pushed the battery indicator out of a "
+                                               "800x440 toolbar: right edge %1").arg(batteryRight)));
 
             // Arming takes the row off and leaves the indicators alone, since they never moved
             vehicle->setArmed(true, false);

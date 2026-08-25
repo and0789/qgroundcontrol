@@ -3952,16 +3952,88 @@ void LocalGridViewTest::_planEditMode_endsWhenTheAircraftArms_test()
              "landing put the operator back in a mode they had not asked to be in");
 }
 
-/// Everything the plan panel holds is work done between flights. Upload is refused outright while the
-/// vehicle is flying a mission, Load and Clear would leave the grid drawing a pattern the aircraft is
-/// not flying, and neither after-flight control can be used in the air at all -- a position
-/// correction is a step change the position controller flies straight out, and moving the plan under
-/// an aircraft already flying it changes where it is going mid-flight.
+/// The panel is named for a moment, and waits for it.
 ///
-/// So the panel goes, rather than standing there refusing. The resume warning inside it has always
-/// stood itself down this way; this is the rest of the panel following it, and it comes back the
-/// moment the aircraft is disarmed.
-void LocalGridViewTest::_thePlanPanelStandsDownWhileArmed_test()
+/// Before a flight there is nothing in it to do: the aircraft is standing on the origin the estimator
+/// was given, so the drift on offer to correct is zero, and the pattern was drawn around that same
+/// origin, so it already starts where the aircraft stands. Both controls used to be on screen anyway
+/// -- one live and offering to repair nothing, one greyed under a line reading "The plan already
+/// starts where the aircraft is standing" -- in the corner the tool strip runs down. A titled box
+/// whose every line says nothing is wrong is chrome charged for the state that needs it least.
+///
+/// The link is silenced first because MockLink streams a position that wanders five metres either
+/// side of the origin, which is the very measurement these gates are made of.
+void LocalGridViewTest::_theAfterFlightPanelWaitsForSomethingToRepair_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    plan->setProperty("missionController", QVariant::fromValue(stub.get()));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    mockLink()->setCommLost(true);
+    sendLocalPosition(vehicle(), 0.0F, 0.0F, 0.0F);
+
+    // A pattern drawn around the origin the aircraft is standing on -- a plan before its first flight
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    const auto shown = [gridItem](const QString &name) {
+        const QList<QQuickItem *> found = collectItemsNamed(gridItem, name);
+        return !found.isEmpty() && found.first()->isVisible();
+    };
+
+    QVERIFY2(!gridView->property("originDriftWorthCorrecting").toBool(),
+             "an aircraft on its own origin was reported as having drifted off it");
+    QVERIFY2(!gridView->property("planIsDisplacedFromVehicle").toBool(),
+             "a plan drawn around the origin was reported as displaced from an aircraft standing on it");
+    QVERIFY2(!shown(QStringLiteral("localGrid_missionActions")),
+             "the after-flight panel was on the grid before anything had been flown");
+
+    // Landed away from the origin, which is what a flight leaves behind: an estimate that has wandered
+    // and a pattern that no longer starts where the aircraft is
+    sendLocalPosition(vehicle(), 25.0F, 10.0F, 0.0F);
+
+    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_missionActions")), TestTimeout::mediumMs());
+    QVERIFY2(shown(QStringLiteral("localGrid_standOnOriginButton")),
+             "there was drift to repair and no button offering to repair it");
+    QVERIFY2(shown(QStringLiteral("localGrid_flyFromHereButton")),
+             "the pattern no longer started at the aircraft and nothing offered to move it");
+
+    mockLink()->setCommLost(false);
+}
+
+/// Neither after-flight control can be used in the air: a position correction is a step change the
+/// position controller flies straight out, and moving the plan under an aircraft already flying it
+/// changes where it is going mid-flight.
+///
+/// So the panel goes, rather than standing there refusing, and comes back the moment the aircraft is
+/// disarmed. Checked with QTRY throughout because MockLink streams a position that wanders through
+/// the origin: the panel's own gates ask how far the aircraft has moved, and a bare sample can land
+/// in the moment the wander is crossing zero.
+void LocalGridViewTest::_theAfterFlightPanelStandsDownWhileArmed_test()
 {
     QVERIFY(vehicle());
     const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
@@ -4000,10 +4072,9 @@ void LocalGridViewTest::_thePlanPanelStandsDownWhileArmed_test()
     };
 
     QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_missionActions")), TestTimeout::mediumMs());
-    QVERIFY(shown(QStringLiteral("localGrid_afterFlightSection")));
-    QVERIFY(shown(QStringLiteral("localGrid_standOnOriginButton")));
-    QVERIFY(shown(QStringLiteral("localGrid_flyFromHereButton")));
-    QVERIFY(shown(QStringLiteral("localGrid_uploadMissionButton")));
+    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_afterFlightSection")), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_standOnOriginButton")), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_flyFromHereButton")), TestTimeout::mediumMs());
 
     vehicle()->setArmedShowError(true);
     QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
@@ -4014,18 +4085,10 @@ void LocalGridViewTest::_thePlanPanelStandsDownWhileArmed_test()
     QVERIFY2(!shown(QStringLiteral("localGrid_standOnOriginButton")), "and so was the button in it");
     QVERIFY2(!shown(QStringLiteral("localGrid_flyFromHereButton")), "and the one under that");
 
-    // The plan's own file and transfer controls go with them: none of them is something to reach for
-    // over an aircraft that is flying
-    QVERIFY(!shown(QStringLiteral("localGrid_uploadMissionButton")));
-    QVERIFY(!shown(QStringLiteral("localGrid_downloadMissionButton")));
-    QVERIFY(!shown(QStringLiteral("localGrid_clearMissionButton")));
-
     vehicle()->setArmedShowError(false);
     QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
     QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_afterFlightSection")), TestTimeout::mediumMs());
-    QVERIFY2(shown(QStringLiteral("localGrid_flyFromHereButton")),
-             "the section is named for the moment it came back for");
-    QVERIFY(shown(QStringLiteral("localGrid_uploadMissionButton")));
+    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_flyFromHereButton")), TestTimeout::mediumMs());
 }
 
 /// Folded away, the readout has to stay something an operator can find and aim at. It did not: the

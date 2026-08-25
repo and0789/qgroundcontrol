@@ -90,7 +90,8 @@ private slots:
     void _theListFollowsTheItemBeingFlownTo_test();
     void _rowEditIconsAppearOnlyWhereTheEditIsAllowed_test();
     void _backgroundNotesWaitToBeAskedFor_test();
-    void _thePlanPanelStandsDownWhileArmed_test();
+    void _theAfterFlightPanelWaitsForSomethingToRepair_test();
+    void _theAfterFlightPanelStandsDownWhileArmed_test();
     void _theFoldedReadoutStaysWideEnoughToFind_test();
     void _theReadoutStandsAsideOnceTheFrameIsSetAndWhileAPlanIsBuilt_test();
     void _theHelpSwitchTakesTheTapItIsGiven_test();

@@ -249,9 +249,9 @@ void LocalGridResponsiveLayoutTest::_panelsDoNotOverlapAtAnySize_test()
 /// anything and grew its whole body -- five buttons, a transfer bar and the after-flight section --
 /// back up through the strip it was being kept clear of.
 ///
-/// Checked unfolded, because folded there is nothing under the title to outgrow the room and the cap
-/// is never consulted. That is not a contrived state: the panel starts folded on a view this small,
-/// and unfolding it is what an operator does to reach the buttons.
+/// Unfolded explicitly, even though the panel now opens by default: folded there is nothing under the
+/// title to outgrow the room and the cap is never consulted, so a default that went back to folding on
+/// a small view would leave this test quietly measuring nothing.
 ///
 /// The window is shrunk until the strip actually fills the edge rather than checked at a named size:
 /// how many buttons the strip carries depends on the vehicle and on what the fly view has to offer, so

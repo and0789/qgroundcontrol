@@ -173,6 +173,34 @@ Item {
         }
     }
 
+    // How far through a local grid plan transfer the link is, along the foot of the toolbar -- the
+    // same place and the same thin bar the Plan view's own toolbar shows the same transfer on
+    // (PlanViewToolBar.qml). This is the answer to "did it go?", and the button that asked is
+    // directly above it.
+    //
+    // Worth a bar rather than a spinner: a mission upload is a request-and-acknowledge exchange per
+    // item over a link that drops them, so it runs long enough that an operator with no indication
+    // cannot tell a transfer in progress from one that never started. It used to be drawn in the
+    // grid's own mission panel, beside buttons that have since moved up here; it followed them.
+    //
+    // Held at full width for a moment after the transfer lands (missionActions' own syncJustCompleted
+    // timer), so a fast upload is not a bar that flickers and leaves nobody any wiser.
+    Rectangle {
+        id:                 localGridProgressBar
+        objectName:         "toolbar_localGridProgressBar"
+        anchors.left:       parent.left
+        anchors.bottom:     parent.bottom
+        height:             Math.max(2, Math.round(ScreenTools.defaultFontPixelHeight / 6))
+        width:              parent.width * (_localGridSyncing ? _localGridProgress : 1)
+        color:              qgcPal.colorGreen
+        visible:            _localGridSyncing || _localGridSyncComplete
+
+        readonly property var  _actions:            control._gridView ? control._gridView.missionActions : null
+        readonly property bool _localGridSyncing:      (_actions !== null) && _actions.syncing
+        readonly property bool _localGridSyncComplete: (_actions !== null) && _actions.syncJustCompleted
+        readonly property real _localGridProgress:     (_actions !== null) ? _actions.syncProgress : 0
+    }
+
     // The guided action message display is outside of the GuidedActionConfirm control so that it doesn't end up as
     // part of the Flickable
     Rectangle {
