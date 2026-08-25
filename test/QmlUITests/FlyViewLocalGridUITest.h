@@ -18,7 +18,7 @@ protected slots:
 
 private slots:
     void _gridReplacesTheMapAndPaints_test();
-    void _aWarningWrapsRatherThanWideningTheReadout_test();
+    void _aWarningWrapsRatherThanWideningTheGrid_test();
     void _theReasonTheVehicleWillNotArmIsOnThePanel_test();
     void _aSilentRefusalMakesTheVehicleAskWhy_test();
     void _theAirspeedPanelFollowsTheSensor_test();

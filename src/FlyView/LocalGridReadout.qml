@@ -96,24 +96,15 @@ Rectangle {
                                                             + (ScreenTools.defaultFontPixelWidth * 2))
                                                         <= (maximumWidth - (_margins * 2)))
 
-    /// How wide a warning is allowed to make this panel.
-    ///
-    /// Everything else here is a number in a column, and the columns are narrow. The warnings are
-    /// sentences, and a layout takes its width from the longest line a child would draw with no
-    /// wrapping at all -- so one warning arriving stretched the panel, and the mission list that
-    /// follows its width, across half the grid, and spread the six numbers out over the gap. Capped,
-    /// a sentence wraps into roughly the column the numbers had already asked for, and a warning
-    /// changes the panel's height rather than the shape of the view.
-    ///
-    /// Held to maximumWidth as well when one is given, so a phone-width column stays a phone-width
-    /// column even while a warning is showing.
-    readonly property real _warningWidth: (maximumWidth > 0)
-                                            ? Math.max(ScreenTools.defaultFontPixelWidth * 10,
-                                                       Math.min(ScreenTools.defaultFontPixelWidth * 34,
-                                                                maximumWidth - (_margins * 2)))
-                                            : ScreenTools.defaultFontPixelWidth * 34
-
     QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
+
+    // This panel sits over the grid's own wheel-to-zoom and drag-to-pan area, and its body scrolls --
+    // so a drag that runs past the end of the numbers, or a wheel over a body with nothing to scroll,
+    // fell through and panned the grid underneath. The plan list beside it has carried the same guard
+    // since it grew a scrolling body; this one gained the body later and did not.
+    DeadMouseArea {
+        anchors.fill: parent
+    }
 
     readonly property var  _transform: gridView ? gridView.gridTransform : null
     readonly property bool _valid:     gridView ? gridView.positionValid : false
@@ -123,25 +114,10 @@ Rectangle {
     /// NaN when the vehicle has not reported one, which is a different thing from north
     readonly property real _heading:   gridView ? gridView.vehicleHeadingDegrees : NaN
 
-    readonly property bool _stale:     gridView ? gridView.positionStale : false
-    readonly property real _ageSeconds: gridView ? gridView.positionAgeSeconds : NaN
 
-    readonly property bool   _estimatorDegraded: gridView ? gridView.estimatorDegraded : false
-    readonly property bool   _estimatorSevere:   gridView ? gridView.estimatorSevere : false
-    readonly property string _estimatorWarning:  gridView ? gridView.estimatorWarning : ""
 
-    readonly property bool   _drifting:      gridView ? gridView.positionDrifting : false
-    readonly property string _driftWarning:  gridView ? gridView.positionDriftWarning : ""
 
-    readonly property string _armingWarning: gridView ? gridView.armingBlockedWarning : ""
 
-    readonly property bool _nearCeiling:  gridView ? gridView.heightNearCeiling : false
-    readonly property bool _aboveCeiling: gridView ? gridView.heightAboveCeiling : false
-    readonly property real _height:       gridView ? gridView.currentHeightMetres : NaN
-
-    readonly property string _limitText: (gridView && gridView.altitudeLimitKnown)
-                                            ? _distanceText(gridView.altitudeLimitMetres)
-                                            : qsTr("--")
 
     readonly property real _range:   _valid ? Math.sqrt((_north * _north) + (_east * _east)) : NaN
     /// Compass bearing from the origin to the vehicle. atan2 takes east over north, not the usual
@@ -286,12 +262,10 @@ Rectangle {
         // column down through the instrument panel in the corner below it.
         QGCFlickable {
             id:                     bodyFlickable
-            // Not gated on the fold. The warnings below are the one thing this panel shows folded --
-            // a position that has gone stale or an estimator that has stopped aiding is exactly what
-            // an operator who folded the numbers away still has to be told -- and each child already
-            // carries its own rule about surviving that fold. Folded with nothing wrong, every child
-            // is hidden and this costs no height at all.
-            visible:                _root._bodyMaximumHeight > 0
+            // Gated on the fold again now that the warnings have left for the band across the top.
+            // While they were here it could not be, since a stale position is exactly what an operator
+            // who folded the numbers away still has to be told.
+            visible:                !_root.collapsed && (_root._bodyMaximumHeight > 0)
             // A Flickable does not pick up its contentItem's natural size the way a Layout would,
             // and this panel is sized from what it holds -- so without this it would collapse to
             // the width of its own header the moment the numbers moved in here.
@@ -413,109 +387,6 @@ Rectangle {
                         elide:                  Text.ElideRight
                         text:                   _root.gridView ? _root._distanceText(_root.gridView.trailLengthMetres) : qsTr("--")
                     }
-                }
-
-                // Spelled out rather than left as an empty grid: a view with no vehicle data looks exactly
-                // like a view of a vehicle sitting on the origin.
-                QGCLabel {
-                    Layout.topMargin:   ScreenTools.defaultFontPixelHeight / 4
-                    visible:            !_root._valid
-                    font.pointSize:     ScreenTools.smallFontPointSize
-                    color:              qgcPal.colorOrange
-                    text:               qsTr("No local position telemetry")
-                }
-
-                // The numbers above are the last ones that arrived, and every one of them still reads as a
-                // measurement. Said in words with an age against it, because the figures themselves cannot
-                // say how old they are -- and a frozen readout is indistinguishable from a steady hover.
-                QGCLabel {
-                    objectName:             "localGrid_staleWarning"
-                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                    Layout.fillWidth:       true
-                    Layout.maximumWidth:    _root._warningWidth
-                    visible:                _root._stale
-                    wrapMode:               Text.WordWrap
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    font.bold:              true
-                    color:                  qgcPal.colorOrange
-                    text:                   qsTr("Position %1 s old — not current").arg(
-                                                isNaN(_root._ageSeconds) ? "--" : Math.round(_root._ageSeconds))
-                }
-
-                // What the estimator thinks of its own solution. Kept here rather than left to the non-GPS
-                // status panel: that panel is a separate window the operator cannot watch while flying the
-                // grid, and this is the one fact that decides whether anything else on this grid means
-                // anything. Silent while the solution is healthy, so it is never background noise.
-                QGCLabel {
-                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                    Layout.fillWidth:       true
-                    Layout.maximumWidth:    _root._warningWidth
-                    visible:                _root._estimatorDegraded && (_root._estimatorWarning !== "")
-                    wrapMode:               Text.WordWrap
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    font.bold:              _root._estimatorSevere
-                    // Matched to the vehicle marker, which goes to a red outline for the same conditions.
-                    // Two different colours for one state reads as two different problems.
-                    color:                  _root._estimatorSevere ? qgcPal.colorRed : qgcPal.colorOrange
-                    text:                   _root._estimatorWarning
-                }
-
-                // Said here rather than left to the operator to spot in the Range figure above. That figure
-                // is as large for an aircraft parked away from the origin as for one whose frame has slid,
-                // and only one of those is a fault -- so the number alone cannot raise this, and a warning
-                // built on it would fire every flight and be learned away.
-                QGCLabel {
-                    objectName:             "localGrid_driftWarning"
-                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                    Layout.fillWidth:       true
-                    Layout.maximumWidth:    _root._warningWidth
-                    visible:                _root._drifting
-                    wrapMode:               Text.WordWrap
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    color:                  qgcPal.colorOrange
-                    text:                   _root._driftWarning
-                }
-
-                // The ceiling the plan was checked against, now checked against where the vehicle actually
-                // is. A plan flown exactly as drawn still arrives here when the operator climbs by hand or
-                // the ground falls away under a level pattern -- and above the rangefinder's range the
-                // estimator has no height source at all.
-                QGCLabel {
-                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                    Layout.fillWidth:       true
-                    Layout.maximumWidth:    _root._warningWidth
-                    visible:                _root._nearCeiling
-                    wrapMode:               Text.WordWrap
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    font.bold:              _root._aboveCeiling
-                    color:                  _root._aboveCeiling ? qgcPal.colorRed : qgcPal.colorOrange
-                    text:                   _root._aboveCeiling
-                                                ? qsTr("%1 — above the rangefinder's %2 range. The estimator has no height reference. Descend.")
-                                                    .arg(_root._distanceText(_root._height))
-                                                    .arg(_root._limitText)
-                                                : qsTr("%1 — nearing the rangefinder's %2 range.")
-                                                    .arg(_root._distanceText(_root._height))
-                                                    .arg(_root._limitText)
-                }
-
-                // Kept here rather than left to the banner the fly view already has for it. That banner
-                // stands in the middle of the view for thirty-five seconds and then takes the reason away
-                // with it, so an operator who was watching the aircraft rather than the screen is told
-                // nothing; this line stays for as long as the vehicle is refusing. It sits directly above the
-                // origin button because the commonest reason on this way of flying -- the estimator having no
-                // position to arm against -- is the one that button fixes.
-                QGCLabel {
-                    objectName:             "localGrid_armingWarning"
-                    Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 4
-                    Layout.fillWidth:       true
-                    Layout.maximumWidth:    _root._warningWidth
-                    visible:                _root._armingWarning !== ""
-                    wrapMode:               Text.WordWrap
-                    font.pointSize:         ScreenTools.smallFontPointSize
-                    // Orange rather than red: the aircraft is on the ground and being kept there, which is
-                    // the check working. Red on this panel means the picture cannot be trusted.
-                    color:                  qgcPal.colorOrange
-                    text:                   _root._armingWarning
                 }
 
                 // Only while there is no origin, which is the one state where nothing else on this view means

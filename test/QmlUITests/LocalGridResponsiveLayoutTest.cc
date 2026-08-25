@@ -45,6 +45,10 @@ const QStringList kStandingPanels = {
 const QStringList kOverlapCheckedPanels = kStandingPanels + QStringList{
     QStringLiteral("flyView_toolStrip"),
     QStringLiteral("flyView_bottomRightRowLayout"),
+    // The warning band is transient, so it is not one of the standing panels the chrome budget is
+    // measured against -- but it is centred across the top between the two columns, which is exactly
+    // the arrangement that turns out to be luck rather than layout. Checked whenever it is on screen.
+    QStringLiteral("localGrid_warnings"),
 };
 
 struct WindowSize {

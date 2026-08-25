@@ -83,11 +83,15 @@ void FlyViewLocalGridUITest::_gridReplacesTheMapAndPaints_test()
         });
 }
 
-/// A warning is a sentence where the rest of the panel is a column of numbers, and a layout takes its
-/// width from the longest line a child would draw unwrapped. One arriving used to take the readout --
-/// and the mission list that follows its width -- across most of the view, with the six numbers
-/// spread out over the gap.
-void FlyViewLocalGridUITest::_aWarningWrapsRatherThanWideningTheReadout_test()
+/// A warning is a sentence, and a layout takes its width from the longest line a child would draw
+/// unwrapped. Inside the readout one arriving used to take that panel -- and the mission list that
+/// follows its width -- across most of the view; then, once the column was held to its share, the
+/// sentence was cut off by the ceiling instead. Sentences live in the band across the top now, which
+/// is bounded by the two columns rather than squeezed between them.
+///
+/// What is checked is that the band still keeps to itself: it wraps rather than setting its own width
+/// from the sentence, it stays clear of the readout column, and it shows the sentence whole.
+void FlyViewLocalGridUITest::_aWarningWrapsRatherThanWideningTheGrid_test()
 {
     SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
 
@@ -98,11 +102,14 @@ void FlyViewLocalGridUITest::_aWarningWrapsRatherThanWideningTheReadout_test()
             QVERIFY2(readout, "the readout never appeared on the grid");
 
             // The mock vehicle's reported position moves about while it sits disarmed, which is the
-            // drift the grid warns about. That warning is the longest sentence this panel carries, so
-            // it is the one that stretched it.
+            // drift the grid warns about. That warning is the longest sentence this view carries, so
+            // it is the one that stretched things.
             QQuickItem *const drift = findVisibleItem(_rootItem, QStringLiteral("localGrid_driftWarning"),
                                                       TestTimeout::longMs());
             QVERIFY2(drift, "the drift warning never appeared, so there was no long sentence to measure");
+
+            QQuickItem *const banner = findVisibleItem(_rootItem, QStringLiteral("localGrid_warnings"), 1000);
+            QVERIFY2(banner, "the warning band never appeared with a warning in it");
 
             // Waited for rather than read straight off: a label handed its text reports the width it
             // would draw on one line until the column it sits in has run once more, so a check made
@@ -110,14 +117,25 @@ void FlyViewLocalGridUITest::_aWarningWrapsRatherThanWideningTheReadout_test()
             QTRY_VERIFY_WITH_TIMEOUT(drift->property("lineCount").toInt() > 1, TestTimeout::shortMs());
 
             // Loose on purpose. What is under test is that a sentence wraps instead of setting the
-            // panel's width, not any particular column width -- unwrapped this one took 92% of the
-            // window.
-            QVERIFY2(readout->width() < (_window->width() * 0.4),
-                     qPrintable(QStringLiteral("one warning made the readout %1 px of a %2 px window")
-                                    .arg(readout->width()).arg(_window->width())));
-            QVERIFY2(drift->width() <= readout->width(),
-                     qPrintable(QStringLiteral("the warning is %1 px wide inside a %2 px panel")
-                                    .arg(drift->width()).arg(readout->width())));
+            // band's width, not any particular width -- unwrapped this one took 92% of the window.
+            QVERIFY2(banner->width() < (_window->width() * 0.7),
+                     qPrintable(QStringLiteral("one warning made the band %1 px of a %2 px window")
+                                    .arg(banner->width()).arg(_window->width())));
+            QVERIFY2(drift->width() <= banner->width(),
+                     qPrintable(QStringLiteral("the warning is %1 px wide inside a %2 px band")
+                                    .arg(drift->width()).arg(banner->width())));
+
+            // Whole, not cut off. contentHeight is what the text needs; height is what it was given,
+            // and a sentence clipped by its container is the failure this move was made for.
+            QVERIFY2(drift->property("contentHeight").toReal() <= drift->height() + 1.0,
+                     qPrintable(QStringLiteral("the warning was clipped: %1 px of text in %2 px")
+                                    .arg(drift->property("contentHeight").toReal()).arg(drift->height())));
+
+            // And clear of the column it came out of
+            const QRectF bannerRect(banner->mapToScene(QPointF(0, 0)), QSizeF(banner->width(), banner->height()));
+            const QRectF readoutRect(readout->mapToScene(QPointF(0, 0)), QSizeF(readout->width(), readout->height()));
+            QVERIFY2(bannerRect.intersected(readoutRect).isEmpty(),
+                     "the warning band ran into the readout column");
         });
 }
 

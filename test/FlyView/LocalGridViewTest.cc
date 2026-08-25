@@ -591,6 +591,9 @@ void LocalGridViewTest::init()
         createGridView(name##Component, vehicle(), name##Error));                  \
     QVERIFY2(name, qPrintable(name##Error))
 
+/// Defined further down with the other item helpers; declared here so this test can reach it
+static QList<QQuickItem *> collectItemsNamed(QQuickItem *root, const QString &objectName);
+
 /// The fly view exists before anything connects, and the local position facts read zero until they
 /// are filled -- which would draw the vehicle exactly on the origin, indistinguishable from an
 /// aircraft sitting where it started.
@@ -607,6 +610,19 @@ void LocalGridViewTest::_withoutVehicle_reportsNoPosition_test()
              "with no vehicle there is no position to draw");
     QVERIFY(qIsNaN(gridView->property("vehicleNorth").toDouble()));
     QVERIFY(qIsNaN(gridView->property("vehicleEast").toDouble()));
+
+    // And the warning band stays off. "No local position telemetry" is a fault worth raising about an
+    // aircraft on the link that is not sending any; about an empty view before anything is plugged in
+    // it is a description, and a warning surface that fires in that state is one an operator learns to
+    // look past. The readout's own header still reads "--", so the absence is not unsaid.
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    const QList<QQuickItem *> bands = collectItemsNamed(gridItem, QStringLiteral("localGrid_warnings"));
+    QCOMPARE(bands.count(), 1);
+    QVERIFY2(!bands.first()->isVisible(),
+             "the warning band was up with nothing connected to warn about");
 }
 
 /// The frame is the estimator's own: x is metres north of the origin and y is metres east, straight

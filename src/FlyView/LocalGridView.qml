@@ -166,6 +166,17 @@ Item {
     /// readout put its own view buttons, and the plan list under them, behind the compass.
     readonly property real _rightColumnBottom: height - _margins - _inset("bottomEdgeRightInset")
 
+    /// What the readout above has to leave the plan list.
+    ///
+    /// Its folded height plus a row's worth whenever there are rows to show, rather than the folded
+    /// height alone: a list reduced to its own header, with "2 items" written on it and none of them
+    /// under it, is not a shorter list -- it is a panel that has stopped doing its job while still
+    /// taking room. Read off the row count rather than the rows, which come from the plan and not
+    /// from the layout, so nothing here depends on what it is being used to size.
+    readonly property real _missionListReserve: missionList.collapsedHeight
+                                                    + ((missionList.rowCount > 0)
+                                                        ? ScreenTools.defaultFontPixelHeight * 2 : 0)
+
     /// True while this view is too small to carry every panel open at once.
     ///
     /// Derived from this view's own size, never from ScreenTools.isMobile: --fake-mobile flips that
@@ -2878,12 +2889,45 @@ Item {
         return ""
     }
 
+    /// How wide the band across the top of the view is: what is left between the tool strip down the
+    /// left edge and the readout column down the right.
+    ///
+    /// Worked out from the column's stated maximum rather than from the readout's measured width. The
+    /// readout keeps to that maximum now, and reading its actual width instead made this follow every
+    /// warning and reading that changed it -- a band that moves with the telemetry, and two panels
+    /// that could be measured a frame apart and disagree.
+    readonly property real _centreBandLeft:  _inset("leftEdgeTopInset") + _margins
+    readonly property real _centreBandWidth: Math.max(0, width - _centreBandLeft
+                                                            - _rightColumnMaximumWidth - (_margins * 2))
+
+    /// What is wrong with the picture, across the top where a sentence has room to be one.
+    ///
+    /// These were in the readout, in a column 133px wide and about 130 tall on a ground station in
+    /// landscape, and that is the one place they could not be shown: a warning arriving either pushed
+    /// the plan list out of the column or was cut off mid-sentence by the ceiling the column has to be
+    /// held to.
+    LocalGridWarnings {
+        id:                     warnings
+        objectName:             "localGrid_warnings"
+        anchors.top:            parent.top
+        anchors.topMargin:      _root._margins + _root.topEdgeOffset + _root._inset("topEdgeCenterInset")
+        x:                      _root._centreBandLeft + ((_root._centreBandWidth - width) / 2)
+        width:                  Math.min(ScreenTools.defaultFontPixelWidth * 46, _root._centreBandWidth)
+        z:                      3
+        gridView:               _root
+    }
+
     Rectangle {
         id:                         planHint
         objectName:                 "localGrid_planHint"
         anchors.horizontalCenter:   parent.horizontalCenter
-        anchors.top:                parent.top
-        anchors.topMargin:          _root._margins + _root.topEdgeOffset + _root._inset("topEdgeCenterInset")
+        // Under the warnings when there are any. Both are transient and both live in this band, and a
+        // reason a plan button is dead is the lesser of the two: an estimate that cannot be trusted is
+        // what decides whether the plan means anything at all.
+        anchors.top:                warnings.visible ? warnings.bottom : parent.top
+        anchors.topMargin:          _root._margins + (warnings.visible
+                                                        ? 0
+                                                        : _root.topEdgeOffset + _root._inset("topEdgeCenterInset"))
         z:                          3
         visible:                    _root.planBlockedReason !== ""
         width:                      hintLabel.implicitWidth + (_root._margins * 2)
@@ -2956,7 +3000,7 @@ Item {
         // list is choosing to spend room this panel would otherwise have.
         maximumHeight:          Math.max(0, _root._rightColumnBottom - y
                                                 - (airspeed.visible ? airspeed.height + _root._margins : 0)
-                                                - (missionList.collapsedHeight + _root._margins)
+                                                - (_root._missionListReserve + _root._margins)
                                                 - (missionStats.visible ? missionStats.collapsedHeight + _root._margins : 0))
         compactColumns:         _root.compact
         gridView:               _root
