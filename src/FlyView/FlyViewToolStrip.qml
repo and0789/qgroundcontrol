@@ -50,5 +50,20 @@ ToolStrip {
         value:      _root._gridView ? (_root._gridView.armedTool === "landHere") : false
     }
 
+    // Lit for as long as it is there, which is a different use of checked from the four above: those
+    // say which tool is in hand, this one says a flight has left something to repair. The entry
+    // appears only in that state, so being lit adds nothing an operator has to decode -- what it adds
+    // is being noticed. It is the one thing this control loses by leaving the middle of the grid for
+    // the strip, where it is the seventh button in a column of alike ones rather than a panel in the
+    // path of the eye.
+    //
+    // A Binding for the same reason as the four above: the strip's button writes checked back into
+    // its action and destroys an ordinary binding the first time it is pressed.
+    Binding {
+        target:     flyViewToolStripActionList.afterFlightAction
+        property:   "checked"
+        value:      flyViewToolStripActionList.afterFlightAction.visible
+    }
+
     model: flyViewToolStripActionList.model
 }
