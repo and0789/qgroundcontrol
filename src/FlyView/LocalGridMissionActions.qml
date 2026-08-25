@@ -73,13 +73,14 @@ Rectangle {
 
     // ---------------- Reused from the toolbar ----------------
     //
-    // LocalGridToolBarActions puts Upload, Download, Save and Clear in the toolbar corner while
-    // this panel is folded away editing the plan, and drives them through here rather than
-    // through a second copy of the pre-checks and confirmation dialogs below -- so the workflow
-    // stays defined in the one place regardless of which corner asks for it.
+    // LocalGridToolBarActions carries the plan's Open, Save, Upload, Download and Clear in the
+    // toolbar corner, and drives them through here rather than through a second copy of the
+    // pre-checks and confirmation dialogs below -- so the workflow stays defined in the one place
+    // regardless of which corner asks for it.
     readonly property bool canUpload:         !_offline && _hasItems && !_anyItemTooHigh && !_syncing
     readonly property bool canDownload:       !_offline && !_syncing
     readonly property bool canSave:           _hasItems
+    readonly property bool canLoad:           !_syncing
     readonly property bool canClear:          _canClear && !_syncing
     readonly property bool uploadHighlighted: _dirtyForUpload
     readonly property bool syncing:           _syncing
@@ -87,6 +88,7 @@ Rectangle {
     function requestUpload()   { _upload() }
     function requestDownload() { _download() }
     function requestSave()     { _save() }
+    function requestLoad()     { _load() }
     function requestClear()    { _clear() }
 
     /// Shown for a moment once a transfer lands, so a fast upload is not just a bar that flickers

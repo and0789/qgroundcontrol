@@ -22,15 +22,23 @@ Item {
 
     readonly property var  _gridView: globals.localGridViewFlyView
 
-    /// True while the local grid is mid-edit on a screen too small to carry its own Upload,
-    /// Download, Save and Clear as well as everything else open on it -- and only while the
-    /// aircraft is disarmed. Armed is the harder line than leaving plan mode: nothing here turns it
-    /// off on its own, and MainStatusIndicator's arming state and FlightModeIndicator's mode are
-    /// exactly what an operator needs on screen the moment the aircraft could be in the air, plan
-    /// mode or not.
+    /// True while the local grid is on screen with the aircraft on the ground.
+    ///
+    /// Not gated on the window size: this row used to stand in for the flying indicators only on a
+    /// view too small to carry the grid's own mission panel open, which left the plan's transfers
+    /// living in one place on a phone and another on a desktop. It stands here at every size now,
+    /// alongside those indicators rather than in place of them -- the row gives up its labels
+    /// instead of the corner (see LocalGridToolBarActions).
+    ///
+    /// Not gated on plan edit mode either. A plan is opened from disk, sent, fetched and cleared
+    /// without ever arming an insert tool, and making the operator enter a mode that rearranges the
+    /// tool strip in order to press Upload is a mode change charged for a transfer.
+    ///
+    /// Armed is the one line kept. Every one of these is ground work: an upload landing under a
+    /// running mission leaves the aircraft part way through a route that is no longer there, and
+    /// the rest change a plan the aircraft is in the middle of flying.
     readonly property bool _showLocalGridPlanActions: _gridView
-                                                        ? (_gridView.planEditMode && _gridView.compact
-                                                            && !_gridView.vehicleArmed)
+                                                        ? (_gridView.visible && !_gridView.vehicleArmed)
                                                         : false
 
     function dropMainStatusIndicatorTool() {
@@ -100,7 +108,6 @@ Item {
                             id:                 mainStatusIndicator
                             objectName:         "toolbar_mainStatusIndicator"
                             Layout.fillHeight:  true
-                            visible:            !control._showLocalGridPlanActions
                         }
                     }
 
@@ -114,12 +121,11 @@ Item {
                     FlightModeIndicator {
                         objectName:         "toolbar_flightModeIndicator"
                         Layout.fillHeight:  true
-                        visible:            _activeVehicle && !control._showLocalGridPlanActions
+                        visible:            _activeVehicle
                     }
 
-                    // Stands in for the pair above while the grid's own Upload/Download/Save/Clear
-                    // have nowhere else to go on a screen this small. See
-                    // _showLocalGridPlanActions for the full gate.
+                    // The plan's transfers, beside the indicators above rather than in place of
+                    // them. See _showLocalGridPlanActions for the gate.
                     LocalGridToolBarActions {
                         objectName:         "toolbar_localGridPlanActions"
                         Layout.fillHeight:  true

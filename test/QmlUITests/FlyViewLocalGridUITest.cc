@@ -538,12 +538,18 @@ void FlyViewLocalGridUITest::_aFingerCanPickUpAWaypointAndMoveIt_test()
                     });
 }
 
-/// The toolbar hands MainStatusIndicator and FlightModeIndicator's corner to the grid's own
-/// Upload/Download/Save/Clear -- but only in the one situation those buttons have nowhere else to
-/// reach: the screen is too small to carry LocalGridMissionActions open as well as everything else,
-/// a plan is being built, and the aircraft is on the ground. Any one of those not holding, the
-/// indicators an operator about to fly reads off this corner have to be the ones standing there.
-void FlyViewLocalGridUITest::_theToolbarSwapsForPlanActionsOnlyWhenCompactAndDisarmed_test()
+/// The plan's transfers live in the toolbar, in one place, for as long as the grid is showing an
+/// aircraft on the ground -- desktop or phone, plan mode or not.
+///
+/// They used to appear here only on a view too small to hold the grid's own mission panel open and
+/// mid-plan-edit, and to live in that panel the rest of the time. Two homes reached by different
+/// routes on different screens is a control an operator has to look for twice, and the size that
+/// decided which was in force is the one thing they cannot see.
+///
+/// The corner is shared rather than handed over now: MainStatusIndicator and FlightModeIndicator
+/// stay where they are, and the row gives up its labels instead. Armed is the one state that still
+/// takes the row off the toolbar -- every action in it is ground work.
+void FlyViewLocalGridUITest::_theToolbarCarriesThePlanActionsAtEverySize_test()
 {
     SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
 
@@ -553,55 +559,59 @@ void FlyViewLocalGridUITest::_theToolbarSwapsForPlanActionsOnlyWhenCompactAndDis
             QQuickItem* const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
             QVERIFY2(gridView, "the local grid never became visible with the setting on");
 
-            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_planButton")), "the Plan button could not be clicked");
-            QVERIFY_TRUE_WAIT(gridView->property("planEditMode").toBool(), TestTimeout::longMs());
-
-            // At the test window's default size the grid is not compact, and the flying indicators
-            // are the ones an operator on a desktop-sized screen has always seen here -- plan mode
-            // or not. Checked before touching the window at all, so a gate that swapped
-            // unconditionally on plan mode would be caught right here rather than only below.
+            // The default test window is not compact and nothing has entered plan edit mode: the two
+            // conditions the row used to require. Both indicators are here as well, which is the
+            // half of this that a straight widening of the old gate would have broken.
             QVERIFY2(!gridView->property("compact").toBool(), "the default test window is already compact");
-            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_mainStatusIndicator"), true,
-                                      QStringLiteral("plan mode, not compact")),
-                     "the status indicator gave up its corner outside compact layout");
-            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_localGridPlanActions"), false,
-                                      QStringLiteral("plan mode, not compact")),
-                     "the plan action row appeared outside compact layout");
-
-            // Shrunk to a size the grid itself reports as compact -- the same condition
-            // LocalGridResponsiveLayoutTest drives its phone-portrait cases from
-            _window->resize(400, 800);
-            QVERIFY_TRUE_WAIT(gridView->property("compact").toBool(), TestTimeout::longMs());
-
-            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_mainStatusIndicator"), false,
-                                      QStringLiteral("plan mode, compact, disarmed")),
-                     "the status indicator kept its corner once the grid went compact in plan mode");
-            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_flightModeIndicator"), false,
-                                      QStringLiteral("plan mode, compact, disarmed")),
-                     "the flight mode indicator kept its corner once the grid went compact in plan mode");
+            QVERIFY2(!gridView->property("planEditMode").toBool(), "the grid started in plan edit mode");
             QVERIFY2(verifyVisibility(QStringLiteral("toolbar_localGridPlanActions"), true,
-                                      QStringLiteral("plan mode, compact, disarmed")),
-                     "the plan action row never took the corner once the grid went compact in plan mode");
+                                      QStringLiteral("not compact, not planning, disarmed")),
+                     "the plan actions were missing from a roomy toolbar outside plan mode");
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_mainStatusIndicator"), true,
+                                      QStringLiteral("not compact, not planning, disarmed")),
+                     "the status indicator gave up its corner to the plan actions");
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_flightModeIndicator"), true,
+                                      QStringLiteral("not compact, not planning, disarmed")),
+                     "the flight mode indicator gave up its corner to the plan actions");
+
+            // Every action has to be reachable, Download included -- it is the one behind the
+            // overflow, and a menu that opens onto nothing is the same as the button not being there
             for (const QString& button :
-                 {QStringLiteral("toolbar_localGridUploadButton"), QStringLiteral("toolbar_localGridDownloadButton"),
-                  QStringLiteral("toolbar_localGridSaveButton"), QStringLiteral("toolbar_localGridClearButton")}) {
+                 {QStringLiteral("toolbar_localGridOpenButton"), QStringLiteral("toolbar_localGridSaveButton"),
+                  QStringLiteral("toolbar_localGridUploadButton"), QStringLiteral("toolbar_localGridClearButton"),
+                  QStringLiteral("toolbar_localGridOverflowButton")}) {
                 QVERIFY2(findVisibleItem(_rootItem, button, 0),
                          qPrintable(button + QStringLiteral(" is missing from the toolbar row")));
             }
+            QVERIFY2(clickButton(QStringLiteral("toolbar_localGridOverflowButton")),
+                     "the overflow button could not be clicked");
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("toolbar_localGridDownloadButton"), 2000),
+                     "Download never appeared in the overflow panel");
+            QTest::keyClick(_window, Qt::Key_Escape);
 
-            // Arming puts the indicators straight back. The grid's own onVehicleArmedChanged already
-            // drops planEditMode the moment the aircraft arms -- see LocalGridView.qml -- so this
-            // also stands as the toolbar's gate agreeing with that guarantee rather than needing a
-            // second one: whichever of the two actually catches it, the indicators are what an
-            // operator watching an aircraft leave the ground has to see in this corner.
+            // Shrunk to a size the grid itself reports as compact -- the same condition
+            // LocalGridResponsiveLayoutTest drives its phone-portrait cases from. The row stays put;
+            // only the labels go, so the buttons keep their order and their places.
+            _window->resize(400, 800);
+            QVERIFY_TRUE_WAIT(gridView->property("compact").toBool(), TestTimeout::longMs());
+
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_localGridPlanActions"), true,
+                                      QStringLiteral("compact, disarmed")),
+                     "the plan actions left the toolbar once the grid went compact");
+            QQuickItem* const uploadButton =
+                findVisibleItem(_rootItem, QStringLiteral("toolbar_localGridUploadButton"), 1000);
+            QVERIFY2(uploadButton, "Upload left the toolbar once the grid went compact");
+            QVERIFY2(uploadButton->property("text").toString().isEmpty(),
+                     "the buttons kept their labels on a view with no room for them");
+
+            // Arming takes the row off and leaves the indicators alone, since they never moved
             vehicle->setArmed(true, false);
             QTRY_VERIFY_WITH_TIMEOUT(vehicle->armed(), TestTimeout::longMs());
 
-            QVERIFY_TRUE_WAIT(!gridView->property("planEditMode").toBool(), TestTimeout::longMs());
-            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_mainStatusIndicator"), true, QStringLiteral("armed")),
-                     "the status indicator was still off its corner with the aircraft armed");
             QVERIFY2(verifyVisibility(QStringLiteral("toolbar_localGridPlanActions"), false, QStringLiteral("armed")),
                      "the plan action row kept the corner with the aircraft armed");
+            QVERIFY2(verifyVisibility(QStringLiteral("toolbar_mainStatusIndicator"), true, QStringLiteral("armed")),
+                     "the status indicator was missing with the aircraft armed");
 
             vehicle->setArmed(false, false);
             QTRY_VERIFY_WITH_TIMEOUT(!vehicle->armed(), TestTimeout::longMs());
