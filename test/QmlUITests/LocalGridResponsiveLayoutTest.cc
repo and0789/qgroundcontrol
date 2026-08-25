@@ -45,11 +45,6 @@ const QStringList kStandingPanels = {
 const QStringList kOverlapCheckedPanels = kStandingPanels + QStringList{
     QStringLiteral("flyView_toolStrip"),
     QStringLiteral("flyView_bottomRightRowLayout"),
-    // The after-flight prompt is transient, so it is not one of the standing panels the chrome budget
-    // is measured against -- but it is centred across the top between two columns whose widths follow
-    // their own contents, which is exactly the arrangement that turns out to be luck rather than
-    // layout. Checked here whenever it is on screen; skipped, like any hidden panel, when it is not.
-    QStringLiteral("localGrid_afterFlightPrompt"),
 };
 
 struct WindowSize {

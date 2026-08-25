@@ -53,6 +53,7 @@ qt_add_qml_module(FlyViewModule
         GuidedActionTakeoff.qml
         GuidedToolStripAction.qml
         GuidedValueSlider.qml
+        LocalGridAfterFlightAction.qml
         LocalGridAirspeed.qml
         LocalGridAltitudeLimit.qml
         LocalGridClickPanel.qml

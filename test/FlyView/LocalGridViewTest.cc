@@ -3963,7 +3963,7 @@ void LocalGridViewTest::_planEditMode_endsWhenTheAircraftArms_test()
 ///
 /// The link is silenced first because MockLink streams a position that wanders five metres either
 /// side of the origin, which is the very measurement these gates are made of.
-void LocalGridViewTest::_theAfterFlightPromptWaitsForSomethingToRepair_test()
+void LocalGridViewTest::_theAfterFlightWorkWaitsForSomethingToRepair_test()
 {
     QVERIFY(vehicle());
     QVERIFY(mockLink());
@@ -4000,23 +4000,23 @@ void LocalGridViewTest::_theAfterFlightPromptWaitsForSomethingToRepair_test()
 
     auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
     QVERIFY(gridItem);
-    const auto shown = [gridItem](const QString &name) {
-        const QList<QQuickItem *> found = collectItemsNamed(gridItem, name);
-        return !found.isEmpty() && found.first()->isVisible();
+    const auto afterFlightWork = [&gridView]() {
+        QObject *const actions = gridView->property("missionActions").value<QObject *>();
+        return actions && actions->property("hasAfterFlightWork").toBool();
     };
 
     QVERIFY2(!gridView->property("originDriftWorthCorrecting").toBool(),
              "an aircraft on its own origin was reported as having drifted off it");
     QVERIFY2(!gridView->property("planIsDisplacedFromVehicle").toBool(),
              "a plan drawn around the origin was reported as displaced from an aircraft standing on it");
-    QVERIFY2(!shown(QStringLiteral("localGrid_afterFlightPrompt")),
-             "the after-flight prompt was on the grid before anything had been flown");
+    QVERIFY2(!afterFlightWork(),
+             "the after-flight work was on offer before anything had been flown");
 
     // Landed away from the origin, which is what a flight leaves behind: an estimate that has wandered
     // and a pattern that no longer starts where the aircraft is
     sendLocalPosition(vehicle(), 25.0F, 10.0F, 0.0F);
 
-    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_afterFlightPrompt")), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(afterFlightWork(), TestTimeout::mediumMs());
     QVERIFY2(gridView->property("originDriftWorthCorrecting").toBool(),
              "the aircraft had been moved off its origin and nothing said so");
     QVERIFY2(gridView->property("planIsDisplacedFromVehicle").toBool(),
@@ -4033,7 +4033,7 @@ void LocalGridViewTest::_theAfterFlightPromptWaitsForSomethingToRepair_test()
 /// disarmed. Checked with QTRY throughout because MockLink streams a position that wanders through
 /// the origin: the panel's own gates ask how far the aircraft has moved, and a bare sample can land
 /// in the moment the wander is crossing zero.
-void LocalGridViewTest::_theAfterFlightPromptStandsDownWhileArmed_test()
+void LocalGridViewTest::_theAfterFlightWorkStandsDownWhileArmed_test()
 {
     QVERIFY(vehicle());
     const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
@@ -4066,23 +4066,21 @@ void LocalGridViewTest::_theAfterFlightPromptStandsDownWhileArmed_test()
 
     auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
     QVERIFY(gridItem);
-    const auto shown = [gridItem](const QString &name) {
-        const QList<QQuickItem *> found = collectItemsNamed(gridItem, name);
-        return !found.isEmpty() && found.first()->isVisible();
+    const auto afterFlightWork = [&gridView]() {
+        QObject *const actions = gridView->property("missionActions").value<QObject *>();
+        return actions && actions->property("hasAfterFlightWork").toBool();
     };
 
-    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_afterFlightPrompt")), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(afterFlightWork(), TestTimeout::mediumMs());
 
     vehicle()->setArmedShowError(true);
     QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
 
-    QTRY_VERIFY_WITH_TIMEOUT(!shown(QStringLiteral("localGrid_afterFlightPrompt")), TestTimeout::mediumMs());
-    QVERIFY2(!gridView->property("missionActions").value<QObject *>()->property("hasAfterFlightWork").toBool(),
-             "work that cannot be done in the air was still on offer in the air");
+    QTRY_VERIFY_WITH_TIMEOUT(!afterFlightWork(), TestTimeout::mediumMs());
 
     vehicle()->setArmedShowError(false);
     QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
-    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_afterFlightPrompt")), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(afterFlightWork(), TestTimeout::mediumMs());
 }
 
 /// Folded away, the readout has to stay something an operator can find and aim at. It did not: the

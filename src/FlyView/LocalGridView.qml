@@ -2910,33 +2910,6 @@ Item {
         gridView:               _root
     }
 
-    /// One line across the top saying a flight has left something to repair, and opening the dialog
-    /// that repairs it.
-    ///
-    /// The controls behind it were a panel in the bottom-left corner and then in the right-hand
-    /// column, and neither corner is free -- the tool strip grows down the whole left edge on a short
-    /// window, and on an 800x400 view the right column has 138px to divide between the readout, its
-    /// warnings and the plan list. What the panel got was a title with its buttons squeezed out: the
-    /// same failure, moved. This view has no standing room to give on a small screen, so this stops
-    /// asking for it.
-    ///
-    /// Costing a line when there is something to say and nothing when there is not is the same shape
-    /// the undo button and the plan hint are built on, and it is what lets it sit in the top-centre
-    /// band without a width that has to be negotiated against either column.
-    QGCButton {
-        objectName:             "localGrid_afterFlightPrompt"
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top:            planHint.visible ? planHint.bottom : parent.top
-        anchors.topMargin:      _root._margins + (planHint.visible
-                                                    ? 0
-                                                    : _root.topEdgeOffset + _root._inset("topEdgeCenterInset"))
-        z:                      3
-        primary:                true
-        visible:                missionActionsPanel.hasAfterFlightWork
-        text:                   qsTr("After a flight…")
-        onClicked:              missionActionsPanel.showAfterFlightDialog()
-    }
-
     // Bottom left, the corner the waypoint panel gave up when it moved under the readout. Declared
     // first so missionActions below can sit its bottom margin on this panel's actual measured height
     // rather than on a number guessed to be tall enough -- which stopped being tall enough the moment

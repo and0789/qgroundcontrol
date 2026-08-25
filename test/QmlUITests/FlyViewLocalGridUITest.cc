@@ -538,15 +538,16 @@ void FlyViewLocalGridUITest::_aFingerCanPickUpAWaypointAndMoveIt_test()
                     });
 }
 
-/// The after-flight work is a prompt across the top and a dialog behind it, rather than a panel
+/// The after-flight work is an entry on the tool strip and a dialog behind it, rather than a panel
 /// standing on the view.
 ///
 /// A panel was tried in both corners this view has and neither is free -- the tool strip grows down
 /// the whole left edge on a short window, and the right-hand column has 138px to divide between the
 /// readout, its warnings and the plan list on an 800x400 view. Both times what the panel got was a
-/// title with its buttons squeezed out. The prompt costs a line and the dialog has room at any window
-/// size, which is what this checks: that pressing the one opens the other with both repairs in it.
-void FlyViewLocalGridUITest::_theAfterFlightPromptOpensItsRepairs_test()
+/// title with its buttons squeezed out. In the strip it costs the grid nothing, and the dialog has
+/// room at any window size -- which is what this checks: that the entry appears when a flight has
+/// left something to repair, and opens onto the repairs.
+void FlyViewLocalGridUITest::_theAfterFlightStripEntryOpensItsRepairs_test()
 {
     SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
 
@@ -561,17 +562,40 @@ void FlyViewLocalGridUITest::_theAfterFlightPromptOpensItsRepairs_test()
             // MockLink flies its reported position five metres either side of the origin, which is the
             // drift the correction exists to repair -- so the prompt has something to offer without a
             // plan being drawn at all.
-            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("localGrid_afterFlightPrompt"), 5000),
-                     "the prompt never appeared with the estimator reporting drift off the origin");
-            QVERIFY2(clickButton(QStringLiteral("localGrid_afterFlightPrompt")),
-                     "the after-flight prompt could not be clicked");
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_afterFlightButton"), 5000),
+                     "the strip never offered the after-flight work with the estimator reporting drift");
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_afterFlightButton")),
+                     "the after-flight tool strip button could not be clicked");
 
             QVERIFY2(waitForDialog(QStringLiteral("After a flight")), "the after-flight dialog never opened");
             QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("localGrid_standOnOriginButton"), 2000),
-                     "the dialog opened without the correction that made the prompt appear");
+                     "the dialog opened without the correction that made the entry appear");
             QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("localGrid_afterFlightSection"), 1000),
                      "the dialog opened without its after-flight section");
 
+            QTest::keyClick(_window, Qt::Key_Escape);
+
+            // The cost of putting it here rather than on the grid: this strip is close to full on a
+            // short window, and a row added to a full column is a row that may end up under the fold.
+            // clickButton refuses a press that lands outside the window, so this is the check that the
+            // entry can still be reached at the size where the strip has least room -- and it is the
+            // size an operator meets it at, since that is the ground station this is flown from.
+            _window->resize(800, 400);
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_afterFlightButton")),
+                     "the after-flight entry could not be reached on a short strip");
+            QVERIFY2(waitForDialog(QStringLiteral("After a flight")),
+                     "the after-flight dialog never opened on a short window");
+            QTest::keyClick(_window, Qt::Key_Escape);
+
+            // And again in plan edit mode, which is the strip at its longest: the plan's inserts stand
+            // in for the flying buttons one for one and add a row of their own on top, so a short
+            // window in that mode is where an entry runs out of column first.
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_planButton")), "the Plan button could not be clicked");
+            QVERIFY_TRUE_WAIT(gridView->property("planEditMode").toBool(), TestTimeout::longMs());
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_afterFlightButton")),
+                     "the after-flight entry could not be reached on the strip in plan edit mode");
+            QVERIFY2(waitForDialog(QStringLiteral("After a flight")),
+                     "the after-flight dialog never opened in plan edit mode");
             QTest::keyClick(_window, Qt::Key_Escape);
         });
 }
@@ -631,9 +655,9 @@ void FlyViewLocalGridUITest::_theToolbarCarriesThePlanActionsAtEverySize_test()
             // to offer. Its confirmations still have to reach the operator: parented to that panel
             // they would go wherever it went, which is the whole of the toolbar's Clear, Download and
             // Upload silently doing nothing.
-            QVERIFY2(verifyVisibility(QStringLiteral("localGrid_afterFlightPrompt"), false,
+            QVERIFY2(verifyVisibility(QStringLiteral("flyToolStrip_afterFlightButton"), false,
                                       QStringLiteral("no origin, no plan")),
-                     "the after-flight prompt was on screen with nothing to repair");
+                     "the after-flight button was on the strip with nothing to repair");
             QVERIFY2(clickButton(QStringLiteral("toolbar_localGridDownloadButton")),
                      "Download could not be clicked in the overflow panel");
             QVERIFY2(waitForDialog(QStringLiteral("Download")),
