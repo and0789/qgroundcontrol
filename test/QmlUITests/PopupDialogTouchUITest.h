@@ -14,4 +14,5 @@ class PopupDialogTouchUITest : public QmlUITestBase
 
 private slots:
     void _aFingerDismissesAnAppMessageTheWayAMouseDoes_test();
+    void _aFingerCanAnswerTheWarningThatStandsBetweenTheAppAndClosing_test();
 };
