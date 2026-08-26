@@ -17,6 +17,11 @@ Button {
     property real fontWeight: Font.Normal // default for qml Text
     property real pointSize: ScreenTools.defaultFontPointSize
 
+    /// Lights the button while something other than its own press handling is holding it down --
+    /// a TapHandler that took the touch point, say. A button driven from outside gives the finger
+    /// no feedback at all without it, which reads as a button that ignored the press.
+    property bool externallyPressed: false
+
     property alias wrapMode: text.wrapMode
     property alias horizontalAlignment: text.horizontalAlignment
     property alias backgroundColor: backRect.color
@@ -32,7 +37,7 @@ Button {
     font.family: ScreenTools.normalFontFamily
     text: ""
 
-    property bool _showHighlight: enabled && (pressed | checked)
+    property bool _showHighlight: enabled && (pressed | checked | externallyPressed)
     property int _horizontalPadding: ScreenTools.defaultFontPixelWidth * 2
     property int _verticalPadding: Math.round(ScreenTools.defaultFontPixelHeight * heightFactor) - (iconSource === "" ? 0 : (_iconHeight - ScreenTools.defaultFontPixelHeight)  / 2)
     property real _iconHeight: text.height * 1.5
