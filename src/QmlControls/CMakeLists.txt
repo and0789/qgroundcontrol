@@ -184,6 +184,7 @@ qt_add_qml_module(QGroundControlControlsModule
         ToolStrip.qml
         ToolStripDropPanel.qml
         ToolStripHoverButton.qml
+        TouchProbeOverlay.qml
         ValueSlider.qml
         VehicleRotationCal.qml
         VehicleSummaryRow.qml

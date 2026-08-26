@@ -404,6 +404,10 @@ ApplicationWindow {
         }
     }
 
+    // DIAGNOSTIC ONLY -- lives on the diag/touch-probe branch and is never merged
+    TouchProbeOverlay {
+    }
+
     // Toast notification shown when a view switch is blocked by a validation error
     ToolTip {
         id:             validationErrorToast

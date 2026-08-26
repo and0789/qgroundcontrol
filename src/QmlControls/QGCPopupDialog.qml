@@ -250,7 +250,6 @@ Popup {
 
                 TapHandler {
                     id:                 rejectTouchHandler
-                    acceptedDevices:    PointerDevice.TouchScreen
                     gesturePolicy:      TapHandler.ReleaseWithinBounds
                     onTapped:           _reject()
                 }
@@ -266,7 +265,6 @@ Popup {
 
                 TapHandler {
                     id:                 acceptTouchHandler
-                    acceptedDevices:    PointerDevice.TouchScreen
                     gesturePolicy:      TapHandler.ReleaseWithinBounds
                     onTapped:           _accept()
                 }

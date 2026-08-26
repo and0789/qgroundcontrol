@@ -130,6 +130,13 @@ void PopupDialogTouchUITest::_aFingerDismissesAnAppMessageTheWayAMouseDoes_test(
                      "a tap on the accept button left the dialog open, though a mouse click closes it");
 
             QCOMPARE(acceptSpy.count(), 1);
+
+            // The probe overlay this branch carries has to be recording, or the build shipped to
+            // read a device with is a build with an empty panel on it
+            QQuickItem* const probeLog = findVisibleItem(_rootItem, QStringLiteral("touchProbe_log"), 2000);
+            QVERIFY2(probeLog, "the touch probe overlay is not in the window");
+            QVERIFY2(probeLog->property("text").toString() != QStringLiteral("(nothing yet)"),
+                     "the touch probe recorded no pointer events at all");
         });
 }
 
