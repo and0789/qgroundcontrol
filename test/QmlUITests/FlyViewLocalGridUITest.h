@@ -26,6 +26,7 @@ private slots:
     void _shapingThePatternIsReachableInPlanMode_test();
     void _aFingerWorksTheGridTheSameWayAMouseDoes_test();
     void _aFingerCanPickUpAWaypointAndMoveIt_test();
+    void _undoingAMoveTakesTheWaypointBackToWhereItWasPickedUp_test();
     void _theAfterFlightStripEntryOpensItsRepairs_test();
     void _theToolbarCarriesThePlanActionsAtEverySize_test();
 };

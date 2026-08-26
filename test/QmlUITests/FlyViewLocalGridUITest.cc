@@ -556,6 +556,83 @@ void FlyViewLocalGridUITest::_aFingerCanPickUpAWaypointAndMoveIt_test()
                     });
 }
 
+/// One drag is one thing to take back.
+///
+/// The marker reports where it is on every frame of a drag, and the view recorded an undo entry for
+/// each of those reports -- so each overwrote the one before it and undo took the waypoint back to
+/// where it stood one frame earlier. On a drag that crossed the grid the control offered "Undo move"
+/// and moved the point by a pixel, which reads as a control that does not work.
+void FlyViewLocalGridUITest::_undoingAMoveTakesTheWaypointBackToWhereItWasPickedUp_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink([] { return MockLink::startAPMArduCopterMockLink(); },
+                    [this](const QPointer<MockLink>& mockLink, Vehicle* vehicle) {
+                        QVERIFY(vehicle);
+                        QVERIFY2(LocalGridTestSupport::giveTheVehicleAnOrigin(vehicle, mockLink),
+                                 "the vehicle never took an origin");
+
+                        QQuickItem* const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+                        QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+                        gridView->setProperty("followVehicle", false);
+
+                        const QPointF placeAt(gridView->width() * 0.35, gridView->height() * 0.4);
+                        QVariant added;
+                        QVERIFY(QMetaObject::invokeMethod(gridView, "addWaypointAtPixel", Q_RETURN_ARG(QVariant, added),
+                                                          Q_ARG(QVariant, QVariant(placeAt.x())),
+                                                          Q_ARG(QVariant, QVariant(placeAt.y()))));
+                        QVERIFY2(added.toBool(), "the grid refused the waypoint this test is about to drag");
+
+                        /// Where the one waypoint on the grid says it is, in metres east of the origin
+                        const auto waypointEast = [gridView]() {
+                            const QVariantList points = gridView->property("missionPoints").toList();
+                            for (const QVariant& point : points) {
+                                const QVariantMap fields = point.toMap();
+                                if (!fields.value(QStringLiteral("isPinned")).toBool()) {
+                                    return fields.value(QStringLiteral("east")).toReal();
+                                }
+                            }
+                            return qQNaN();
+                        };
+
+                        const qreal eastAtPickup = waypointEast();
+                        QVERIFY2(!qIsNaN(eastAtPickup), "the waypoint that was just added is not on the grid");
+
+                        // Many steps rather than a couple: the fault this covers keeps only the last one, so a
+                        // drag of two frames would leave undo looking very nearly right
+                        constexpr int kDragSteps = 10;
+                        constexpr int kDragPixels = 90;
+
+                        const QPoint marker = gridView->mapToScene(placeAt).toPoint();
+                        QPointingDevice* const finger = QTest::createTouchDevice();
+                        {
+                            QTest::QTouchEventSequence drag = QTest::touchEvent(_window, finger);
+                            drag.press(0, marker).commit();
+                            for (int step = 1; step <= kDragSteps; step++) {
+                                drag.move(0, marker + QPoint((kDragPixels * step) / kDragSteps, 0)).commit();
+                            }
+                            drag.release(0, marker + QPoint(kDragPixels, 0)).commit();
+                        }
+
+                        QTRY_VERIFY_WITH_TIMEOUT(waypointEast() > eastAtPickup, TestTimeout::longMs());
+                        const qreal draggedBy = waypointEast() - eastAtPickup;
+
+                        QVERIFY2(gridView->property("canUndo").toBool(),
+                                 "a drag that moved a waypoint offered no undo");
+
+                        QVariant undone;
+                        QVERIFY(QMetaObject::invokeMethod(gridView, "undoLastAction", Q_RETURN_ARG(QVariant, undone)));
+                        QVERIFY2(undone.toBool(), "the undo entry left by the drag took nothing back");
+
+                        // Measured against the drag rather than against a distance in metres, which would mean
+                        // pinning down the grid's scale. Undoing one frame of a ten frame drag leaves nine
+                        // tenths of it standing; undoing the drag leaves none of it.
+                        QTRY_VERIFY_WITH_TIMEOUT(qAbs(waypointEast() - eastAtPickup) < (draggedBy / 10),
+                                                 TestTimeout::longMs());
+                    });
+}
+
 /// The after-flight work is an entry on the tool strip and a dialog behind it, rather than a panel
 /// standing on the view.
 ///

@@ -1106,6 +1106,14 @@ Item {
     /// record an entry over the single one the operation itself recorded
     property bool _batchingUndo: false
 
+    /// The item a marker drag is currently moving, or -1 when no drag is running.
+    ///
+    /// Not folded into _batchingUndo: that flag is held across a call that is guaranteed to return,
+    /// while this one is opened and closed by two separate gestures' worth of events. A drag whose
+    /// end never arrives would leave _batchingUndo stuck true and silently kill undo everywhere,
+    /// where a stale index here costs only the undo entry for one item's next programmatic move.
+    property int _movingItemIndex: -1
+
     /// True while there is something to take back. The undo control exists only when this is true,
     /// which is also why it costs nothing against the chrome budget: in the default state there is
     /// nothing to undo and no control.
@@ -1791,6 +1799,22 @@ Item {
 
     /// Moves a waypoint to a point on the grid, in metres from the origin.
     ///     @return true if it moved
+    /// Opens a marker drag: records the one undo entry that takes the whole gesture back, and marks
+    /// the item so the frames that follow do not each record one of their own.
+    function beginWaypointMove(index) {
+        _movingItemIndex = -1
+        const before = _pointForIndex(index)
+        if (before && before.onGrid) {
+            _recordUndo(qsTr("Undo move"), () => moveWaypointTo(index, before.north, before.east))
+        }
+        _movingItemIndex = index
+    }
+
+    /// Closes a marker drag. Safe to call when no drag is running.
+    function endWaypointMove() {
+        _movingItemIndex = -1
+    }
+
     function moveWaypointTo(index, north, east) {
         const item = _visualItemAt(index)
         if (!item || !originKnown || isNaN(north) || isNaN(east) || _isPinnedItem(item)) {
@@ -1806,8 +1830,13 @@ Item {
         // operation is running: offsetMission and rotatePlan call this once per item and record a
         // single entry of their own, and per-item entries would overwrite it with the last leg of
         // the loop -- an undo that straightened one waypoint out of a turned pattern.
+        //
+        // Skipped outright while a drag is moving this item. movedTo arrives once per frame, and an
+        // entry per frame overwrites the one before it -- so undo took the marker back one frame,
+        // a pixel or two, rather than back to where the drag picked it up. The drag records one
+        // entry for the whole gesture when it begins.
         const before = _pointForIndex(index)
-        if (before && before.onGrid) {
+        if (before && before.onGrid && (index !== _movingItemIndex)) {
             _recordUndo(qsTr("Undo move"), () => moveWaypointTo(index, before.north, before.east))
         }
 
@@ -2675,8 +2704,10 @@ Item {
             y:               onGrid ? (_root.gridTransform.pixelYForNorth(point.north) - (height / 2)) : 0
             z:               isSelected ? 2 : 1
 
-            onSelected: _root.selectWaypoint(waypointMarker.visualItemIndex)
-            onMovedTo:  (north, east) => _root.moveWaypointTo(waypointMarker.visualItemIndex, north, east)
+            onSelected:     _root.selectWaypoint(waypointMarker.visualItemIndex)
+            onMoveStarted:  _root.beginWaypointMove(waypointMarker.visualItemIndex)
+            onMovedTo:      (north, east) => _root.moveWaypointTo(waypointMarker.visualItemIndex, north, east)
+            onMoveFinished: _root.endWaypointMove()
         }
     }
 

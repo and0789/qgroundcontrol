@@ -46,6 +46,14 @@ Item {
     /// Emitted continuously while dragging, in metres north and east of the origin
     signal movedTo(real north, real east)
 
+    /// Raised once, before the first movedTo of a drag, and again when that drag ends.
+    ///
+    /// A drag is one action to the operator and dozens of movedTo to the view. Without a boundary
+    /// round it the view can only treat each frame as its own edit -- which is what left undo
+    /// putting a marker back where it stood one frame earlier instead of where the drag picked it up.
+    signal moveStarted()
+    signal moveFinished()
+
     implicitWidth:  _diameter
     implicitHeight: _diameter
 
@@ -100,6 +108,18 @@ Item {
             _root.selected()
         }
 
+        // Both, because a gesture that is taken away is as over as one that is let go of, and a
+        // boundary that only closes on release would leave the view thinking a drag is still running.
+        onReleased: _endDrag()
+        onCanceled: _endDrag()
+
+        function _endDrag() {
+            if (_isDragging) {
+                _isDragging = false
+                _root.moveFinished()
+            }
+        }
+
         onPositionChanged: (mouse) => {
             if (!pressed || !_root.draggable) {
                 return
@@ -108,7 +128,10 @@ Item {
                     && ((Math.abs(mouse.x - _pressX) + Math.abs(mouse.y - _pressY)) < _root.dragThreshold)) {
                 return
             }
-            _isDragging = true
+            if (!_isDragging) {
+                _isDragging = true
+                _root.moveStarted()
+            }
 
             if (!_root.gridView) {
                 return
