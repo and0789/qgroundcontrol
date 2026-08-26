@@ -22,7 +22,7 @@
 #include <QtCore/QFile>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QStandardPaths>
-#include <QtCore/QThread>
+#include <QtCore/QTimer>
 
 QGC_LOGGING_CATEGORY(FirmwarePluginLog, "FirmwarePlugin.FirmwarePlugin")
 
@@ -271,58 +271,100 @@ const QVariantList &FirmwarePlugin::toolIndicators(const Vehicle*)
     return _toolIndicatorList;
 }
 
-bool FirmwarePlugin::_armVehicleAndValidate(Vehicle *vehicle) const
+namespace {
+
+constexpr int kStatePollIntervalMsecs = 100;
+constexpr int kArmPollCount = 15;           ///< 1500 msecs, several heartbeats
+constexpr int kFlightModePollCount = 13;    ///< 1300 msecs
+constexpr int kFlightModeAttempts = 3;
+
+/// Polls @a reached every kStatePollIntervalMsecs until it is true or @a pollCount polls have gone
+/// by, then answers @a onComplete.
+///
+/// The timer belongs to the vehicle, so a vehicle that disconnects mid-poll takes the poll with it
+/// and @a onComplete is never run against one that has gone.
+void pollForVehicleState(Vehicle *vehicle, int pollCount, std::function<bool()> reached,
+                         std::function<void(bool)> onComplete)
 {
-    if (vehicle->armed()) {
-        return true;
+    QTimer *const poll = new QTimer(vehicle);
+    poll->setInterval(kStatePollIntervalMsecs);
+
+    QObject::connect(poll, &QTimer::timeout, poll,
+                     [poll, pollsLeft = pollCount, reached = std::move(reached),
+                      onComplete = std::move(onComplete)]() mutable {
+        const bool stateReached = reached();
+        if (!stateReached && (--pollsLeft > 0)) {
+            return;
+        }
+
+        poll->stop();
+        poll->deleteLater();
+        onComplete(stateReached);
+    });
+
+    poll->start();
+}
+
+void attemptFlightMode(Vehicle *vehicle, const QString &flightMode, int attemptsLeft,
+                       std::function<void(bool)> onComplete)
+{
+    vehicle->setFlightMode(flightMode);
+
+    pollForVehicleState(vehicle, kFlightModePollCount,
+                        [vehicle, flightMode]() { return vehicle->flightMode() == flightMode; },
+                        [vehicle, flightMode, attemptsLeft, onComplete](bool reached) {
+        if (reached || (attemptsLeft <= 1)) {
+            onComplete(reached);
+            return;
+        }
+        attemptFlightMode(vehicle, flightMode, attemptsLeft - 1, onComplete);
+    });
+}
+
+}  // namespace
+
+void FirmwarePlugin::_armVehicleAndValidate(Vehicle *vehicle, StateChangeCallback onComplete) const
+{
+    if (!onComplete) {
+        onComplete = [](bool) {};
     }
 
-    bool vehicleArmed = false;
+    if (!vehicle) {
+        qCWarning(FirmwarePluginLog) << "No vehicle to arm";
+        onComplete(false);
+        return;
+    }
+
+    if (vehicle->armed()) {
+        onComplete(true);
+        return;
+    }
 
     // Only try arming the vehicle a single time. Doing retries on arming with a delay can lead to safety issues.
     vehicle->setArmed(true, false /* showError */);
 
-    // Wait 1500 msecs for vehicle to arm (waiting for the next heartbeat)
-    for (int i = 0; i < 15; i++) {
-        if (vehicle->armed()) {
-            vehicleArmed = true;
-            break;
-        }
-        QThread::msleep(100);
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-    }
-
-    return vehicleArmed;
+    pollForVehicleState(vehicle, kArmPollCount, [vehicle]() { return vehicle->armed(); }, std::move(onComplete));
 }
 
-bool FirmwarePlugin::_setFlightModeAndValidate(Vehicle *vehicle, const QString &flightMode) const
+void FirmwarePlugin::_setFlightModeAndValidate(Vehicle *vehicle, const QString &flightMode,
+                                               StateChangeCallback onComplete) const
 {
+    if (!onComplete) {
+        onComplete = [](bool) {};
+    }
+
+    if (!vehicle) {
+        qCWarning(FirmwarePluginLog) << "No vehicle to set flight mode on:" << flightMode;
+        onComplete(false);
+        return;
+    }
+
     if (vehicle->flightMode() == flightMode) {
-        return true;
+        onComplete(true);
+        return;
     }
 
-    bool flightModeChanged = false;
-
-    // We try 3 times
-    for (int retries = 0; retries < 3; retries++) {
-        vehicle->setFlightMode(flightMode);
-
-        // Wait for vehicle to return flight mode
-        for (int i = 0; i < 13; i++) {
-            if (vehicle->flightMode() == flightMode) {
-                flightModeChanged = true;
-                break;
-            }
-            QThread::msleep(100);
-            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-        }
-
-        if (flightModeChanged) {
-            break;
-        }
-    }
-
-    return flightModeChanged;
+    attemptFlightMode(vehicle, flightMode, kFlightModeAttempts, std::move(onComplete));
 }
 
 

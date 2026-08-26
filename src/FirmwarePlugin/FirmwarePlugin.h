@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <QtCore/QList>
 #include <QtCore/QMap>
 #include <QtCore/QString>
@@ -414,16 +416,33 @@ signals:
     void toolIndicatorsChanged();
 
 protected:
-    /// Arms the vehicle with validation and retries
-    ///     @return: true - vehicle armed, false - vehicle failed to arm
-    bool _armVehicleAndValidate(Vehicle *vehicle) const;
+    /// Answered with whether the vehicle reached the commanded state.
+    using StateChangeCallback = std::function<void(bool reached)>;
+
+    /// Arms the vehicle and answers @a onComplete once it reports armed, or once it has had 1.5
+    /// seconds to.
+    ///
+    /// Nothing here blocks. The predecessor of this helper slept on the GUI thread and pumped the
+    /// event loop with QEventLoop::ExcludeUserInputEvents between naps, which held user input back
+    /// for as long as it ran -- up to five seconds when a guided action was refused. A guided action
+    /// is confirmed by holding a button down, so the touch release that ended that hold was withheld
+    /// until after the button had been hidden and a modal dialog raised over it. Qt never got the
+    /// touch grab back, and from then on every mouse-driven control in the app ignored a finger
+    /// while the map, which reads raw touch, still answered one.
+    ///
+    ///     @param onComplete Answered with true once armed, false if it never armed. May be empty
+    ///                       when the caller does not care.
+    void _armVehicleAndValidate(Vehicle *vehicle, StateChangeCallback onComplete = {}) const;
 
     /// Build + send MAV_CMD_DO_SET_ROI_LOCATION (COMMAND_INT when the vehicle supports it).
     void _sendROICommand(Vehicle *vehicle, const QGeoCoordinate &coord, MAV_FRAME frame, float altitude) const;
 
-    /// Sets the vehicle to the specified flight mode with validation and retries
-    ///     @return: true - vehicle in specified flight mode, false - flight mode change failed
-    bool _setFlightModeAndValidate(Vehicle *vehicle, const QString &flightMode) const;
+    /// Commands @a flightMode and answers @a onComplete once the vehicle reports it, retrying up to
+    /// three times. Does not block; see _armVehicleAndValidate() for why that matters.
+    ///
+    ///     @param onComplete Answered with true once the vehicle is in @a flightMode, false if it
+    ///                       never got there. May be empty when the caller does not care.
+    void _setFlightModeAndValidate(Vehicle *vehicle, const QString &flightMode, StateChangeCallback onComplete = {}) const;
 
     virtual QString _internalParameterMetaDataFile(const Vehicle* /*vehicle*/) const { return QString(); }
     virtual MAV_AUTOPILOT _autopilotType() const { return MAV_AUTOPILOT_GENERIC; }
