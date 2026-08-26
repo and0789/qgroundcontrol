@@ -47,6 +47,12 @@ Rectangle {
 
     readonly property var _transform: gridView ? gridView.gridTransform : null
 
+    /// The point this panel is describing, in view pixels. Public so the view can mark it: the two
+    /// numbers here mean nothing without something on the grid saying which point they are about.
+    property real pointX: 0
+    property real pointY: 0
+    readonly property bool pointMarked: visible && !isNaN(_north) && !isNaN(_east)
+
     function showAt(pixelX, pixelY) {
         if (!_transform) {
             return
@@ -54,30 +60,46 @@ Rectangle {
 
         _north = _transform.northForPixelY(pixelY)
         _east = _transform.eastForPixelX(pixelX)
+        pointX = pixelX
+        pointY = pixelY
+        visible = true
+    }
 
-        // Kept inside the view, and clear of whatever chrome is anchored to its edges -- the tool
-        // strip in the top-left corner, the flight controls that share the bottom on a phone -- so a
-        // click near a corner does not open a panel under a button it then covers, or that cannot be
-        // reached past to dismiss it.
-        const left   = gridView ? gridView.safeAreaLeft   : 0
-        const top    = gridView ? gridView.safeAreaTop    : 0
-        const right  = parent.width  - (gridView ? gridView.safeAreaRight  : 0)
-        const bottom = parent.height - (gridView ? gridView.safeAreaBottom : 0)
+    // Placement as bindings rather than as assignments made inside showAt().
+    //
+    // The two numbers at the top of this panel are set by showAt, and the width they give the panel
+    // is not known until the layout has been through another pass. Working the position out on the
+    // spot therefore worked it out from the size the panel had for the *previous* point clicked --
+    // and from nothing at all the first time. Bound, it settles itself once the size it is being
+    // placed by is real.
+    x: _placeBeside(pointX, width,
+                    gridView ? gridView.safeAreaLeft : 0,
+                    parent ? parent.width - (gridView ? gridView.safeAreaRight : 0) : 0)
+    y: _placeBeside(pointY, height,
+                    gridView ? gridView.safeAreaTop : 0,
+                    parent ? parent.height - (gridView ? gridView.safeAreaBottom : 0) : 0)
 
-        // Set clear of the point that was touched rather than starting at it. The panel used to open
-        // with its top-left corner exactly under the finger that summoned it, which on a phone means
-        // it opens underneath the hand still resting there -- and the two numbers at the top of it,
-        // the whole reason this panel exists, are the part the fingertip covers. Offset by a touch
-        // target down and to the right, so the point stays visible beside the panel describing it.
-        //
-        // The clamps below still win at the edges: pushed past the right or bottom margin the panel
-        // comes back inside, which puts it above or left of the touch instead. Either way it is not
-        // under the finger.
+    /// Where to start an edge of length @a size so the panel sits beside @a point rather than under
+    /// the finger that summoned it, and stays within [@a low, @a high].
+    function _placeBeside(point, size, low, high) {
         const offset = ScreenTools.minTouchPixels
 
-        x = Math.max(left, Math.min(pixelX + offset, right - width))
-        y = Math.max(top, Math.min(pixelY + offset, bottom - height))
-        visible = true
+        // Past the point, which is where a panel opening from a tap is expected to appear
+        if ((point + offset + size) <= high) {
+            return point + offset
+        }
+
+        // Before it when there is no room past it. Sliding to the edge instead -- which is what this
+        // did -- put the panel at the bottom of the view for any point in the lower half of it, and
+        // a panel whose whole content is two numbers about one point is useless once it is nowhere
+        // near the point. Flipping keeps it beside the point at every corner of the view.
+        if ((point - offset - size) >= low) {
+            return point - offset - size
+        }
+
+        // Neither side fits, which needs a view narrower than the panel. Clamped, and the marker the
+        // view draws on the point is what still ties the two together.
+        return Math.max(low, Math.min(point + offset, high - size))
     }
 
     function _distanceText(metres) {

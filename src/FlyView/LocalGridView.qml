@@ -2763,6 +2763,36 @@ Item {
         gridView:               _root
     }
 
+    /// The point the click panel is describing.
+    ///
+    /// The panel opens beside the tap rather than under it, so a finger resting there does not cover
+    /// the two numbers that are the whole reason it exists -- which leaves nothing on the grid saying
+    /// which point those numbers are about. A grid is a field of identical squares and a plan puts
+    /// markers all over it, so without this the operator is handed the offsets of a spot they can no
+    /// longer pick out.
+    Rectangle {
+        objectName:     "localGrid_clickPointMarker"
+        visible:        clickPanel.pointMarked
+        x:              clickPanel.pointX - (width / 2)
+        y:              clickPanel.pointY - (height / 2)
+        z:              1
+        width:          ScreenTools.defaultFontPixelHeight
+        height:         width
+        radius:         width / 2
+        color:          "transparent"
+        border.color:   qgcPal.text
+        border.width:   Math.max(1, Math.round(ScreenTools.defaultFontPixelHeight / 8))
+
+        // A ring on its own is lost among the grid lines it is most likely to land on
+        Rectangle {
+            anchors.centerIn:   parent
+            width:              Math.max(2, parent.width / 3)
+            height:             width
+            radius:             width / 2
+            color:              qgcPal.colorOrange
+        }
+    }
+
     /// What a click on the grid offers. A bare click that added a waypoint outright would turn every
     /// mis-aimed pan into an edit of the plan, and the offsets shown here are the point of placing a
     /// waypoint this way at all -- the operator sees the metres before committing to them.

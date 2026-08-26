@@ -633,6 +633,68 @@ void FlyViewLocalGridUITest::_undoingAMoveTakesTheWaypointBackToWhereItWasPicked
                     });
 }
 
+/// The panel describing a point has to leave the point visible.
+///
+/// It opens a touch target past the tap so a finger resting there does not cover the two numbers
+/// that are the whole reason it exists. Where those did not fit -- which on a phone-sized view is
+/// any point in the lower half of it -- the panel was slid to the edge of the view instead, landing
+/// on top of the very point it was describing. Flipped to the other side of the tap it stays beside
+/// the point wherever on the grid that point is.
+void FlyViewLocalGridUITest::_theClickPanelOpensBesideThePointRatherThanOverIt_test()
+{
+    SettingsManager::instance()->flyViewSettings()->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink([] { return MockLink::startAPMArduCopterMockLink(); },
+                    [this](const QPointer<MockLink>& mockLink, Vehicle* vehicle) {
+                        QVERIFY(vehicle);
+                        QVERIFY2(LocalGridTestSupport::giveTheVehicleAnOrigin(vehicle, mockLink),
+                                 "the vehicle never took an origin");
+
+                        QQuickItem* const gridView = findVisibleItem(_rootItem, QStringLiteral("localGridView"), 10000);
+                        QVERIFY2(gridView, "the local grid never became visible with the setting on");
+
+                        // Found rather than looked for visible: the panel exists from the start and is hidden
+                        // until a point is clicked
+                        QQuickItem* const panel = gridView->findChild<QQuickItem*>(QStringLiteral("localGrid_clickPanel"));
+                        QVERIFY2(panel, "the grid has no click panel");
+
+                        // Low in the view, which is where there is no room to open below the tap and where the
+                        // panel used to be slid down on to the point instead
+                        const QPointF point(gridView->width() * 0.5, gridView->height() * 0.92);
+                        QVERIFY(QMetaObject::invokeMethod(panel, "showAt", Q_ARG(QVariant, QVariant(point.x())),
+                                                          Q_ARG(QVariant, QVariant(point.y()))));
+
+                        QTRY_VERIFY_WITH_TIMEOUT(panel->isVisible() && (panel->height() > 0), TestTimeout::longMs());
+
+                        /// Where the panel is, in the grid's own pixels -- the same ones showAt was given
+                        const auto panelRect = [panel]() {
+                            return QRectF(panel->x(), panel->y(), panel->width(), panel->height());
+                        };
+
+                        QTRY_VERIFY_WITH_TIMEOUT(!panelRect().contains(point), TestTimeout::longMs());
+                        QVERIFY2(!panelRect().contains(point),
+                                 qPrintable(QStringLiteral("the panel at %1,%2 %3x%4 opened on top of the point "
+                                                           "%5,%6 it describes")
+                                                .arg(panelRect().x())
+                                                .arg(panelRect().y())
+                                                .arg(panelRect().width())
+                                                .arg(panelRect().height())
+                                                .arg(point.x())
+                                                .arg(point.y())));
+
+                        // The panel is beside the point rather than on it, so something has to say which point
+                        QQuickItem* const marker =
+                            gridView->findChild<QQuickItem*>(QStringLiteral("localGrid_clickPointMarker"));
+                        QVERIFY2(marker, "nothing marks the point the panel is describing");
+                        QTRY_VERIFY_WITH_TIMEOUT(marker->isVisible(), TestTimeout::longMs());
+
+                        const QPointF markerCentre(marker->x() + (marker->width() / 2),
+                                                   marker->y() + (marker->height() / 2));
+                        QVERIFY2((markerCentre - point).manhattanLength() < 1.0,
+                                 "the marker is not on the point the panel describes");
+                    });
+}
+
 /// The after-flight work is an entry on the tool strip and a dialog behind it, rather than a panel
 /// standing on the view.
 ///

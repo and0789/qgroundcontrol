@@ -27,6 +27,7 @@ private slots:
     void _aFingerWorksTheGridTheSameWayAMouseDoes_test();
     void _aFingerCanPickUpAWaypointAndMoveIt_test();
     void _undoingAMoveTakesTheWaypointBackToWhereItWasPickedUp_test();
+    void _theClickPanelOpensBesideThePointRatherThanOverIt_test();
     void _theAfterFlightStripEntryOpensItsRepairs_test();
     void _theToolbarCarriesThePlanActionsAtEverySize_test();
 };
