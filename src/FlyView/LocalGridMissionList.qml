@@ -106,7 +106,16 @@ Rectangle {
             if (row.y < itemList.contentY) {
                 itemList.contentY = row.y
             } else if ((row.y + row.height) > (itemList.contentY + itemList.height)) {
-                itemList.contentY = Math.max(0, (row.y + row.height) - itemList.height)
+                // Bringing a row up by its bottom edge is right for a row that fits and wrong for one
+                // that does not. Selecting a row opens its editor, which is most of the row's height
+                // and on a short panel makes the row taller than the panel itself -- and aligning the
+                // bottom of something taller than the view scrolls straight past its heading to the
+                // last field on it. What identifies a row is at its top: the item number, the type,
+                // the offsets. So a row that cannot fit is brought to the top instead, and the
+                // operator reads it downwards from the part that says which item it is.
+                itemList.contentY = (row.height > itemList.height)
+                    ? row.y
+                    : Math.max(0, (row.y + row.height) - itemList.height)
             }
             return
         }

@@ -46,6 +46,7 @@ private slots:
     void _takeoffIsHeldOnTheOrigin_test();
     void _itemTypeChangesInPlace_test();
     void _altitudeCanBeAppliedToEveryItem_test();
+    void _newItemTakesTheGridsOwnDefaultAltitude_test();
     void _landingTakesTheAltitudeOfTheItemBeforeIt_test();
     void _gridSaysWhetherThePlanAlreadyHasATakeoff_test();
     void _everyItemAboveTheCeilingIsFound_test();
@@ -90,8 +91,10 @@ private slots:
     void _theListFollowsTheItemBeingFlownTo_test();
     void _rowEditIconsAppearOnlyWhereTheEditIsAllowed_test();
     void _backgroundNotesWaitToBeAskedFor_test();
-    void _thePlanPanelStandsDownWhileArmed_test();
+    void _theAfterFlightWorkWaitsForSomethingToRepair_test();
+    void _theAfterFlightWorkStandsDownWhileArmed_test();
     void _theFoldedReadoutStaysWideEnoughToFind_test();
+    void _theReadoutStandsAsideOnceTheFrameIsSetAndWhileAPlanIsBuilt_test();
     void _theHelpSwitchTakesTheTapItIsGiven_test();
     void _planEditMode_dropsTheArmedToolWhenItEnds_test();
     void _planEditMode_endsWhenTheAircraftArms_test();

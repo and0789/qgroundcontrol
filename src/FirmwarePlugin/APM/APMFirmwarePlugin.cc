@@ -880,43 +880,56 @@ void APMFirmwarePlugin::guidedModeChangeAltitude(Vehicle *vehicle, double altitu
         return;
     }
 
-    if (pauseVehicle && !_setFlightModeAndValidate(vehicle, pauseFlightMode())) {
-        QGC::showAppMessage(tr("Unable to pause vehicle."));
+    if (!pauseVehicle) {
+        _changeAltitudeFromGuided(vehicle, altitudeChange);
         return;
     }
 
+    _setFlightModeAndValidate(vehicle, pauseFlightMode(), [this, vehicle, altitudeChange](bool paused) {
+        if (!paused) {
+            QGC::showAppMessage(tr("Unable to pause vehicle."));
+            return;
+        }
+        _changeAltitudeFromGuided(vehicle, altitudeChange);
+    });
+}
+
+void APMFirmwarePlugin::_changeAltitudeFromGuided(Vehicle *vehicle, double altitudeChange) const
+{
     if (abs(altitudeChange) < 0.01) {
         // This prevents unecessary changes to Guided mode when the users selects pause and doesn't really touch the altitude slider
         return;
     }
 
-    setGuidedMode(vehicle, true);
+    // The altitude change is sent once the mode change has been given its time, whether or not the
+    // vehicle took it -- which is what this did when the mode change was waited on inline.
+    _setFlightModeAndValidate(vehicle, guidedFlightMode(), [vehicle, altitudeChange](bool) {
+        SharedLinkInterfacePtr sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
+        if (sharedLink) {
+            mavlink_message_t msg{};
+            mavlink_set_position_target_local_ned_t cmd{};
 
-    SharedLinkInterfacePtr sharedLink = vehicle->vehicleLinkManager()->primaryLink().lock();
-    if (sharedLink) {
-        mavlink_message_t msg{};
-        mavlink_set_position_target_local_ned_t cmd{};
+            (void) memset(&cmd, 0, sizeof(cmd));
 
-        (void) memset(&cmd, 0, sizeof(cmd));
+            cmd.target_system = static_cast<uint8_t>(vehicle->id());
+            cmd.target_component = static_cast<uint8_t>(vehicle->defaultComponentId());
+            cmd.coordinate_frame = MAV_FRAME_LOCAL_OFFSET_NED;
+            cmd.type_mask = 0xFFF8; // Only x/y/z valid
+            cmd.x = 0.0f;
+            cmd.y = 0.0f;
+            cmd.z = static_cast<float>(-(altitudeChange));
 
-        cmd.target_system = static_cast<uint8_t>(vehicle->id());
-        cmd.target_component = static_cast<uint8_t>(vehicle->defaultComponentId());
-        cmd.coordinate_frame = MAV_FRAME_LOCAL_OFFSET_NED;
-        cmd.type_mask = 0xFFF8; // Only x/y/z valid
-        cmd.x = 0.0f;
-        cmd.y = 0.0f;
-        cmd.z = static_cast<float>(-(altitudeChange));
+            mavlink_msg_set_position_target_local_ned_encode_chan(
+                static_cast<uint8_t>(MAVLinkProtocol::instance()->getSystemId()),
+                static_cast<uint8_t>(MAVLinkProtocol::getComponentId()),
+                sharedLink->mavlinkChannel(),
+                &msg,
+                &cmd
+            );
 
-        mavlink_msg_set_position_target_local_ned_encode_chan(
-            static_cast<uint8_t>(MAVLinkProtocol::instance()->getSystemId()),
-            static_cast<uint8_t>(MAVLinkProtocol::getComponentId()),
-            sharedLink->mavlinkChannel(),
-            &msg,
-            &cmd
-        );
-
-        (void) vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
-    }
+            (void) vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+        }
+    });
 }
 
 bool APMFirmwarePlugin::mulirotorSpeedLimitsAvailable(Vehicle *vehicle) const
@@ -1053,23 +1066,27 @@ bool APMFirmwarePlugin::_guidedModeTakeoff(Vehicle *vehicle, double altitudeRel)
         takeoffAltRel = altitudeRel;
     }
 
-    if (!_setFlightModeAndValidate(vehicle, guidedFlightMode())) {
-        QGC::showAppMessage(tr("Unable to takeoff: Vehicle failed to change to Guided mode."));
-        return false;
-    }
+    _setFlightModeAndValidate(vehicle, guidedFlightMode(), [this, vehicle, takeoffAltRel](bool inGuided) {
+        if (!inGuided) {
+            QGC::showAppMessage(tr("Unable to takeoff: Vehicle failed to change to Guided mode."));
+            return;
+        }
 
-    if (!_armVehicleAndValidate(vehicle)) {
-        QGC::showAppMessage(tr("Unable to takeoff: Vehicle failed to arm."));
-        return false;
-    }
+        _armVehicleAndValidate(vehicle, [vehicle, takeoffAltRel](bool armed) {
+            if (!armed) {
+                QGC::showAppMessage(tr("Unable to takeoff: Vehicle failed to arm."));
+                return;
+            }
 
-    vehicle->sendMavCommand(
-        vehicle->defaultComponentId(),
-        MAV_CMD_NAV_TAKEOFF,
-        true, // show error
-        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-        static_cast<float>(takeoffAltRel) // Relative altitude
-    );
+            vehicle->sendMavCommand(
+                vehicle->defaultComponentId(),
+                MAV_CMD_NAV_TAKEOFF,
+                true, // show error
+                0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                static_cast<float>(takeoffAltRel) // Relative altitude
+            );
+        });
+    });
 
     return true;
 }
@@ -1081,26 +1098,33 @@ void APMFirmwarePlugin::startTakeoff(Vehicle *vehicle) const
         return;
     }
 
-    if (!vehicle->armed()) {
-        if (!_setFlightModeAndValidate(vehicle, takeOffFlightMode())) {
+    if (vehicle->armed()) {
+        return;
+    }
+
+    _setFlightModeAndValidate(vehicle, takeOffFlightMode(), [this, vehicle](bool inTakeoffMode) {
+        if (!inTakeoffMode) {
             QGC::showAppMessage(tr("Unable to start takeoff: Vehicle failed to change to Takeoff mode."));
             return;
         }
 
-        if (!_armVehicleAndValidate(vehicle)) {
-            QGC::showAppMessage(tr("Unable to start takeoff: Vehicle failed to arm."));
-            return;
-        }
-    }
+        _armVehicleAndValidate(vehicle, [](bool armed) {
+            if (!armed) {
+                QGC::showAppMessage(tr("Unable to start takeoff: Vehicle failed to arm."));
+            }
+        });
+    });
 }
 
 void APMFirmwarePlugin::startMission(Vehicle *vehicle) const
 {
     if (vehicle->flying()) {
         // Vehicle already in the air, we just need to switch to auto
-        if (!_setFlightModeAndValidate(vehicle, missionFlightMode())) {
-            QGC::showAppMessage(tr("Unable to start mission: Vehicle failed to change to Auto mode."));
-        }
+        _setFlightModeAndValidate(vehicle, missionFlightMode(), [](bool inAuto) {
+            if (!inAuto) {
+                QGC::showAppMessage(tr("Unable to start mission: Vehicle failed to change to Auto mode."));
+            }
+        });
         return;
     }
 
@@ -1124,28 +1148,38 @@ void APMFirmwarePlugin::startMission(Vehicle *vehicle) const
     // rather than flying its takeoff a second time.
     vehicle->setCurrentMissionSequence(0);
 
-    if (!vehicle->armed()) {
-        // First switch to flight mode we can arm from
-        // In Ardupilot for vtols and airplanes we need to set the mode to auto and then arm, otherwise if arming in guided
-        // If the vehicle has tilt rotors, it will arm them in forward flight position, being dangerous.
-        if (vehicle->fixedWing()) {
-            if (!_setFlightModeAndValidate(vehicle, missionFlightMode())) {
-                QGC::showAppMessage(tr("Unable to start mission: Vehicle failed to change to Auto mode."));
-                return;
-            }
-        } else {
-            if (!_setFlightModeAndValidate(vehicle, guidedFlightMode())) {
-                QGC::showAppMessage(tr("Unable to start mission: Vehicle failed to change to Guided mode."));
-                return;
-            }
-        }
-
-        if (!_armVehicleAndValidate(vehicle)) {
-            QGC::showAppMessage(tr("Unable to start mission: Vehicle failed to arm."));
-            return;
-        }
+    if (vehicle->armed()) {
+        _startArmedMission(vehicle);
+        return;
     }
 
+    // First switch to flight mode we can arm from
+    // In Ardupilot for vtols and airplanes we need to set the mode to auto and then arm, otherwise if arming in guided
+    // If the vehicle has tilt rotors, it will arm them in forward flight position, being dangerous.
+    const bool fixedWing = vehicle->fixedWing();
+    const QString armFromMode = fixedWing ? missionFlightMode() : guidedFlightMode();
+    const QString modeFailure = fixedWing
+        ? tr("Unable to start mission: Vehicle failed to change to Auto mode.")
+        : tr("Unable to start mission: Vehicle failed to change to Guided mode.");
+
+    _setFlightModeAndValidate(vehicle, armFromMode, [this, vehicle, modeFailure](bool inArmingMode) {
+        if (!inArmingMode) {
+            QGC::showAppMessage(modeFailure);
+            return;
+        }
+
+        _armVehicleAndValidate(vehicle, [this, vehicle](bool armed) {
+            if (!armed) {
+                QGC::showAppMessage(tr("Unable to start mission: Vehicle failed to arm."));
+                return;
+            }
+            _startArmedMission(vehicle);
+        });
+    });
+}
+
+void APMFirmwarePlugin::_startArmedMission(Vehicle *vehicle) const
+{
     // For non aircraft vehicles, we would be in guided mode, so we need to send the mission start command
     if (!vehicle->fixedWing()) {
         vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_MISSION_START, true /*show error */);

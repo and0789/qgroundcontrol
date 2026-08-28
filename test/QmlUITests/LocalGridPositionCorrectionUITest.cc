@@ -143,6 +143,15 @@ void LocalGridPositionCorrectionUITest::_standingOnTheOriginIsOnePressNotADialog
 
             mockLink->clearReceivedMavlinkMessageCounts();
 
+            // The between-flights work is an entry on the fly view's tool strip and a dialog behind
+            // it, since neither corner of this view has standing room on a small screen. Opening that
+            // dialog is the one press this test is not counting -- what it is about is what happens
+            // after the correction itself is pressed.
+            QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("flyToolStrip_afterFlightButton"), 5000),
+                     "the tool strip never offered the between-flights work");
+            QVERIFY2(clickButton(QStringLiteral("flyToolStrip_afterFlightButton")),
+                     "the after-flight tool strip button could not be clicked");
+
             QVERIFY2(clickButton(QStringLiteral("localGrid_standOnOriginButton")),
                      "the between-flights controls offer no way to stand the aircraft on the origin");
 

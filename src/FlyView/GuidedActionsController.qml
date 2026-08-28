@@ -453,6 +453,7 @@ Item {
             showImmediate = false
             confirmDialog.title = startMissionTitle
             confirmDialog.message = _missionNeedsEstimatorOrigin ? startMissionNoOriginMessage : startMissionMessage
+            confirmDialog.blocked = Qt.binding(function() { return _missionNeedsEstimatorOrigin })
             confirmDialog.hideTrigger = Qt.binding(function() { return !showStartMission })
             break;
         case actionMVStartMission:
@@ -592,6 +593,14 @@ Item {
             missionController.resumeMission(missionController.resumeMissionIndex)
             break
         case actionStartMission:
+            // The confirm button is already shut on this, so nothing reaches here by pressing it.
+            // Guarded again because the cost is not a refused command: without an origin ArduPilot's
+            // ModeAuto::takeoff_start finds current_loc uninitialised and raises an internal error,
+            // which latches and refuses every arm attempt until the aircraft is power cycled.
+            if (_missionNeedsEstimatorOrigin) {
+                return false
+            }
+            // falls through
         case actionContinueMission:
             _activeVehicle.startMission()
             break

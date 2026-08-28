@@ -11,8 +11,25 @@ import QGroundControl.FlyView
 /// view tool strip.
 Item {
     id:             _root
+    objectName:     "flyView_nonGpsStatusPanel"
     implicitWidth:  mainLayout.implicitWidth + (_margins * 2)
-    implicitHeight: mainLayout.implicitHeight + (_margins * 2)
+    implicitHeight: Math.min(mainLayout.implicitHeight, _bodyMaximumHeight) + (_margins * 2)
+
+    /// The most room this panel may take, set from outside. Negative for no limit.
+    ///
+    /// It is a long column of live values and it had no ceiling: on a short window the last few
+    /// sections -- the EKF innovation ratios among them, which is what an operator opens this for --
+    /// were drawn past the bottom edge and could not be reached at all. Past the ceiling the rows
+    /// scroll, which is the same answer the local grid's own panels give.
+    ///
+    /// Negative rather than zero for the reason LocalGridMissionActions carries: zero is what a caller
+    /// works out when there is genuinely no room, and read as "no limit" it turns the ceiling off in
+    /// the one state it exists for.
+    property real maximumHeight: -1
+
+    readonly property real _bodyMaximumHeight: (maximumHeight >= 0)
+                                                ? Math.max(0, maximumHeight - (_margins * 2))
+                                                : Number.POSITIVE_INFINITY
     // Shown whenever toggled on, even with no vehicle. The rows then read "n/a", which tells the
     // user the toggle worked and the data is missing, rather than looking like a dead button.
     visible:        _showPanel
@@ -206,173 +223,192 @@ Item {
         anchors.fill: parent
     }
 
-    ColumnLayout {
-        id:                 mainLayout
+    QGCFlickable {
+        id:                 bodyFlickable
+        anchors.fill:       parent
         anchors.margins:    _margins
-        anchors.left:       parent.left
-        anchors.top:        parent.top
-        spacing:            0
+        contentWidth:       width
+        contentHeight:      mainLayout.implicitHeight
 
-        SectionHeader { text: qsTr("Estimator Origin") }
+        ColumnLayout {
+            id:                 mainLayout
+            width:              bodyFlickable.width
+            spacing:            0
 
-        TextRow {
-            label:      qsTr("Status")
-            value:      _root._originIsSet ? qsTr("Set") : qsTr("NOT SET")
-            valueColor: _root._originIsSet ? qgcPal.colorGreen : qgcPal.colorRed
-        }
+            SectionHeader { text: qsTr("Estimator Origin") }
 
-        TextRow {
-            label:      qsTr("Position")
-            value:      _root._originIsSet
-                            ? _root._estimatorOrigin.latitude.toFixed(7) + ", " + _root._estimatorOrigin.longitude.toFixed(7)
-                            : qsTr("—")
-            visible:    _root._originIsSet
-        }
+            TextRow {
+                label:      qsTr("Status")
+                value:      _root._originIsSet ? qsTr("Set") : qsTr("NOT SET")
+                valueColor: _root._originIsSet ? qgcPal.colorGreen : qgcPal.colorRed
+            }
 
-        // Spelled out because the consequence is invisible in flight: without an origin the vehicle
-        // has no home, an altitude relative to home cannot be resolved, and an auto takeoff climbs
-        // and then hangs forever on the mission's first item with nothing reported to the operator.
-        QGCLabel {
-            Layout.preferredWidth:  _root._labelWidth + _root._valueWidth + ScreenTools.defaultFontPixelWidth
-            visible:                !_root._originIsSet
-            wrapMode:               Text.WordWrap
-            font.pointSize:         ScreenTools.smallFontPointSize
-            color:                  qgcPal.colorRed
-            text:                   qsTr("Missions cannot run. Set an origin from the local grid, or click the map and choose 'Set Estimator Origin'.")
-        }
+            TextRow {
+                label:      qsTr("Position")
+                value:      _root._originIsSet
+                                ? _root._estimatorOrigin.latitude.toFixed(7) + ", " + _root._estimatorOrigin.longitude.toFixed(7)
+                                : qsTr("—")
+                visible:    _root._originIsSet
+            }
 
-        SectionHeader { text: qsTr("Optical Flow") }
+            // Spelled out because the consequence is invisible in flight: without an origin the vehicle
+            // has no home, an altitude relative to home cannot be resolved, and an auto takeoff climbs
+            // and then hangs forever on the mission's first item with nothing reported to the operator.
+            QGCLabel {
+                Layout.preferredWidth:  _root._labelWidth + _root._valueWidth + ScreenTools.defaultFontPixelWidth
+                visible:                !_root._originIsSet
+                wrapMode:               Text.WordWrap
+                font.pointSize:         ScreenTools.smallFontPointSize
+                color:                  qgcPal.colorRed
+                text:                   qsTr("Missions cannot run. Set an origin from the local grid, or click the map and choose 'Set Estimator Origin'.")
+            }
 
-        ValueRow {
-            label:      qsTr("Quality")
-            fact:       _opticalFlow ? _opticalFlow.quality : null
-            valueColor: _qualityColor(_opticalFlow ? _opticalFlow.quality.rawValue : NaN)
-        }
+            // The line above is read by an operator standing over an aircraft they have just
+            // rebooted, and what it says next depends on an answer QGC asked for seconds ago. Asking
+            // again is the whole repair, and it is worth a button of its own: everything that
+            // follows from the origin -- the grid, the plan, whether the set-origin control is even
+            // offered -- goes wrong quietly when this line is out of date.
+            QGCButton {
+                objectName:             "nonGpsStatus_recheckOriginButton"
+                Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 2
+                text:                   qsTr("Re-check origin")
+                enabled:                _root._activeVehicle
+                onClicked:              _root._activeVehicle.requestEstimatorOrigin()
+            }
 
-        ValueRow {
-            label:      qsTr("Flow |x,y|")
-            fact:       _opticalFlow ? _opticalFlow.flowCompMagnitude : null
-            // Red once the EKF would be discarding this reading
-            valueColor: flowHealth.rejectingNow ? qgcPal.colorRed : qgcPal.text
-        }
+            SectionHeader { text: qsTr("Optical Flow") }
 
-        ValueRow { label: qsTr("Flow X");        fact: _opticalFlow ? _opticalFlow.flowCompX : null }
-        ValueRow { label: qsTr("Flow Y");        fact: _opticalFlow ? _opticalFlow.flowCompY : null }
-        ValueRow { label: qsTr("Flow Height");   fact: _opticalFlow ? _opticalFlow.groundDistance : null }
+            ValueRow {
+                label:      qsTr("Quality")
+                fact:       _opticalFlow ? _opticalFlow.quality : null
+                valueColor: _qualityColor(_opticalFlow ? _opticalFlow.quality.rawValue : NaN)
+            }
 
-        SectionHeader { text: qsTr("Flow Accepted by EKF") }
+            ValueRow {
+                label:      qsTr("Flow |x,y|")
+                fact:       _opticalFlow ? _opticalFlow.flowCompMagnitude : null
+                // Red once the EKF would be discarding this reading
+                valueColor: flowHealth.rejectingNow ? qgcPal.colorRed : qgcPal.text
+            }
 
-        TextRow {
-            label: qsTr("EKF Limit")
-            value: flowHealth.limitKnown
-                       ? flowHealth.flowLimit.toFixed(2) + " " + qsTr("rad/s")
-                       : qsTr("n/a")
-        }
+            ValueRow { label: qsTr("Flow X");        fact: _opticalFlow ? _opticalFlow.flowCompX : null }
+            ValueRow { label: qsTr("Flow Y");        fact: _opticalFlow ? _opticalFlow.flowCompY : null }
+            ValueRow { label: qsTr("Flow Height");   fact: _opticalFlow ? _opticalFlow.groundDistance : null }
 
-        TextRow {
-            label:      qsTr("Rejected")
-            value:      flowHealth.hasSamples
-                            ? flowHealth.rejectedPercent.toFixed(0) + "% (" + flowHealth.rejectedCount + "/" + flowHealth.sampleCount + ")"
-                            : qsTr("no data")
-            valueColor: !flowHealth.hasSamples || !flowHealth.limitKnown
-                            ? qgcPal.text
-                            : (flowHealth.rejectedCount > 0 ? qgcPal.colorRed : qgcPal.colorGreen)
-        }
+            SectionHeader { text: qsTr("Flow Accepted by EKF") }
 
-        TextRow {
-            label: qsTr("Mean |x,y|")
-            value: flowHealth.hasSamples ? flowHealth.averageMagnitude.toFixed(3) + " " + qsTr("rad/s") : qsTr("no data")
-        }
+            TextRow {
+                label: qsTr("EKF Limit")
+                value: flowHealth.limitKnown
+                           ? flowHealth.flowLimit.toFixed(2) + " " + qsTr("rad/s")
+                           : qsTr("n/a")
+            }
 
-        TextRow {
-            label:      qsTr("Peak |x,y|")
-            value:      flowHealth.hasSamples ? flowHealth.peakMagnitude.toFixed(3) + " " + qsTr("rad/s") : qsTr("no data")
-            valueColor: flowHealth.limitKnown && flowHealth.hasSamples && (flowHealth.peakMagnitude > flowHealth.flowLimit)
-                            ? qgcPal.colorRed
-                            : qgcPal.text
-        }
+            TextRow {
+                label:      qsTr("Rejected")
+                value:      flowHealth.hasSamples
+                                ? flowHealth.rejectedPercent.toFixed(0) + "% (" + flowHealth.rejectedCount + "/" + flowHealth.sampleCount + ")"
+                                : qsTr("no data")
+                valueColor: !flowHealth.hasSamples || !flowHealth.limitKnown
+                                ? qgcPal.text
+                                : (flowHealth.rejectedCount > 0 ? qgcPal.colorRed : qgcPal.colorGreen)
+            }
 
-        SectionHeader { text: qsTr("Rangefinder") }
+            TextRow {
+                label: qsTr("Mean |x,y|")
+                value: flowHealth.hasSamples ? flowHealth.averageMagnitude.toFixed(3) + " " + qsTr("rad/s") : qsTr("no data")
+            }
 
-        ValueRow {
-            label:      qsTr("Down")
-            fact:       _distanceSensors ? _distanceSensors.rotationPitch270 : null
-            valueColor: _rangefinderColor(_distanceSensors ? _distanceSensors.rotationPitch270.rawValue : NaN)
-        }
+            TextRow {
+                label:      qsTr("Peak |x,y|")
+                value:      flowHealth.hasSamples ? flowHealth.peakMagnitude.toFixed(3) + " " + qsTr("rad/s") : qsTr("no data")
+                valueColor: flowHealth.limitKnown && flowHealth.hasSamples && (flowHealth.peakMagnitude > flowHealth.flowLimit)
+                                ? qgcPal.colorRed
+                                : qgcPal.text
+            }
 
-        // Optical flow gives velocity but no direction, so with EK3_SRC1_YAW=1 the compass is the
-        // only thing telling the estimator which way that velocity points. A heading error does not
-        // show up as a bad position -- it shows up as a track rotated away from the one planned,
-        // which looks like ordinary drift in the log unless the heading was being watched.
-        SectionHeader { text: qsTr("Compass") }
+            SectionHeader { text: qsTr("Rangefinder") }
 
-        ValueRow { label: qsTr("Heading");       fact: _activeVehicle ? _activeVehicle.heading : null }
+            ValueRow {
+                label:      qsTr("Down")
+                fact:       _distanceSensors ? _distanceSensors.rotationPitch270 : null
+                valueColor: _rangefinderColor(_distanceSensors ? _distanceSensors.rotationPitch270.rawValue : NaN)
+            }
 
-        // The estimator's verdict on the compass rather than the magnetometer's own. A sensor can
-        // report itself perfectly healthy while disagreeing with the rest of the solution, and it
-        // is the disagreement that turns into a rotated track. Unlike the EKF health flags this
-        // fact starts as NaN, so a link carrying no EKF status reads as "--" rather than as a
-        // flawless compass.
-        ValueRow {
-            label:      qsTr("Mag Ratio")
-            fact:       _estimatorStatus ? _estimatorStatus.magRatio : null
-            valueColor: _ekfRatioColor(_estimatorStatus ? _estimatorStatus.magRatio.rawValue : NaN)
-        }
+            // Optical flow gives velocity but no direction, so with EK3_SRC1_YAW=1 the compass is the
+            // only thing telling the estimator which way that velocity points. A heading error does not
+            // show up as a bad position -- it shows up as a track rotated away from the one planned,
+            // which looks like ordinary drift in the log unless the heading was being watched.
+            SectionHeader { text: qsTr("Compass") }
 
-        SectionHeader { text: qsTr("EKF") }
+            ValueRow { label: qsTr("Heading");       fact: _activeVehicle ? _activeVehicle.heading : null }
 
-        FlagRow  { label: qsTr("Horiz Pos");     fact: _estimatorStatus ? _estimatorStatus.goodHorizPosRelEstimate : null }
-        FlagRow  { label: qsTr("Horiz Vel");     fact: _estimatorStatus ? _estimatorStatus.goodHorizVelEstimate : null }
-        FlagRow {
-            label:          qsTr("Aiding")
-            fact:           _estimatorStatus ? _estimatorStatus.goodConstPosModeEstimate : null
-            // Set means the estimator fell back to assuming the vehicle is stationary
-            healthyWhenSet: false
-        }
+            // The estimator's verdict on the compass rather than the magnetometer's own. A sensor can
+            // report itself perfectly healthy while disagreeing with the rest of the solution, and it
+            // is the disagreement that turns into a rotated track. Unlike the EKF health flags this
+            // fact starts as NaN, so a link carrying no EKF status reads as "--" rather than as a
+            // flawless compass.
+            ValueRow {
+                label:      qsTr("Mag Ratio")
+                fact:       _estimatorStatus ? _estimatorStatus.magRatio : null
+                valueColor: _ekfRatioColor(_estimatorStatus ? _estimatorStatus.magRatio.rawValue : NaN)
+            }
 
-        // "NO" names the state but not the cause, and only the cause can be acted on. The evidence
-        // is already on this panel -- flow quality, the rangefinder, the EKF's own ratios -- but
-        // reading it off six rows takes longer than the failure gives you.
-        QGCLabel {
-            Layout.preferredWidth:  _root._labelWidth + _root._valueWidth + ScreenTools.defaultFontPixelWidth
-            visible:                aidingReason.aidingLost
-            wrapMode:               Text.WordWrap
-            font.pointSize:         ScreenTools.smallFontPointSize
-            color:                  qgcPal.colorRed
-            text:                   aidingReason.reason
-        }
+            SectionHeader { text: qsTr("EKF") }
 
-        ValueRow { label: qsTr("Vel Ratio");     fact: _estimatorStatus ? _estimatorStatus.velRatio : null }
-        ValueRow { label: qsTr("Pos Ratio");     fact: _estimatorStatus ? _estimatorStatus.horizPosRatio : null }
-        ValueRow { label: qsTr("HAGL Ratio");    fact: _estimatorStatus ? _estimatorStatus.haglRatio : null }
+            FlagRow  { label: qsTr("Horiz Pos");     fact: _estimatorStatus ? _estimatorStatus.goodHorizPosRelEstimate : null }
+            FlagRow  { label: qsTr("Horiz Vel");     fact: _estimatorStatus ? _estimatorStatus.goodHorizVelEstimate : null }
+            FlagRow {
+                label:          qsTr("Aiding")
+                fact:           _estimatorStatus ? _estimatorStatus.goodConstPosModeEstimate : null
+                // Set means the estimator fell back to assuming the vehicle is stationary
+                healthyWhenSet: false
+            }
 
-        SectionHeader { text: qsTr("Local Position") }
+            // "NO" names the state but not the cause, and only the cause can be acted on. The evidence
+            // is already on this panel -- flow quality, the rangefinder, the EKF's own ratios -- but
+            // reading it off six rows takes longer than the failure gives you.
+            QGCLabel {
+                Layout.preferredWidth:  _root._labelWidth + _root._valueWidth + ScreenTools.defaultFontPixelWidth
+                visible:                aidingReason.aidingLost
+                wrapMode:               Text.WordWrap
+                font.pointSize:         ScreenTools.smallFontPointSize
+                color:                  qgcPal.colorRed
+                text:                   aidingReason.reason
+            }
 
-        ValueRow { label: qsTr("North");         fact: _localPosition ? _localPosition.x : null }
-        ValueRow { label: qsTr("East");          fact: _localPosition ? _localPosition.y : null }
-        ValueRow { label: qsTr("Down");          fact: _localPosition ? _localPosition.z : null }
-        ValueRow { label: qsTr("Vel North");     fact: _localPosition ? _localPosition.vx : null }
-        ValueRow { label: qsTr("Vel East");      fact: _localPosition ? _localPosition.vy : null }
-        ValueRow { label: qsTr("Vel Down");      fact: _localPosition ? _localPosition.vz : null }
+            ValueRow { label: qsTr("Vel Ratio");     fact: _estimatorStatus ? _estimatorStatus.velRatio : null }
+            ValueRow { label: qsTr("Pos Ratio");     fact: _estimatorStatus ? _estimatorStatus.horizPosRatio : null }
+            ValueRow { label: qsTr("HAGL Ratio");    fact: _estimatorStatus ? _estimatorStatus.haglRatio : null }
 
-        SectionHeader { text: qsTr("Vibration") }
+            SectionHeader { text: qsTr("Local Position") }
 
-        ValueRow {
-            label:      qsTr("Vibe X")
-            fact:       _vibration ? _vibration.xAxis : null
-            valueColor: _vibeColor(_vibration ? _vibration.xAxis.rawValue : NaN)
-        }
+            ValueRow { label: qsTr("North");         fact: _localPosition ? _localPosition.x : null }
+            ValueRow { label: qsTr("East");          fact: _localPosition ? _localPosition.y : null }
+            ValueRow { label: qsTr("Down");          fact: _localPosition ? _localPosition.z : null }
+            ValueRow { label: qsTr("Vel North");     fact: _localPosition ? _localPosition.vx : null }
+            ValueRow { label: qsTr("Vel East");      fact: _localPosition ? _localPosition.vy : null }
+            ValueRow { label: qsTr("Vel Down");      fact: _localPosition ? _localPosition.vz : null }
 
-        ValueRow {
-            label:      qsTr("Vibe Y")
-            fact:       _vibration ? _vibration.yAxis : null
-            valueColor: _vibeColor(_vibration ? _vibration.yAxis.rawValue : NaN)
-        }
+            SectionHeader { text: qsTr("Vibration") }
 
-        ValueRow {
-            label:      qsTr("Vibe Z")
-            fact:       _vibration ? _vibration.zAxis : null
-            valueColor: _vibeColor(_vibration ? _vibration.zAxis.rawValue : NaN)
+            ValueRow {
+                label:      qsTr("Vibe X")
+                fact:       _vibration ? _vibration.xAxis : null
+                valueColor: _vibeColor(_vibration ? _vibration.xAxis.rawValue : NaN)
+            }
+
+            ValueRow {
+                label:      qsTr("Vibe Y")
+                fact:       _vibration ? _vibration.yAxis : null
+                valueColor: _vibeColor(_vibration ? _vibration.yAxis.rawValue : NaN)
+            }
+
+            ValueRow {
+                label:      qsTr("Vibe Z")
+                fact:       _vibration ? _vibration.zAxis : null
+                valueColor: _vibeColor(_vibration ? _vibration.zAxis.rawValue : NaN)
+            }
         }
     }
 }

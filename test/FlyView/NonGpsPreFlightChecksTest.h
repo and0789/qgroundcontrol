@@ -24,6 +24,7 @@ private slots:
     void _missingEstimatorOrigin_failsWithoutOverride_test();
     void _positionConfirmedCheck_waitsForAnOrigin_test();
     void _positionNotStatedSinceFlying_failsWithoutOverride_test();
+    void _startMissionWithoutOrigin_isRefused_test();
     void _flowAndRangefinderReporting_passChecks_test();
     void _ekfNotReady_failsWithoutOverride_test();
     void _gpsCheck_doesNotBlockAGnssDeniedVehicle_test();

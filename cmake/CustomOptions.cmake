@@ -15,6 +15,11 @@ set(QGC_CUSTOM_DIR "custom" CACHE STRING "Custom build overlay directory, relati
 # ============================================================================
 
 set(QGC_APP_NAME "QGroundControl" CACHE STRING "Application name")
+# Names the product to the operator: window title, and the title of every dialog the app raises for
+# itself. Kept apart from QGC_APP_NAME because that one names the build -- it is the CMake project,
+# so the target, the executable and the bundle all carry it, and none of them want a name with
+# spaces in it.
+set(QGC_APP_DISPLAY_NAME "NonGPS Mission Control" CACHE STRING "Product name shown to the user")
 string(TIMESTAMP _copyright_year "%Y")
 set(QGC_APP_COPYRIGHT "Copyright (c) ${_copyright_year} QGroundControl. All rights reserved." CACHE STRING "Copyright notice")
 set(QGC_APP_DESCRIPTION "Open Source Ground Control App" CACHE STRING "Application description")

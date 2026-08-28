@@ -8,6 +8,7 @@
 #include "FirmwarePlugin.h"
 #include "MockLink.h"
 #include "Vehicle.h"
+#include "VehicleLinkManager.h"
 
 namespace {
 using CommandSupportedResult = FirmwarePluginInstanceData::CommandSupportedResult;
@@ -252,6 +253,45 @@ void SetEstimatorOriginTest::_requestAfterOriginLost_clearsStaleValue()
     _mockLink->clearEstimatorOrigin();
 
     _vehicle->requestEstimatorOrigin();
+    QVERIFY_TRUE_WAIT(!_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
+}
+
+/// A vehicle that comes back from a silence must be asked again, because it may have rebooted while
+/// it was away and a rebooted one has no origin.
+///
+/// Connect used to be the one and only time QGC asked. An aircraft restarted mid-session therefore
+/// left the origin, the local grid measured from it, and every control gated on it describing the
+/// flight before the reboot -- and because the vehicle reports a lost origin by saying nothing, the
+/// only way back was to restart QGC. Found in the field: the set-origin control stayed hidden after
+/// a vehicle restart precisely because QGC still believed in the origin that restart had destroyed.
+void SetEstimatorOriginTest::_communicationRegained_asksForTheOriginAgain()
+{
+    QVERIFY(_vehicle);
+    QVERIFY(_mockLink);
+    FirmwarePluginInstanceData* instanceData = _vehicle->firmwarePluginInstanceData();
+    QVERIFY(instanceData);
+
+    instanceData->setCommandSupported(MAV_CMD_DO_SET_GLOBAL_ORIGIN, CommandSupportedResult::UNSUPPORTED);
+    _vehicle->setEstimatorOrigin(kOrigin);
+    QVERIFY_TRUE_WAIT(_mockLink->receivedMavlinkMessageCount(MAVLINK_MSG_ID_SET_GPS_GLOBAL_ORIGIN) == 1,
+                      TestTimeout::longMs());
+    _vehicle->requestEstimatorOrigin();
+    QVERIFY_TRUE_WAIT(_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
+
+    // Whatever the vehicle had in flight when the link went quiet gives up while it is away.
+    ignoreLogMessage("Vehicle.MavCommandQueue", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Giving up sending command")));
+
+    QVERIFY(_vehicle->vehicleLinkManager());
+    _mockLink->setCommLost(true);
+    QVERIFY_TRUE_WAIT(_vehicle->vehicleLinkManager()->communicationLost(), TestTimeout::longMs());
+
+    // The reboot the silence stood for: the vehicle comes back without the origin it had.
+    _mockLink->clearEstimatorOrigin();
+    _mockLink->setCommLost(false);
+    QVERIFY_TRUE_WAIT(!_vehicle->vehicleLinkManager()->communicationLost(), TestTimeout::longMs());
+
+    // Nothing here asks. Coming back is what has to be enough.
     QVERIFY_TRUE_WAIT(!_vehicle->estimatorOrigin().isValid(), TestTimeout::longMs());
 }
 

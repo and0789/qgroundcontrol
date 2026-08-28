@@ -511,10 +511,14 @@ public:
     /// vehicle touches down, so the statement covers one flight and is made again before the next.
     bool positionConfirmedSinceLastFlight() const { return _positionConfirmedSinceLastFlight; }
 
-    /// Asks the vehicle to report its estimator origin. ArduPilot emits GPS_GLOBAL_ORIGIN when the
-    /// origin is first set and whenever it is requested, so QGC asks once the initial connection
-    /// completes to learn about an origin that was set before we connected. Callable again to
-    /// refresh, since the vehicle gives no other notification that its origin has gone away.
+    /// Asks the vehicle to report its estimator origin, dropping what was known until it answers.
+    ///
+    /// An origin appearing needs no asking: ArduPilot pushes GPS_GLOBAL_ORIGIN the moment one is
+    /// set. An origin going away is the silent half -- a rebooted autopilot says nothing, because
+    /// send_gps_global_origin() simply returns when get_origin() fails -- so it is only ever found
+    /// by asking. Run when the answer could have changed without QGC hearing about it: at connect,
+    /// when a vehicle comes back from a silence long enough to have been a reboot, and on demand
+    /// from the operator.
     Q_INVOKABLE void requestEstimatorOrigin();
 
     bool armed              () const{ return _armed; }
@@ -963,6 +967,8 @@ private slots:
 
 private:
     void _activeVehicleChanged          (Vehicle* newActiveVehicle);
+
+    void _setEstimatorOrigin(const QGeoCoordinate& estimatorOrigin);
 
     /// Re-reports navigatingWithoutGNSS and keeps it live by watching the estimator source
     /// parameters it is read from. Those get edited during bring-up, and a stale answer decides

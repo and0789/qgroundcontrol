@@ -18,10 +18,16 @@ protected slots:
 
 private slots:
     void _gridReplacesTheMapAndPaints_test();
-    void _aWarningWrapsRatherThanWideningTheReadout_test();
+    void _aWarningWrapsRatherThanWideningTheGrid_test();
     void _theReasonTheVehicleWillNotArmIsOnThePanel_test();
     void _aSilentRefusalMakesTheVehicleAskWhy_test();
     void _theAirspeedPanelFollowsTheSensor_test();
     void _planModeSwapsTheStripWithoutLosingTheMode_test();
     void _shapingThePatternIsReachableInPlanMode_test();
+    void _aFingerWorksTheGridTheSameWayAMouseDoes_test();
+    void _aFingerCanPickUpAWaypointAndMoveIt_test();
+    void _undoingAMoveTakesTheWaypointBackToWhereItWasPickedUp_test();
+    void _theClickPanelOpensBesideThePointRatherThanOverIt_test();
+    void _theAfterFlightStripEntryOpensItsRepairs_test();
+    void _theToolbarCarriesThePlanActionsAtEverySize_test();
 };

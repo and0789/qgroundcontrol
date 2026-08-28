@@ -84,12 +84,17 @@ QGCApplication::QGCApplication(int& argc, char* argv[], const QGCCommandLinePars
                 QStringLiteral("%1_unittest_%2").arg(QGC_APP_NAME).arg(QCoreApplication::applicationPid());
         }
     } else {
+        const QString displayName = QStringLiteral(QGC_APP_DISPLAY_NAME);
 #ifdef QGC_DAILY_BUILD
         // This gives daily builds their own separate settings space. Allowing you to use daily and stable builds
         // side by side without daily screwing up your stable settings.
-        applicationName = QStringLiteral("%1 Daily").arg(QGC_APP_NAME);
+        //
+        // A build carrying its own product name is not that upstream nightly, and the name already
+        // keeps its settings clear of any QGroundControl installed beside it, so it is left as it is.
+        applicationName =
+            (displayName == QStringLiteral(QGC_APP_NAME)) ? QStringLiteral("%1 Daily").arg(displayName) : displayName;
 #else
-        applicationName = QGC_APP_NAME;
+        applicationName = displayName;
 #endif
     }
     setApplicationName(applicationName);

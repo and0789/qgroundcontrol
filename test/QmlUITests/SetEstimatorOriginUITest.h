@@ -18,4 +18,5 @@ protected slots:
 
 private slots:
     void _originCanBeSetFromTheGridWithoutAMap_test();
+    void _rememberingTheOriginSetsOnlyItsOwnBits_test();
 };

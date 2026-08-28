@@ -230,11 +230,30 @@ Popup {
                 verticalAlignment:	Text.AlignVCenter
             }
 
+            // A finger never reaches a Button's own press handling inside a Popup: the button does
+            // not so much as light up under the touch, while a mouse works it normally. These two
+            // buttons are the only way off a dialog, so a touch screen was left with dialogs it
+            // could raise and not dismiss.
+            //
+            // A TapHandler is offered the touch point before the item tree is, which is the same
+            // route the local grid had to take to get its own gestures back. The exclusive grab is
+            // what keeps this from firing twice: the button never sees the press, so its clicked()
+            // cannot arrive alongside the tap. Restricted to the touch screen so the mouse keeps
+            // going through the button, pressed state and all, exactly as it did before.
+
             QGCButton {
                 id:                     rejectButton
                 objectName:             "popupDialog_rejectButton"
                 onClicked:              _reject()
                 Layout.minimumWidth:    height * 1.5
+                externallyPressed:      rejectTouchHandler.pressed
+
+                TapHandler {
+                    id:                 rejectTouchHandler
+                    acceptedDevices:    PointerDevice.TouchScreen
+                    gesturePolicy:      TapHandler.ReleaseWithinBounds
+                    onTapped:           _reject()
+                }
             }
 
             QGCButton {
@@ -243,6 +262,14 @@ Popup {
                 primary:                true
                 onClicked:              _accept()
                 Layout.minimumWidth:    height * 1.5
+                externallyPressed:      acceptTouchHandler.pressed
+
+                TapHandler {
+                    id:                 acceptTouchHandler
+                    acceptedDevices:    PointerDevice.TouchScreen
+                    gesturePolicy:      TapHandler.ReleaseWithinBounds
+                    onTapped:           _accept()
+                }
             }
         }
 

@@ -1,5 +1,6 @@
 #include "NonGpsPreFlightChecksTest.h"
 
+#include <QtCore/QScopeGuard>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
 #include <QtQml/QQmlEngine>
@@ -10,8 +11,10 @@
 #include "Fact.h"
 #include "FactGroup.h"
 #include "FirmwarePlugin.h"
+#include "FlyViewSettings.h"
 #include "MockLink.h"
 #include "ParameterManager.h"
+#include "SettingsManager.h"
 #include "Vehicle.h"
 
 namespace {
@@ -279,6 +282,186 @@ void NonGpsPreFlightChecksTest::_missingEstimatorOrigin_failsWithoutOverride_tes
     QVERIFY(QMetaObject::invokeMethod(check, "reset"));
     QVERIFY(check->property("failed").toBool());
     QVERIFY(!check->property("passed").toBool());
+}
+
+/// Creates a GuidedActionsController with the collaborators it dereferences unconditionally.
+///
+/// The controller reads the active vehicle from QGroundControl directly, so only the mission
+/// controller and the confirmation dialog have to stand in -- at the shape the paths under test
+/// actually reach, which is what keeps the stubs from describing calls that never happen.
+class GuidedActionsFixture
+{
+public:
+    GuidedActionsFixture()
+    {
+        _engine.addImportPath(QStringLiteral("qrc:/qml"));
+
+        // The controller listens to the main window for the arm requests the toolbar raises. Absent
+        // it the Connections block cannot resolve its target and says so on every construction.
+        QQmlComponent mainWindowComponent(&_engine);
+        mainWindowComponent.setData(R"(
+            import QtQuick
+            QtObject {
+                signal armVehicleRequest()
+                signal forceArmVehicleRequest()
+                signal disarmVehicleRequest()
+            }
+        )",
+                                    QUrl());
+        _mainWindow.reset(mainWindowComponent.create());
+        _engine.rootContext()->setContextProperty(QStringLiteral("mainWindow"), _mainWindow.get());
+    }
+
+    /// @return the created controller, or nullptr with @a error describing why not
+    QObject* create(QString& error)
+    {
+        _component.reset(new QQmlComponent(&_engine));
+        _component->setData(R"(
+            import QtQuick
+            import QGroundControl
+            import QGroundControl.Controls
+            import QGroundControl.FlyView
+            Item {
+                property alias controller:    hostedController
+                property alias confirmDialog: confirmDialogStub
+
+                QtObject {
+                    id: missionControllerStub
+                    property bool containsItems: true
+                    property var  visualItems: null
+                    property int  currentMissionIndex: 0
+                    property int  resumeMissionIndex: 0
+                    signal resumeMissionUploadFail()
+                }
+
+                // Everything confirmAction writes into, which is what makes the dialog's own half of
+                // the refusal assertable. No slider stands in beside it: setupSlider matches no
+                // branch for this action and never reaches for one.
+                QtObject {
+                    id: confirmDialogStub
+                    property bool   blocked: false
+                    property bool   visible: false
+                    property bool   hideTrigger: false
+                    property string title
+                    property string message
+                    property string optionText
+                    property int    action
+                    property var    actionData
+                    property var    mapIndicator
+                    function confirmCancelled(incomingIndicator) { }
+                    function show(immediate) { }
+                }
+
+                GuidedActionsController {
+                    id:                 hostedController
+                    missionController:  missionControllerStub
+                    confirmDialog:      confirmDialogStub
+                }
+            }
+        )",
+                            QUrl());
+
+        _host.reset(_component->create());
+        if (!_host) {
+            error = _component->errorString();
+            return nullptr;
+        }
+
+        QObject* const controller = _host->property("controller").value<QObject*>();
+        if (!controller) {
+            error = QStringLiteral("no controller on the host");
+        }
+        // Borrowed: the host owns it and this fixture owns the host
+        return controller;
+    }
+
+    /// The dialog the controller wrote its refusal into, or nullptr before create()
+    QObject* confirmDialog() const { return _host ? _host->property("confirmDialog").value<QObject*>() : nullptr; }
+
+private:
+    QQmlEngine _engine;
+    QScopedPointer<QObject> _mainWindow;
+    QScopedPointer<QQmlComponent> _component;
+    QScopedPointer<QObject> _host;
+};
+
+/// Starting a mission without an origin must be refused outright, not merely warned about.
+///
+/// ArduPilot's ModeAuto::takeoff_start finds current_loc uninitialised when there is no EKF origin
+/// and raises INTERNAL_ERROR(flow_of_control) -- a state its own comment calls impossible. The error
+/// latches: every arm attempt afterwards is refused with "PreArm: Internal errors 0x100000" until
+/// the aircraft is power cycled. Reproduced in SITL by restarting the vehicle after a flight and
+/// pressing Start Mission. A message the operator can confirm past is not enough for a cost the
+/// vehicle pays and only a reboot clears.
+void NonGpsPreFlightChecksTest::_startMissionWithoutOrigin_isRefused_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+    setPositionSource(vehicle(), kSourceNone);
+    QVERIFY(vehicle()->navigatingWithoutGNSS());
+    QVERIFY(!vehicle()->estimatorOrigin().isValid());
+
+    // The controller raises this dialog by itself the moment a mission becomes startable. Driving it
+    // by hand below instead ties what is asserted to the press being modelled rather than to a
+    // setting that happens to default on.
+    Fact* const automaticPopups = SettingsManager::instance()->flyViewSettings()->enableAutomaticMissionPopups();
+    const QVariant savedPopups = automaticPopups->rawValue();
+    const auto restorePopups =
+        qScopeGuard([automaticPopups, savedPopups] { automaticPopups->setRawValue(savedPopups); });
+    automaticPopups->setRawValue(false);
+
+    GuidedActionsFixture fixture;
+    QString error;
+    QObject* const controller = fixture.create(error);
+    QVERIFY2(controller, qPrintable(error));
+    QObject* const confirmDialog = fixture.confirmDialog();
+    QVERIFY(confirmDialog);
+
+    const auto confirmStartMission = [controller]() {
+        // All three arguments: a QML function is exposed with the arity it declares, and a call
+        // that leaves the optional ones off does not match it.
+        return QMetaObject::invokeMethod(controller, "confirmAction", Qt::DirectConnection,
+                                         Q_ARG(QVariant, controller->property("actionStartMission")),
+                                         Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant()));
+    };
+
+    const auto startMission = [controller]() {
+        QVariant executed;
+        if (!QMetaObject::invokeMethod(controller, "executeAction", Qt::DirectConnection,
+                                       Q_RETURN_ARG(QVariant, executed),
+                                       Q_ARG(QVariant, controller->property("actionStartMission")),
+                                       Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, 0), Q_ARG(QVariant, false))) {
+            return false;
+        }
+        return executed.toBool();
+    };
+
+    // Downstream of the assertion below rather than part of it: the mission rewind goes out first,
+    // and only then does the start sequence try to change mode on a mock that models no flight modes.
+    ignoreLogMessage("FirmwarePlugin.APMFirmwarePlugin", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Unknown flight Mode")));
+    ignoreLogMessage("Vehicle.Vehicle", QtWarningMsg, QRegularExpression(QStringLiteral("setFlightMode failed")));
+
+    mockLink()->clearReceivedMavCommandCounts();
+
+    // The dialog's half of the refusal: the action and its explanation are offered, and the button
+    // that would run it is shut.
+    QVERIFY(confirmStartMission());
+    QVERIFY2(confirmDialog->property("blocked").toBool(), "the confirm button must be shut without an origin");
+
+    QVERIFY2(!startMission(), "the action must report that it did not run");
+
+    // Then with an origin, so the refusal above is about the origin rather than about a fixture that
+    // could never have started a mission. ArduPilot's start sequence opens by rewinding the mission,
+    // which makes DO_SET_MISSION_CURRENT the first thing on the wire either way -- and waiting for
+    // this one is what proves the refused attempt sent nothing, without waiting on a silence.
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), QGeoCoordinate(47.3977419, 8.5455938, 488.0)));
+    QVERIFY(confirmStartMission());
+    QVERIFY2(!confirmDialog->property("blocked").toBool(), "with an origin the button has to open again");
+
+    QVERIFY(startMission());
+    QVERIFY_TRUE_WAIT(mockLink()->receivedMavCommandCount(MAV_CMD_DO_SET_MISSION_CURRENT) >= 1, TestTimeout::longMs());
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_DO_SET_MISSION_CURRENT), 1);
 }
 
 /// Both sensors reporting sensibly is the case that must pass, or the checks would be noise the

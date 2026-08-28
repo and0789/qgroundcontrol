@@ -591,6 +591,9 @@ void LocalGridViewTest::init()
         createGridView(name##Component, vehicle(), name##Error));                  \
     QVERIFY2(name, qPrintable(name##Error))
 
+/// Defined further down with the other item helpers; declared here so this test can reach it
+static QList<QQuickItem *> collectItemsNamed(QQuickItem *root, const QString &objectName);
+
 /// The fly view exists before anything connects, and the local position facts read zero until they
 /// are filled -- which would draw the vehicle exactly on the origin, indistinguishable from an
 /// aircraft sitting where it started.
@@ -607,6 +610,19 @@ void LocalGridViewTest::_withoutVehicle_reportsNoPosition_test()
              "with no vehicle there is no position to draw");
     QVERIFY(qIsNaN(gridView->property("vehicleNorth").toDouble()));
     QVERIFY(qIsNaN(gridView->property("vehicleEast").toDouble()));
+
+    // And the warning band stays off. "No local position telemetry" is a fault worth raising about an
+    // aircraft on the link that is not sending any; about an empty view before anything is plugged in
+    // it is a description, and a warning surface that fires in that state is one an operator learns to
+    // look past. The readout's own header still reads "--", so the absence is not unsaid.
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    const QList<QQuickItem *> bands = collectItemsNamed(gridItem, QStringLiteral("localGrid_warnings"));
+    QCOMPARE(bands.count(), 1);
+    QVERIFY2(!bands.first()->isVisible(),
+             "the warning band was up with nothing connected to warn about");
 }
 
 /// The frame is the estimator's own: x is metres north of the origin and y is metres east, straight
@@ -1537,6 +1553,52 @@ void LocalGridViewTest::_altitudeCanBeAppliedToEveryItem_test()
     QVERIFY(QMetaObject::invokeMethod(gridView.get(), "setAllWaypointAltitudes", Qt::DirectConnection,
                                       Q_RETURN_ARG(QVariant, changed), Q_ARG(QVariant, qQNaN())));
     QCOMPARE(changed.toInt(), 0);
+}
+
+/// A new item takes this view's own default height rather than QGC's mission default.
+///
+/// QGC's default is fifty metres, chosen for a vehicle with GNSS and a barometer. A grid flight is
+/// flown indoors or in a confined space, and the rangefinder cap that used to be the only correction
+/// applies solely when the estimator takes its height from a rangefinder -- so on a vehicle holding
+/// height on the barometer, every waypoint placed here was fifty metres up and nothing said so.
+void LocalGridViewTest::_newItemTakesTheGridsOwnDefaultAltitude_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    Fact* const defaultAltitude = SettingsManager::instance()->flyViewSettings()->localGridDefaultAltitude();
+    QVERIFY(defaultAltitude);
+    QVERIFY2(defaultAltitude->rawValue().toDouble() < 10.0,
+             "the shipped default has to be a height this kind of flight is actually flown at");
+    // A whole number: the stub's altitude Fact carries no metadata of its own, so it stores what a
+    // default-typed Fact stores. Four is still distinct from both the shipped default and the fifty
+    // metres this test exists to keep out.
+    defaultAltitude->setRawValue(4.0);
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed), Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
+    QVERIFY(placed.toBool());
+
+    // The takeoff the empty plan gained first and the waypoint that was asked for. Both are placed
+    // by the operator and both are flown, so neither may arrive carrying a height from somewhere
+    // else.
+    for (int index = 0; index < 2; index++) {
+        QVariant fact;
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointAltitudeFact", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, fact), Q_ARG(QVariant, index)));
+        QObject* const altitude = fact.value<QObject*>();
+        QVERIFY(altitude);
+        QCOMPARE(altitude->property("rawValue").toDouble(), 4.0);
+    }
 }
 
 /// A landing's altitude is never flown. ArduPilot's do_land() zeroes the one it is given and refills
@@ -3952,16 +4014,88 @@ void LocalGridViewTest::_planEditMode_endsWhenTheAircraftArms_test()
              "landing put the operator back in a mode they had not asked to be in");
 }
 
-/// Everything the plan panel holds is work done between flights. Upload is refused outright while the
-/// vehicle is flying a mission, Load and Clear would leave the grid drawing a pattern the aircraft is
-/// not flying, and neither after-flight control can be used in the air at all -- a position
-/// correction is a step change the position controller flies straight out, and moving the plan under
-/// an aircraft already flying it changes where it is going mid-flight.
+/// The panel is named for a moment, and waits for it.
 ///
-/// So the panel goes, rather than standing there refusing. The resume warning inside it has always
-/// stood itself down this way; this is the rest of the panel following it, and it comes back the
-/// moment the aircraft is disarmed.
-void LocalGridViewTest::_thePlanPanelStandsDownWhileArmed_test()
+/// Before a flight there is nothing in it to do: the aircraft is standing on the origin the estimator
+/// was given, so the drift on offer to correct is zero, and the pattern was drawn around that same
+/// origin, so it already starts where the aircraft stands. Both controls used to be on screen anyway
+/// -- one live and offering to repair nothing, one greyed under a line reading "The plan already
+/// starts where the aircraft is standing" -- in the corner the tool strip runs down. A titled box
+/// whose every line says nothing is wrong is chrome charged for the state that needs it least.
+///
+/// The link is silenced first because MockLink streams a position that wanders five metres either
+/// side of the origin, which is the very measurement these gates are made of.
+void LocalGridViewTest::_theAfterFlightWorkWaitsForSomethingToRepair_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QQmlComponent planComponent(&gridViewEngine);
+    QString planError;
+    const QScopedPointer<QObject> plan(createPlanMasterControllerStub(planComponent, planError));
+    QVERIFY2(plan, qPrintable(planError));
+    plan->setProperty("missionController", QVariant::fromValue(stub.get()));
+    gridView->setProperty("planMasterController", QVariant::fromValue(plan.get()));
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "resetPlanAnchor", Qt::DirectConnection));
+
+    mockLink()->setCommLost(true);
+    sendLocalPosition(vehicle(), 0.0F, 0.0F, 0.0F);
+
+    // A pattern drawn around the origin the aircraft is standing on -- a plan before its first flight
+    QVariant added;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, added),
+                                      Q_ARG(QVariant, 20.0), Q_ARG(QVariant, 0.0)));
+    QVERIFY(added.toBool());
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
+    QVERIFY(gridItem);
+    const auto afterFlightWork = [&gridView]() {
+        QObject *const actions = gridView->property("missionActions").value<QObject *>();
+        return actions && actions->property("hasAfterFlightWork").toBool();
+    };
+
+    QVERIFY2(!gridView->property("originDriftWorthCorrecting").toBool(),
+             "an aircraft on its own origin was reported as having drifted off it");
+    QVERIFY2(!gridView->property("planIsDisplacedFromVehicle").toBool(),
+             "a plan drawn around the origin was reported as displaced from an aircraft standing on it");
+    QVERIFY2(!afterFlightWork(),
+             "the after-flight work was on offer before anything had been flown");
+
+    // Landed away from the origin, which is what a flight leaves behind: an estimate that has wandered
+    // and a pattern that no longer starts where the aircraft is
+    sendLocalPosition(vehicle(), 25.0F, 10.0F, 0.0F);
+
+    QTRY_VERIFY_WITH_TIMEOUT(afterFlightWork(), TestTimeout::mediumMs());
+    QVERIFY2(gridView->property("originDriftWorthCorrecting").toBool(),
+             "the aircraft had been moved off its origin and nothing said so");
+    QVERIFY2(gridView->property("planIsDisplacedFromVehicle").toBool(),
+             "the pattern no longer started at the aircraft and nothing said so");
+
+    mockLink()->setCommLost(false);
+}
+
+/// Neither after-flight control can be used in the air: a position correction is a step change the
+/// position controller flies straight out, and moving the plan under an aircraft already flying it
+/// changes where it is going mid-flight.
+///
+/// So the panel goes, rather than standing there refusing, and comes back the moment the aircraft is
+/// disarmed. Checked with QTRY throughout because MockLink streams a position that wanders through
+/// the origin: the panel's own gates ask how far the aircraft has moved, and a bare sample can land
+/// in the moment the wander is crossing zero.
+void LocalGridViewTest::_theAfterFlightWorkStandsDownWhileArmed_test()
 {
     QVERIFY(vehicle());
     const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
@@ -3994,38 +4128,21 @@ void LocalGridViewTest::_thePlanPanelStandsDownWhileArmed_test()
 
     auto *const gridItem = qobject_cast<QQuickItem *>(gridView.get());
     QVERIFY(gridItem);
-    const auto shown = [gridItem](const QString &name) {
-        const QList<QQuickItem *> found = collectItemsNamed(gridItem, name);
-        return !found.isEmpty() && found.first()->isVisible();
+    const auto afterFlightWork = [&gridView]() {
+        QObject *const actions = gridView->property("missionActions").value<QObject *>();
+        return actions && actions->property("hasAfterFlightWork").toBool();
     };
 
-    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_missionActions")), TestTimeout::mediumMs());
-    QVERIFY(shown(QStringLiteral("localGrid_afterFlightSection")));
-    QVERIFY(shown(QStringLiteral("localGrid_standOnOriginButton")));
-    QVERIFY(shown(QStringLiteral("localGrid_flyFromHereButton")));
-    QVERIFY(shown(QStringLiteral("localGrid_uploadMissionButton")));
+    QTRY_VERIFY_WITH_TIMEOUT(afterFlightWork(), TestTimeout::mediumMs());
 
     vehicle()->setArmedShowError(true);
     QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
 
-    QTRY_VERIFY_WITH_TIMEOUT(!shown(QStringLiteral("localGrid_missionActions")), TestTimeout::mediumMs());
-    QVERIFY2(!shown(QStringLiteral("localGrid_afterFlightSection")),
-             "a control that cannot be used in the air was still on the grid in the air");
-    QVERIFY2(!shown(QStringLiteral("localGrid_standOnOriginButton")), "and so was the button in it");
-    QVERIFY2(!shown(QStringLiteral("localGrid_flyFromHereButton")), "and the one under that");
-
-    // The plan's own file and transfer controls go with them: none of them is something to reach for
-    // over an aircraft that is flying
-    QVERIFY(!shown(QStringLiteral("localGrid_uploadMissionButton")));
-    QVERIFY(!shown(QStringLiteral("localGrid_downloadMissionButton")));
-    QVERIFY(!shown(QStringLiteral("localGrid_clearMissionButton")));
+    QTRY_VERIFY_WITH_TIMEOUT(!afterFlightWork(), TestTimeout::mediumMs());
 
     vehicle()->setArmedShowError(false);
     QTRY_VERIFY_WITH_TIMEOUT(!vehicle()->armed(), TestTimeout::longMs());
-    QTRY_VERIFY_WITH_TIMEOUT(shown(QStringLiteral("localGrid_afterFlightSection")), TestTimeout::mediumMs());
-    QVERIFY2(shown(QStringLiteral("localGrid_flyFromHereButton")),
-             "the section is named for the moment it came back for");
-    QVERIFY(shown(QStringLiteral("localGrid_uploadMissionButton")));
+    QTRY_VERIFY_WITH_TIMEOUT(afterFlightWork(), TestTimeout::mediumMs());
 }
 
 /// Folded away, the readout has to stay something an operator can find and aim at. It did not: the
@@ -4064,13 +4181,30 @@ void LocalGridViewTest::_theFoldedReadoutStaysWideEnoughToFind_test()
     QVERIFY(title);
 
     // Open first, which is where telemetry leaves it, so the fold below is the operator's own
+    // The button row is the widest thing the fold hides, so "the panel has caught up with being
+    // open" is exactly "the panel is at least as wide as that row". Waited on rather than read once
+    // after the title reports a width: the panel reaches its own width on a later polish pass than
+    // the one that sizes the labels, and an openWidth sampled in between is a mid-layout number that
+    // the folded width below can then beat for no better reason than timing.
+    QQuickItem* const viewButtons =
+        collectItemsNamed(readoutItem, QStringLiteral("localGrid_readoutViewButtons")).value(0);
+    QVERIFY(viewButtons);
+
     readout->setProperty("collapsed", false);
     QTRY_VERIFY_WITH_TIMEOUT(title->implicitWidth() > 0, TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        viewButtons->isVisible() && (viewButtons->width() > 0) && (readoutItem->width() >= viewButtons->width()),
+        TestTimeout::mediumMs());
     const qreal openWidth = readoutItem->width();
     QVERIFY(openWidth > 0);
 
     readout->setProperty("collapsed", true);
+    QTRY_VERIFY_WITH_TIMEOUT(!viewButtons->isVisible(), TestTimeout::mediumMs());
     QTRY_VERIFY_WITH_TIMEOUT(readoutItem->width() < openWidth, TestTimeout::mediumMs());
+    QVERIFY2(readoutItem->width() < openWidth,
+             qPrintable(QStringLiteral("folded to %1 from an open %2 -- folding freed no width at all")
+                            .arg(readoutItem->width())
+                            .arg(openWidth)));
 
     QVERIFY2(readoutItem->width() >= title->implicitWidth(),
              "the folded panel is narrower than its own name, so there is nothing on the grid to aim at");
@@ -5470,4 +5604,63 @@ void LocalGridViewTest::_insertAppendsWhenAnItemSpansTwoSequenceNumbers_test()
              "the first waypoint must stay first");
     QVERIFY2(qAbs(points.property(2).property(QStringLiteral("north")).toNumber() - 20.0) < 0.05,
              "the second waypoint must land after it, not in front of the whole plan");
+}
+
+/// The readout is the top of the right-hand column, and everything below it -- the plan list, the
+/// totals -- is anchored under it and capped by whatever height is left down to the bottom edge. So
+/// an open readout is not merely a panel taking room: it is the plan list unable to open far enough
+/// to read, which is what an operator building a pattern is looking at the column for.
+///
+/// It stands open while it is the job in hand, which is only ever before an origin exists, and gets
+/// out of the way once it is not. Building a plan is the other case: the mode says outright what the
+/// operator is doing, and it is not reading position.
+void LocalGridViewTest::_theReadoutStandsAsideOnceTheFrameIsSetAndWhileAPlanIsBuilt_test()
+{
+    QVERIFY(vehicle());
+    QVERIFY(mockLink());
+
+    MAKE_GRID_VIEW(gridView);
+
+    QQuickWindow window;
+    QVERIFY(_showInWindow(window, gridView.get()));
+
+    auto* const gridItem = qobject_cast<QQuickItem*>(gridView.get());
+    QVERIFY(gridItem);
+    QObject* const readout = gridItem->findChild<QObject*>(QStringLiteral("localGrid_readout"));
+    QVERIFY2(readout, "the readout has to be findable, or nothing below is testing it");
+
+    // No origin yet, and a position arriving: the one state where this panel is the task rather than
+    // a reference, so it takes the column and opens itself
+    QVERIFY2(!gridView->property("originKnown").toBool(), "this test starts before there is an origin");
+    sendLocalPosition(vehicle(), 12.0F, -5.0F, -2.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("positionValid").toBool(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(!readout->property("collapsed").toBool(), TestTimeout::mediumMs());
+
+    // Setting the frame ends that. The numbers stop being the thing being worked on, and the header
+    // goes on carrying the range and bearing a return leg is flown on either way.
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+    QTRY_VERIFY_WITH_TIMEOUT(gridView->property("originKnown").toBool(), TestTimeout::mediumMs());
+    QTRY_VERIFY_WITH_TIMEOUT(readout->property("collapsed").toBool(), TestTimeout::mediumMs());
+
+    QObject* const summary = gridItem->findChild<QObject*>(QStringLiteral("localGrid_readoutSummary"));
+    QVERIFY(summary);
+    QVERIFY2(summary->property("visible").toBool(),
+             "folded, the pair a return leg is flown on has to still be on the header");
+
+    // Opened again by hand -- the operator's call, and nothing may take it back off them while the
+    // state that folded it has not changed
+    readout->setProperty("collapsed", false);
+    QVERIFY(!readout->property("collapsed").toBool());
+
+    // Entering plan mode folds it, because the column it heads is where the plan is read
+    gridView->setProperty("planEditMode", true);
+    QTRY_VERIFY_WITH_TIMEOUT(readout->property("collapsed").toBool(), TestTimeout::mediumMs());
+
+    // And leaving the mode does not shove it back over the grid: an unfold here would undo a fold the
+    // operator may well have made for themselves
+    readout->setProperty("collapsed", false);
+    gridView->setProperty("planEditMode", false);
+    QVERIFY2(!readout->property("collapsed").toBool(),
+             "leaving plan mode refolded the panel the operator had just opened");
 }

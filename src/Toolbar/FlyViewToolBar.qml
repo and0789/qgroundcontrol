@@ -20,6 +20,27 @@ Item {
     property real   _leftRightMargin:   ScreenTools.defaultFontPixelWidth * 0.75
     property var    _guidedController:  globals.guidedControllerFlyView
 
+    readonly property var  _gridView: globals.localGridViewFlyView
+
+    /// True while the local grid is on screen with the aircraft on the ground.
+    ///
+    /// Not gated on the window size: this row used to stand in for the flying indicators only on a
+    /// view too small to carry the grid's own mission panel open, which left the plan's transfers
+    /// living in one place on a phone and another on a desktop. It stands here at every size now,
+    /// alongside those indicators rather than in place of them -- the row gives up its labels
+    /// instead of the corner (see LocalGridToolBarActions).
+    ///
+    /// Not gated on plan edit mode either. A plan is opened from disk, sent, fetched and cleared
+    /// without ever arming an insert tool, and making the operator enter a mode that rearranges the
+    /// tool strip in order to press Upload is a mode change charged for a transfer.
+    ///
+    /// Armed is the one line kept. Every one of these is ground work: an upload landing under a
+    /// running mission leaves the aircraft part way through a route that is no longer there, and
+    /// the rest change a plan the aircraft is in the middle of flying.
+    readonly property bool _showLocalGridPlanActions: _gridView
+                                                        ? (_gridView.visible && !_gridView.vehicleArmed)
+                                                        : false
+
     function dropMainStatusIndicatorTool() {
         mainStatusIndicator.dropMainStatusIndicator();
     }
@@ -102,6 +123,15 @@ Item {
                         Layout.fillHeight:  true
                         visible:            _activeVehicle
                     }
+
+                    // The plan's transfers, beside the indicators above rather than in place of
+                    // them. See _showLocalGridPlanActions for the gate.
+                    LocalGridToolBarActions {
+                        objectName:         "toolbar_localGridPlanActions"
+                        Layout.fillHeight:  true
+                        visible:            control._showLocalGridPlanActions
+                        gridView:           control._gridView
+                    }
                 }
             }
             Item {
@@ -141,6 +171,34 @@ Item {
                 }
             }
         }
+    }
+
+    // How far through a local grid plan transfer the link is, along the foot of the toolbar -- the
+    // same place and the same thin bar the Plan view's own toolbar shows the same transfer on
+    // (PlanViewToolBar.qml). This is the answer to "did it go?", and the button that asked is
+    // directly above it.
+    //
+    // Worth a bar rather than a spinner: a mission upload is a request-and-acknowledge exchange per
+    // item over a link that drops them, so it runs long enough that an operator with no indication
+    // cannot tell a transfer in progress from one that never started. It used to be drawn in the
+    // grid's own mission panel, beside buttons that have since moved up here; it followed them.
+    //
+    // Held at full width for a moment after the transfer lands (missionActions' own syncJustCompleted
+    // timer), so a fast upload is not a bar that flickers and leaves nobody any wiser.
+    Rectangle {
+        id:                 localGridProgressBar
+        objectName:         "toolbar_localGridProgressBar"
+        anchors.left:       parent.left
+        anchors.bottom:     parent.bottom
+        height:             Math.max(2, Math.round(ScreenTools.defaultFontPixelHeight / 6))
+        width:              parent.width * (_localGridSyncing ? _localGridProgress : 1)
+        color:              qgcPal.colorGreen
+        visible:            _localGridSyncing || _localGridSyncComplete
+
+        readonly property var  _actions:            control._gridView ? control._gridView.missionActions : null
+        readonly property bool _localGridSyncing:      (_actions !== null) && _actions.syncing
+        readonly property bool _localGridSyncComplete: (_actions !== null) && _actions.syncJustCompleted
+        readonly property real _localGridProgress:     (_actions !== null) ? _actions.syncProgress : 0
     }
 
     // The guided action message display is outside of the GuidedActionConfirm control so that it doesn't end up as

@@ -302,6 +302,17 @@ void Vehicle::_commonInit(LinkInterface* link)
         _vehicleLinkManager->_addLink(link);
     }
 
+    // An aircraft that came back is an aircraft that may have rebooted while it was away, and a
+    // rebooted one has no origin -- which it reports by saying nothing, so only asking finds out.
+    // Connect was the one and only time QGC asked, so a vehicle restarted mid-session left the
+    // origin, the local grid built on it and the controls gated on it all describing the flight
+    // before the reboot, with a restart of QGC the only way back.
+    connect(_vehicleLinkManager, &VehicleLinkManager::communicationLostChanged, this, [this](bool communicationLost) {
+        if (!communicationLost) {
+            requestEstimatorOrigin();
+        }
+    });
+
     connect(_standardModes, &StandardModes::modesUpdated, this, &Vehicle::flightModesChanged);
     // Re-emit flightModeChanged after available modes mapping updates so UI refreshes
     // the human-readable mode name even if HEARTBEAT arrived earlier.
@@ -1262,8 +1273,13 @@ void Vehicle::_handleGpsGlobalOrigin(const mavlink_message_t& message)
                                    origin.altitude / 1.0e3);
     }
 
-    if (newOrigin != _estimatorOrigin) {
-        _estimatorOrigin = newOrigin;
+    _setEstimatorOrigin(newOrigin);
+}
+
+void Vehicle::_setEstimatorOrigin(const QGeoCoordinate& estimatorOrigin)
+{
+    if (estimatorOrigin != _estimatorOrigin) {
+        _estimatorOrigin = estimatorOrigin;
         emit estimatorOriginChanged(_estimatorOrigin);
     }
 }
@@ -1305,10 +1321,7 @@ void Vehicle::requestEstimatorOrigin()
     // would leave QGC reporting an origin that no longer exists, which is the exact false
     // reassurance this property was added to prevent. A vehicle that still has one repopulates this
     // within a round trip.
-    if (_estimatorOrigin.isValid()) {
-        _estimatorOrigin = QGeoCoordinate();
-        emit estimatorOriginChanged(_estimatorOrigin);
-    }
+    _setEstimatorOrigin(QGeoCoordinate());
 
     // The reply arrives as a normal GPS_GLOBAL_ORIGIN message and is picked up by the message
     // handler, so nothing is needed here on success. A handler is still mandatory: the coordinator

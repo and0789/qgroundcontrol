@@ -158,6 +158,25 @@ Item {
     /// should look different; on a phone it is a third of a much smaller number.
     readonly property real _rightColumnMaximumWidth: Math.min(width / 3, ScreenTools.defaultFontPixelWidth * 30)
 
+    /// Where the right-hand column has to stop.
+    ///
+    /// The fly view stacks the instrument panel and the telemetry bar into the bottom-right corner and
+    /// publishes their top edge as bottomEdgeRightInset. Every panel in this column is anchored to the
+    /// one above it, so without a shared floor the column simply ran on past that edge -- an opened
+    /// readout put its own view buttons, and the plan list under them, behind the compass.
+    readonly property real _rightColumnBottom: height - _margins - _inset("bottomEdgeRightInset")
+
+    /// What the readout above has to leave the plan list.
+    ///
+    /// Its folded height plus a row's worth whenever there are rows to show, rather than the folded
+    /// height alone: a list reduced to its own header, with "2 items" written on it and none of them
+    /// under it, is not a shorter list -- it is a panel that has stopped doing its job while still
+    /// taking room. Read off the row count rather than the rows, which come from the plan and not
+    /// from the layout, so nothing here depends on what it is being used to size.
+    readonly property real _missionListReserve: missionList.collapsedHeight
+                                                    + ((missionList.rowCount > 0)
+                                                        ? ScreenTools.defaultFontPixelHeight * 2 : 0)
+
     /// True while this view is too small to carry every panel open at once.
     ///
     /// Derived from this view's own size, never from ScreenTools.isMobile: --fake-mobile flips that
@@ -476,6 +495,9 @@ Item {
     readonly property alias gridTransform: transform
     readonly property alias trailPointCount:   trail.pointCount
     readonly property alias trailLengthMetres: trail.pathLengthMetres
+    /// The plan's Upload/Download/Save/Clear and their pre-checks, for LocalGridToolBarActions to
+    /// drive from the toolbar without a second copy of any of it
+    readonly property alias missionActions: missionActionsPanel
 
     function clearTrail() {
         trail.reset()
@@ -572,7 +594,9 @@ Item {
 
         switch (kind) {
         case "land":
-            _applyDefaultAltitude(missionController.insertLandItem(coordinate, _insertIndex(), true /* makeCurrentItem */))
+            // Only capped, not defaulted: this is a return to launch, and the altitude the
+            // controller gives it is the height it flies home at rather than a height of its own
+            _capAltitude(missionController.insertLandItem(coordinate, _insertIndex(), true /* makeCurrentItem */))
             break
         case "landHere":
             return _insertLandHere(coordinate)
@@ -635,12 +659,27 @@ Item {
         return true
     }
 
-    /// Brings a newly placed item under the ceiling the estimator can actually hold a height at.
+    /// The height a new item on this grid is placed at, before the ceiling below is applied
+    readonly property real _defaultAltitudeMetres: QGroundControl.settingsManager.flyViewSettings.localGridDefaultAltitude.rawValue
+
+    /// Gives a newly placed item a height this grid can be flown at.
     ///
-    /// QGC's default mission altitude is chosen for a vehicle with GNSS and a barometer. On one
-    /// flying off a rangefinder it is above the only height reference there is, and the way that
-    /// fails is silent: the plan uploads cleanly and the aircraft climbs out of range in flight.
+    /// Two corrections, in order. QGC's default mission altitude is chosen for a vehicle with GNSS
+    /// and a barometer, and is tens of metres; a grid flight is flown indoors or in a confined
+    /// space, so the item takes this view's own default instead. Then the rangefinder's range caps
+    /// it, because on an aircraft that takes its height from one, anything above that range is
+    /// above the only height reference there is -- and the way that fails is silent: the plan
+    /// uploads cleanly and the aircraft climbs out of range in flight.
     function _applyDefaultAltitude(item) {
+        if (!item || !item.altitude) {
+            return
+        }
+        item.altitude.rawValue = clampAltitude(_defaultAltitudeMetres)
+    }
+
+    /// Brings an item's own altitude under that same ceiling, for the items whose height is decided
+    /// somewhere other than here.
+    function _capAltitude(item) {
         if (!item || !item.altitude) {
             return
         }
@@ -1083,6 +1122,14 @@ Item {
     /// Set while a whole-plan operation is running, so the per-item writes it makes do not each
     /// record an entry over the single one the operation itself recorded
     property bool _batchingUndo: false
+
+    /// The item a marker drag is currently moving, or -1 when no drag is running.
+    ///
+    /// Not folded into _batchingUndo: that flag is held across a call that is guaranteed to return,
+    /// while this one is opened and closed by two separate gestures' worth of events. A drag whose
+    /// end never arrives would leave _batchingUndo stuck true and silently kill undo everywhere,
+    /// where a stale index here costs only the undo entry for one item's next programmatic move.
+    property int _movingItemIndex: -1
 
     /// True while there is something to take back. The undo control exists only when this is true,
     /// which is also why it costs nothing against the chrome budget: in the default state there is
@@ -1769,6 +1816,22 @@ Item {
 
     /// Moves a waypoint to a point on the grid, in metres from the origin.
     ///     @return true if it moved
+    /// Opens a marker drag: records the one undo entry that takes the whole gesture back, and marks
+    /// the item so the frames that follow do not each record one of their own.
+    function beginWaypointMove(index) {
+        _movingItemIndex = -1
+        const before = _pointForIndex(index)
+        if (before && before.onGrid) {
+            _recordUndo(qsTr("Undo move"), () => moveWaypointTo(index, before.north, before.east))
+        }
+        _movingItemIndex = index
+    }
+
+    /// Closes a marker drag. Safe to call when no drag is running.
+    function endWaypointMove() {
+        _movingItemIndex = -1
+    }
+
     function moveWaypointTo(index, north, east) {
         const item = _visualItemAt(index)
         if (!item || !originKnown || isNaN(north) || isNaN(east) || _isPinnedItem(item)) {
@@ -1784,8 +1847,13 @@ Item {
         // operation is running: offsetMission and rotatePlan call this once per item and record a
         // single entry of their own, and per-item entries would overwrite it with the last leg of
         // the loop -- an undo that straightened one waypoint out of a turned pattern.
+        //
+        // Skipped outright while a drag is moving this item. movedTo arrives once per frame, and an
+        // entry per frame overwrites the one before it -- so undo took the marker back one frame,
+        // a pixel or two, rather than back to where the drag picked it up. The drag records one
+        // entry for the whole gesture when it begins.
         const before = _pointForIndex(index)
-        if (before && before.onGrid) {
+        if (before && before.onGrid && (index !== _movingItemIndex)) {
             _recordUndo(qsTr("Undo move"), () => moveWaypointTo(index, before.north, before.east))
         }
 
@@ -1918,6 +1986,25 @@ Item {
     /// True when the plan could be moved to start from where the aircraft is standing now
     readonly property bool canReanchorPlan: !vehicleArmed && canPlaceWaypoints && positionValid
                                                 && _hasMovablePlan && !planStartsAtVehicle
+
+    /// True while the pattern is drawn somewhere other than where the aircraft is standing: the state
+    /// "Fly this plan from here" exists to repair, whether or not it can be repaired this instant.
+    ///
+    /// The after-flight panel shows that control on this rather than on canReanchorPlan, so a
+    /// transient blocker -- a transfer running, a position not yet reported -- leaves a button that
+    /// says why instead of no button at all.
+    readonly property bool planIsDisplacedFromVehicle: _hasMovablePlan && !planStartsAtVehicle
+
+    /// True while the estimator is claiming a position far enough from the origin that standing the
+    /// aircraft back on it would move something.
+    ///
+    /// Held to the same floor as a plan move, and for the same reason: below it the correction on
+    /// offer is inside the noise a stationary estimator reports anyway. Before a flight it is false
+    /// by construction -- the origin was taken where the aircraft stands -- which is what keeps the
+    /// after-flight panel off a grid that has not been flown on yet.
+    readonly property bool originDriftWorthCorrecting: originKnown && positionValid
+                                                        && ((Math.abs(vehicleNorth) >= _reanchorMinimumMetres)
+                                                            || (Math.abs(vehicleEast) >= _reanchorMinimumMetres))
 
     /// Why the plan cannot be moved to the aircraft, or an empty string when it can -- and also when
     /// there is no plan at all, since a grid with nothing drawn on it explains itself.
@@ -2542,19 +2629,34 @@ Item {
         }
     }
 
-    PinchArea {
-        anchors.fill:   parent
-        enabled:        true
+    /// Pinch to zoom, as a handler rather than a PinchArea.
+    ///
+    /// A PinchArea filling the view sat over dragArea and took every touch point that landed on the
+    /// grid, including the single ones it has no use for. dragArea is a MouseArea, so on a touch
+    /// screen it lives entirely on the mouse events Qt synthesises from a touch that no item claimed
+    /// -- and none were left to synthesise. Tapping to place a waypoint and dragging to pan both did
+    /// nothing on a touch screen while both worked under a mouse, which is the state the grid shipped
+    /// in. A handler takes a passive grab instead and only claims the gesture once a second finger
+    /// makes it a pinch, so one finger still reaches the MouseArea beneath.
+    PinchHandler {
+        // Nothing is being transformed directly: the zoom goes through the transform's own pivot
+        // arithmetic so the ground under the fingers stays under them
+        target: null
 
         property real _previousScale: 1
 
-        onPinchStarted: { _previousScale = 1 }
-        onPinchUpdated: (pinch) => {
-            if (pinch.scale <= 0) {
+        onActiveChanged: {
+            if (active) {
+                _previousScale = 1
+            }
+        }
+
+        onActiveScaleChanged: {
+            if (!(activeScale > 0)) {
                 return
             }
-            transform.zoomBy(_previousScale / pinch.scale, pinch.center.x, pinch.center.y)
-            _previousScale = pinch.scale
+            transform.zoomBy(_previousScale / activeScale, centroid.position.x, centroid.position.y)
+            _previousScale = activeScale
             _root.followVehicle = false
         }
     }
@@ -2619,8 +2721,10 @@ Item {
             y:               onGrid ? (_root.gridTransform.pixelYForNorth(point.north) - (height / 2)) : 0
             z:               isSelected ? 2 : 1
 
-            onSelected: _root.selectWaypoint(waypointMarker.visualItemIndex)
-            onMovedTo:  (north, east) => _root.moveWaypointTo(waypointMarker.visualItemIndex, north, east)
+            onSelected:     _root.selectWaypoint(waypointMarker.visualItemIndex)
+            onMoveStarted:  _root.beginWaypointMove(waypointMarker.visualItemIndex)
+            onMovedTo:      (north, east) => _root.moveWaypointTo(waypointMarker.visualItemIndex, north, east)
+            onMoveFinished: _root.endWaypointMove()
         }
     }
 
@@ -2651,8 +2755,7 @@ Item {
         // sizes itself from its own contents and never from this panel, so reading its height here
         // closes no loop.
         maximumHeight:          Math.max(collapsedHeight,
-                                         _root.height - y - _root._margins
-                                             - _root._inset("bottomEdgeRightInset")
+                                         _root._rightColumnBottom - y
                                              - (missionStats.visible ? missionStats.height + _root._margins : 0))
         z:                      2
         gridView:               _root
@@ -2675,6 +2778,36 @@ Item {
         Component.onCompleted:  collapsed = _root.compact
         z:                      2
         gridView:               _root
+    }
+
+    /// The point the click panel is describing.
+    ///
+    /// The panel opens beside the tap rather than under it, so a finger resting there does not cover
+    /// the two numbers that are the whole reason it exists -- which leaves nothing on the grid saying
+    /// which point those numbers are about. A grid is a field of identical squares and a plan puts
+    /// markers all over it, so without this the operator is handed the offsets of a spot they can no
+    /// longer pick out.
+    Rectangle {
+        objectName:     "localGrid_clickPointMarker"
+        visible:        clickPanel.pointMarked
+        x:              clickPanel.pointX - (width / 2)
+        y:              clickPanel.pointY - (height / 2)
+        z:              1
+        width:          ScreenTools.defaultFontPixelHeight
+        height:         width
+        radius:         width / 2
+        color:          "transparent"
+        border.color:   qgcPal.text
+        border.width:   Math.max(1, Math.round(ScreenTools.defaultFontPixelHeight / 8))
+
+        // A ring on its own is lost among the grid lines it is most likely to land on
+        Rectangle {
+            anchors.centerIn:   parent
+            width:              Math.max(2, parent.width / 3)
+            height:             width
+            radius:             width / 2
+            color:              qgcPal.colorOrange
+        }
     }
 
     /// What a click on the grid offers. A bare click that added a waypoint outright would turn every
@@ -2787,8 +2920,9 @@ Item {
         onClicked:              _root.undoLastAction()
     }
 
-    /// Why a plan button on the tool strip is dead, in the two states where it is dead for a reason
-    /// the operator can act on.
+    /// Why a button the plan needs is dead, in the states where it is dead for a reason the operator
+    /// can act on: two on the tool strip while a pattern is being built, and the altitude ceiling,
+    /// which holds the toolbar's Upload shut whatever mode the view is in.
     ///
     /// A grey button cannot say why, and this grid has already paid for that lesson: the panel this
     /// mode replaced grew refusal reasons of its own because an operator who met a dead button
@@ -2797,34 +2931,81 @@ Item {
     /// nothing-when-idle the undo control above is built on, so the chrome the responsive tests
     /// measure is untouched by default.
     ///
-    /// Silent when there is no origin: with nothing to measure from, the plan cannot be started at
-    /// all, and pointing at Take off would be pointing at a button just as dead as the rest.
+    /// Silent about the tool strip when there is no origin: with nothing to measure from, the plan
+    /// cannot be started at all, and pointing at Take off would be pointing at a button just as dead
+    /// as the rest.
     readonly property string planBlockedReason: _planBlockedReason()
 
     function _planBlockedReason() {
-        if (!planEditMode || !canPlaceWaypoints) {
-            return ""
+        if (planEditMode && canPlaceWaypoints) {
+            if (planNeedsTakeoffFirst) {
+                return qsTr("Start the plan with Take off — a mission is flown from its first item.")
+            }
+            // The one item an operator can add that the grid's altitude ceiling cannot reach and
+            // cannot clamp: a return climbs to RTL_ALT first, and that is a vehicle parameter rather
+            // than part of the plan. Above the rangefinder's range the estimator loses its height
+            // source and optical flow loses the height it scales velocity by, both at once and out
+            // of reach -- so Return is refused rather than warned about, and this is the way out of
+            // the refusal.
+            if (returnAltitudeAboveCeiling && vehicle && vehicle.multiRotor) {
+                return qsTr("A return would climb above the rangefinder's range. Lower RTL_ALT, or end the plan with Land instead.")
+            }
         }
-        if (planNeedsTakeoffFirst) {
-            return qsTr("Start the plan with Take off — a mission is flown from its first item.")
-        }
-        // The one item an operator can add that the grid's altitude ceiling cannot reach and cannot
-        // clamp: a return climbs to RTL_ALT first, and that is a vehicle parameter rather than part
-        // of the plan. Above the rangefinder's range the estimator loses its height source and
-        // optical flow loses the height it scales velocity by, both at once and out of reach -- so
-        // Return is refused rather than warned about, and this is the way out of the refusal.
-        if (returnAltitudeAboveCeiling && vehicle && vehicle.multiRotor) {
-            return qsTr("A return would climb above the rangefinder's range. Lower RTL_ALT, or end the plan with Land instead.")
+        // Deliberately outside the plan-mode gate above: this is the one that holds Upload shut, and
+        // Upload is in the toolbar now rather than behind the mode that built the plan. An operator
+        // who has just pressed a dead Upload needs to be told why wherever they are standing, and
+        // this line is the only place they are told at all.
+        if (itemsAboveAltitudeLimit.length > 0) {
+            return qsTr("Item %1 climbs past the rangefinder's %2 range — %3. Lower it before flying.")
+                        .arg(itemsAboveAltitudeLimit.join(", "))
+                        .arg(altitudeLimitKnown
+                                ? (gridTransform.toDisplay(altitudeLimitMetres).toFixed(1)
+                                   + " " + gridTransform.displayUnits)
+                                : qsTr("--"))
+                        .arg(altitudeLimitReason)
         }
         return ""
+    }
+
+    /// How wide the band across the top of the view is: what is left between the tool strip down the
+    /// left edge and the readout column down the right.
+    ///
+    /// Worked out from the column's stated maximum rather than from the readout's measured width. The
+    /// readout keeps to that maximum now, and reading its actual width instead made this follow every
+    /// warning and reading that changed it -- a band that moves with the telemetry, and two panels
+    /// that could be measured a frame apart and disagree.
+    readonly property real _centreBandLeft:  _inset("leftEdgeTopInset") + _margins
+    readonly property real _centreBandWidth: Math.max(0, width - _centreBandLeft
+                                                            - _rightColumnMaximumWidth - (_margins * 2))
+
+    /// What is wrong with the picture, across the top where a sentence has room to be one.
+    ///
+    /// These were in the readout, in a column 133px wide and about 130 tall on a ground station in
+    /// landscape, and that is the one place they could not be shown: a warning arriving either pushed
+    /// the plan list out of the column or was cut off mid-sentence by the ceiling the column has to be
+    /// held to.
+    LocalGridWarnings {
+        id:                     warnings
+        objectName:             "localGrid_warnings"
+        anchors.top:            parent.top
+        anchors.topMargin:      _root._margins + _root.topEdgeOffset + _root._inset("topEdgeCenterInset")
+        x:                      _root._centreBandLeft + ((_root._centreBandWidth - width) / 2)
+        width:                  Math.min(ScreenTools.defaultFontPixelWidth * 46, _root._centreBandWidth)
+        z:                      3
+        gridView:               _root
     }
 
     Rectangle {
         id:                         planHint
         objectName:                 "localGrid_planHint"
         anchors.horizontalCenter:   parent.horizontalCenter
-        anchors.top:                parent.top
-        anchors.topMargin:          _root._margins + _root.topEdgeOffset + _root._inset("topEdgeCenterInset")
+        // Under the warnings when there are any. Both are transient and both live in this band, and a
+        // reason a plan button is dead is the lesser of the two: an estimate that cannot be trusted is
+        // what decides whether the plan means anything at all.
+        anchors.top:                warnings.visible ? warnings.bottom : parent.top
+        anchors.topMargin:          _root._margins + (warnings.visible
+                                                        ? 0
+                                                        : _root.topEdgeOffset + _root._inset("topEdgeCenterInset"))
         z:                          3
         visible:                    _root.planBlockedReason !== ""
         width:                      hintLabel.implicitWidth + (_root._margins * 2)
@@ -2842,6 +3023,15 @@ Item {
         }
     }
 
+    /// The plan's transfer workflow and the between-flights work. Draws nothing: the toolbar presses
+    /// the first through it and the prompt below opens the second.
+    LocalGridMissionActions {
+        id:                     missionActionsPanel
+        objectName:             "localGrid_missionActions"
+        planMasterController:   _root.planMasterController
+        gridView:               _root
+    }
+
     // Bottom left, the corner the waypoint panel gave up when it moved under the readout. Declared
     // first so missionActions below can sit its bottom margin on this panel's actual measured height
     // rather than on a number guessed to be tall enough -- which stopped being tall enough the moment
@@ -2855,31 +3045,14 @@ Item {
         gridTransform:          transform
     }
 
-    // Sits above the scale bar it is measured from. Its own height is capped rather than left to grow
-    // as tall as its content wants: this is the one panel on the grid anchored to the bottom that
-    // grows upward, and the tool strip -- anchored to the top of this same left edge -- is what it
-    // grows into. topEdgeLeftInset is the tool strip's own bottom edge, published for exactly this: a
-    // panel on the same edge knowing where the other one ends.
-    //
-    // topEdgeOffset is added on top of it for the same reason the readout's topMargin adds it to
-    // topEdgeRightInset: the inset is measured in the fly view's own frame, which starts below the
-    // toolbar, while this view's frame -- and so this panel's own y -- starts above it. Left out, the
-    // tool strip's edge reads a whole toolbar's height higher than it actually sits, and the cap
-    // this exists to enforce comes out too generous by exactly that much.
-    LocalGridMissionActions {
-        objectName:             "localGrid_missionActions"
-        anchors.left:           parent.left
-        anchors.bottom:         parent.bottom
-        anchors.leftMargin:     _root._margins + _root._inset("leftEdgeBottomInset")
-        anchors.bottomMargin:   scaleBar.anchors.bottomMargin + scaleBar.height + _root._margins
-        height:                 implicitHeight
-        maximumHeight:          Math.max(0, (_root.height - anchors.bottomMargin)
-                                                - _root.topEdgeOffset - _root._inset("topEdgeLeftInset")
-                                                - _root._margins)
-        z:                      2
-        planMasterController:   _root.planMasterController
-        gridView:               _root
-    }
+    /// How much of the bottom-left edge this view is standing on, for the fly view's own panels on
+    /// that edge to keep clear of.
+    ///
+    /// Read directly rather than published as a tool inset: the insets flow one way -- the widget
+    /// layer works them out and the overlays, this view among them, lay out against them -- so
+    /// feeding one back would close the circle. This is a plain number off a panel whose height comes
+    /// from nothing but its own contents, so nothing here depends on what reads it.
+    readonly property real bottomLeftReserved: visible ? (scaleBar.height + (_margins * 2)) : 0
 
     // Pinned to the top right corner, and deliberately not set back by the right edge inset. That
     // inset reserves room for the instrument panel whether or not it is open, which left the readout
@@ -2898,6 +3071,15 @@ Item {
         anchors.rightMargin:    _root._margins
         anchors.topMargin:      _root.topEdgeOffset + _root._margins + _root._inset("topEdgeRightInset")
         maximumWidth:           _root._rightColumnMaximumWidth
+        // What is left down to the column's floor once the panels below have been given the room they
+        // take folded. Their folded heights rather than their actual ones: each of them is anchored
+        // under this panel, so reading what they currently measure would close a loop through this
+        // panel's own height. Folded is also the honest reservation -- an operator who opens the plan
+        // list is choosing to spend room this panel would otherwise have.
+        maximumHeight:          Math.max(0, _root._rightColumnBottom - y
+                                                - (airspeed.visible ? airspeed.height + _root._margins : 0)
+                                                - (_root._missionListReserve + _root._margins)
+                                                - (missionStats.visible ? missionStats.collapsedHeight + _root._margins : 0))
         compactColumns:         _root.compact
         gridView:               _root
         onSetOriginRequested:   _root.showSetOriginDialog()

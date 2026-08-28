@@ -16,6 +16,8 @@ ToolStripActionList {
     property alias planWaypointAction:  planWaypointButton
     property alias planRoiAction:       planRoiButton
     property alias planLandAction:      planLandButton
+    /// Same, for the after-flight entry -- which is lit for emphasis rather than to show a mode
+    property alias afterFlightAction:   afterFlightButton
 
     readonly property var  _gridView:     globals.localGridViewFlyView
     readonly property bool _planEditMode: _gridView ? _gridView.planEditMode : false
@@ -48,6 +50,13 @@ ToolStripActionList {
             onTriggered:    displayOpticalFlowCalibration()
         },
         LocalGridPlanWaypointAction { id: planWaypointButton; gridView: _root._gridView },
+
+        // Standing on its own between the two groups rather than paired, because it belongs to
+        // neither: it is not a way of building a pattern and not a way of commanding the aircraft,
+        // it is what is done to the estimate and the plan between two flights. It is also the only
+        // entry here that comes and goes with the state of the aircraft rather than with the mode,
+        // so there is nothing for it to stand in for and nothing to stand in for it.
+        LocalGridAfterFlightAction { id: afterFlightButton; gridView: _root._gridView },
 
         GuidedActionTakeoff { },
         LocalGridPlanRoiAction { id: planRoiButton; gridView: _root._gridView },

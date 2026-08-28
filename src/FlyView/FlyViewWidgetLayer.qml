@@ -82,6 +82,7 @@ Item {
 
     FlyViewBottomRightRowLayout {
         id:                 bottomRightRowLayout
+        objectName:         "flyView_bottomRightRowLayout"
         anchors.bottom:     parent.bottom
         anchors.right:      parent.right
         spacing:            _layoutSpacing
@@ -231,7 +232,16 @@ Item {
         anchors.leftMargin: _toolsMargin
         anchors.top:        mapScaleRow.bottom
         anchors.topMargin:  _toolsMargin
+        // Stops above the bottom edge, and above the local grid's scale bar when that view is the one
+        // on screen -- this panel is opened over that view more than any other, since it is the
+        // readout for flying without GNSS. Past the ceiling its rows scroll; without one they ran off
+        // the bottom of the window, taking the EKF section with them.
+        maximumHeight:      parent.height - y - _nonGpsBottomReserve - _toolsMargin
         z:                  QGroundControl.zOrderWidgets
+
+        readonly property var  _gridView: globals.localGridViewFlyView
+        readonly property real _nonGpsBottomReserve: Math.max(parentToolInsets.bottomEdgeLeftInset,
+                                                              _gridView ? _gridView.bottomLeftReserved : 0)
     }
 
     Viewer3DScaleBar {

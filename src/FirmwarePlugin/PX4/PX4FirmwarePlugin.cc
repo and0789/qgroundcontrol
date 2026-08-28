@@ -569,26 +569,34 @@ bool PX4FirmwarePlugin::guidedModeROI(Vehicle* vehicle, const QGeoCoordinate& ro
 
 void PX4FirmwarePlugin::startTakeoff(Vehicle* vehicle) const
 {
-    if (_setFlightModeAndValidate(vehicle, takeOffFlightMode())) {
-        if (!_armVehicleAndValidate(vehicle)) {
-            QGC::showAppMessage(tr("Unable to start takeoff: Vehicle rejected arming."));
+    _setFlightModeAndValidate(vehicle, takeOffFlightMode(), [this, vehicle](bool inTakeoffMode) {
+        if (!inTakeoffMode) {
+            QGC::showAppMessage(tr("Unable to start takeoff: Vehicle not changing to %1 flight mode.").arg(takeOffFlightMode()));
             return;
         }
-    } else {
-        QGC::showAppMessage(tr("Unable to start takeoff: Vehicle not changing to %1 flight mode.").arg(takeOffFlightMode()));
-    }
+
+        _armVehicleAndValidate(vehicle, [](bool armed) {
+            if (!armed) {
+                QGC::showAppMessage(tr("Unable to start takeoff: Vehicle rejected arming."));
+            }
+        });
+    });
 }
 
 void PX4FirmwarePlugin::startMission(Vehicle* vehicle) const
 {
-    if (_setFlightModeAndValidate(vehicle, missionFlightMode())) {
-        if (!_armVehicleAndValidate(vehicle)) {
-            QGC::showAppMessage(tr("Unable to start mission: Vehicle rejected arming."));
+    _setFlightModeAndValidate(vehicle, missionFlightMode(), [this, vehicle](bool inMissionMode) {
+        if (!inMissionMode) {
+            QGC::showAppMessage(tr("Unable to start mission: Vehicle not changing to %1 flight mode.").arg(missionFlightMode()));
             return;
         }
-    } else {
-        QGC::showAppMessage(tr("Unable to start mission: Vehicle not changing to %1 flight mode.").arg(missionFlightMode()));
-    }
+
+        _armVehicleAndValidate(vehicle, [](bool armed) {
+            if (!armed) {
+                QGC::showAppMessage(tr("Unable to start mission: Vehicle rejected arming."));
+            }
+        });
+    });
 }
 
 void PX4FirmwarePlugin::setGuidedMode(Vehicle* vehicle, bool guidedMode) const

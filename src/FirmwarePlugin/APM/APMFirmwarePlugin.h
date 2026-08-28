@@ -114,7 +114,18 @@ private:
     void _handleIncomingHeartbeat(Vehicle *vehicle, mavlink_message_t *message);
     void _handleOutgoingParamSetThreadSafe(Vehicle *vehicle, LinkInterface *outgoingLink, mavlink_message_t *message);
     void _soloVideoHandshake();
+
+    /// Starts the takeoff. Returns false when a check that can be made here and now refuses it; the
+    /// mode change and the arm that follow report their own failures, since they outlive this call.
     bool _guidedModeTakeoff(Vehicle *vehicle, double altitudeRel) const;
+
+    /// Puts the vehicle in Guided and sends it the altitude change, once whatever had to happen
+    /// before that has.
+    void _changeAltitudeFromGuided(Vehicle *vehicle, double altitudeChange) const;
+
+    /// Starts the mission on a vehicle that is armed and in the mode it arms from. A fixed wing is
+    /// already in Auto by then and starts from the mode change, so only the others are commanded.
+    void _startArmedMission(Vehicle *vehicle) const;
     void _handleRCChannels(Vehicle *vehicle, mavlink_message_t* message);
     void _handleRCChannelsRaw(Vehicle *vehicle, mavlink_message_t* message);
     QString _getLatestVersionFileUrl(Vehicle *vehicle) const final;
