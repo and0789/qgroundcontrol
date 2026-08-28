@@ -263,6 +263,19 @@ Item {
                 text:                   qsTr("Missions cannot run. Set an origin from the local grid, or click the map and choose 'Set Estimator Origin'.")
             }
 
+            // The line above is read by an operator standing over an aircraft they have just
+            // rebooted, and what it says next depends on an answer QGC asked for seconds ago. Asking
+            // again is the whole repair, and it is worth a button of its own: everything that
+            // follows from the origin -- the grid, the plan, whether the set-origin control is even
+            // offered -- goes wrong quietly when this line is out of date.
+            QGCButton {
+                objectName:             "nonGpsStatus_recheckOriginButton"
+                Layout.topMargin:       ScreenTools.defaultFontPixelHeight / 2
+                text:                   qsTr("Re-check origin")
+                enabled:                _root._activeVehicle
+                onClicked:              _root._activeVehicle.requestEstimatorOrigin()
+            }
+
             SectionHeader { text: qsTr("Optical Flow") }
 
             ValueRow {
