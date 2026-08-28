@@ -4,9 +4,11 @@
 #include <QtQuick/QQuickItem>
 #include <QtTest/QTest>
 
+#include "Fact.h"
 #include "FirmwarePlugin.h"
 #include "FlyViewSettings.h"
 #include "MockLink.h"
+#include "ParameterManager.h"
 #include "SettingsManager.h"
 #include "Vehicle.h"
 
@@ -17,6 +19,11 @@ namespace {
 // Somewhere real and away from the equator, so a latitude and longitude mix-up cannot pass
 constexpr double kOriginLatitude = 47.3977419;
 constexpr double kOriginLongitude = 8.5455938;
+
+// AHRS_OPTIONS bit 3 (save the origin) and bit 4 (restore it at boot without GNSS)
+constexpr int kRememberOriginBits = 24;
+// An unrelated bit that must survive: DisableDCMFallbackVTOL
+constexpr int kUnrelatedOptionBit = 2;
 
 } // namespace
 
@@ -40,6 +47,52 @@ void SetEstimatorOriginUITest::cleanup()
     flyViewSettings->lastEstimatorOriginLongitude()->setRawValue(0);
 
     QmlUITestBase::cleanup();
+}
+
+/// Telling the vehicle to remember its origin must set the two bits it needs and leave the rest of
+/// AHRS_OPTIONS alone.
+///
+/// The parameter is a bitmask whose lower bits carry unrelated DCM fallback and airspeed behaviour,
+/// so writing the mask whole would quietly change how the aircraft flies to buy an origin that
+/// survives a reboot. And surviving a reboot is the point: without it the origin dies with every
+/// power cycle, and the aircraft comes back with no home, no local position on the wire, and a
+/// mission that raises an internal error on its first takeoff.
+void SetEstimatorOriginUITest::_rememberingTheOriginSetsOnlyItsOwnBits_test()
+{
+    FlyViewSettings* const flyViewSettings = SettingsManager::instance()->flyViewSettings();
+    flyViewSettings->showLocalGridView()->setRawValue(true);
+
+    runWithMockLink(
+        [] { return MockLink::startAPMArduCopterMockLink(); },
+        [this](const QPointer<MockLink>& mockLink, Vehicle* vehicle) {
+            Q_UNUSED(mockLink);
+            QVERIFY(vehicle);
+
+            Fact* const options = vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId,
+                                                                            QStringLiteral("AHRS_OPTIONS"));
+            QVERIFY2(options, "the mock ArduCopter must carry the parameter this dialog offers");
+            options->containerSetRawValue(kUnrelatedOptionBit);
+
+            QVERIFY2(clickButton(QStringLiteral("localGrid_setOriginButton")),
+                     "the grid offers no way to set an origin");
+            QVERIFY(findVisibleItem(_rootItem, QStringLiteral("setOrigin_latitudeField"), 3000));
+
+            QQuickItem* const rememberCheckBox =
+                findVisibleItem(_rootItem, QStringLiteral("setOrigin_rememberCheckBox"), 1000);
+            QVERIFY2(rememberCheckBox, "a vehicle whose firmware can remember an origin must be offered it");
+            QVERIFY2(!rememberCheckBox->property("checked").toBool(), "the box has to start where the parameter is");
+
+            QVERIFY(clickButton(QStringLiteral("setOrigin_rememberCheckBox")));
+            QTRY_COMPARE_WITH_TIMEOUT(options->rawValue().toInt(), kUnrelatedOptionBit | kRememberOriginBits,
+                                      TestTimeout::shortMs());
+            QVERIFY2(rememberCheckBox->property("checked").toBool(),
+                     "the box has to follow the parameter it just wrote");
+
+            // And back off again, leaving what it never owned
+            QVERIFY(clickButton(QStringLiteral("setOrigin_rememberCheckBox")));
+            QTRY_COMPARE_WITH_TIMEOUT(options->rawValue().toInt(), kUnrelatedOptionBit, TestTimeout::shortMs());
+            QVERIFY(!rememberCheckBox->property("checked").toBool());
+        });
 }
 
 /// The whole point of the dialog: an origin set from the grid, with no map involved at any step.
