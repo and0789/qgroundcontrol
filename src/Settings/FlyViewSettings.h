@@ -32,6 +32,7 @@ public:
     DEFINE_SETTINGFACT(localGridPlanAnchorVehicleId)
     DEFINE_SETTINGFACT(localGridPlanAnchorNorth)
     DEFINE_SETTINGFACT(localGridPlanAnchorEast)
+    DEFINE_SETTINGFACT(localGridDefaultAltitude)
     DEFINE_SETTINGFACT(showLocalGridView)
     DEFINE_SETTINGFACT(showLocalGridPlanHelp)
     DEFINE_SETTINGFACT(showNonGpsStatusPanel)

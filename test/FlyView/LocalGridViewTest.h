@@ -46,6 +46,7 @@ private slots:
     void _takeoffIsHeldOnTheOrigin_test();
     void _itemTypeChangesInPlace_test();
     void _altitudeCanBeAppliedToEveryItem_test();
+    void _newItemTakesTheGridsOwnDefaultAltitude_test();
     void _landingTakesTheAltitudeOfTheItemBeforeIt_test();
     void _gridSaysWhetherThePlanAlreadyHasATakeoff_test();
     void _everyItemAboveTheCeilingIsFound_test();

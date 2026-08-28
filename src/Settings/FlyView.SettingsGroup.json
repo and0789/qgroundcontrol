@@ -122,6 +122,19 @@
             "label": "Local grid plan anchor east"
         },
         {
+            "name": "localGridDefaultAltitude",
+            "shortDesc": "Altitude given to a new item placed on the local grid.",
+            "longDesc": "QGC's usual default mission altitude is chosen for a vehicle with GNSS and a barometer. A local grid flight is flown indoors or in a confined space, off a rangefinder that sees a few metres, so it needs a default of its own. The rangefinder's range caps it further, but only when the estimator takes its height from one -- on a vehicle holding height on the barometer nothing else does, which is what the upper bound here is for.",
+            "type": "double",
+            "units": "vertical m",
+            "default": 3.0,
+            "min": 0.5,
+            "userMax": 50.0,
+            "decimalPlaces": 1,
+            "label": "Local grid default altitude",
+            "keywords": "non-gps,local grid,altitude,default altitude"
+        },
+        {
             "name": "showLocalGridView",
             "shortDesc": "Replace the fly view map with a local NED grid measured in metres.",
             "type": "bool",

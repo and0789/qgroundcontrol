@@ -594,7 +594,9 @@ Item {
 
         switch (kind) {
         case "land":
-            _applyDefaultAltitude(missionController.insertLandItem(coordinate, _insertIndex(), true /* makeCurrentItem */))
+            // Only capped, not defaulted: this is a return to launch, and the altitude the
+            // controller gives it is the height it flies home at rather than a height of its own
+            _capAltitude(missionController.insertLandItem(coordinate, _insertIndex(), true /* makeCurrentItem */))
             break
         case "landHere":
             return _insertLandHere(coordinate)
@@ -657,12 +659,27 @@ Item {
         return true
     }
 
-    /// Brings a newly placed item under the ceiling the estimator can actually hold a height at.
+    /// The height a new item on this grid is placed at, before the ceiling below is applied
+    readonly property real _defaultAltitudeMetres: QGroundControl.settingsManager.flyViewSettings.localGridDefaultAltitude.rawValue
+
+    /// Gives a newly placed item a height this grid can be flown at.
     ///
-    /// QGC's default mission altitude is chosen for a vehicle with GNSS and a barometer. On one
-    /// flying off a rangefinder it is above the only height reference there is, and the way that
-    /// fails is silent: the plan uploads cleanly and the aircraft climbs out of range in flight.
+    /// Two corrections, in order. QGC's default mission altitude is chosen for a vehicle with GNSS
+    /// and a barometer, and is tens of metres; a grid flight is flown indoors or in a confined
+    /// space, so the item takes this view's own default instead. Then the rangefinder's range caps
+    /// it, because on an aircraft that takes its height from one, anything above that range is
+    /// above the only height reference there is -- and the way that fails is silent: the plan
+    /// uploads cleanly and the aircraft climbs out of range in flight.
     function _applyDefaultAltitude(item) {
+        if (!item || !item.altitude) {
+            return
+        }
+        item.altitude.rawValue = clampAltitude(_defaultAltitudeMetres)
+    }
+
+    /// Brings an item's own altitude under that same ceiling, for the items whose height is decided
+    /// somewhere other than here.
+    function _capAltitude(item) {
         if (!item || !item.altitude) {
             return
         }

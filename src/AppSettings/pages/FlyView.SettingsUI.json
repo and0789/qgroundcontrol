@@ -69,6 +69,15 @@
             ]
         },
         {
+            "heading": "Local Grid",
+            "keywords": ["non-gps", "gps denied", "local grid", "altitude", "default altitude", "indoor"],
+            "controls": [
+                {
+                    "setting": "flyViewSettings.localGridDefaultAltitude"
+                }
+            ]
+        },
+        {
             "component": "MavlinkActionSettings",
             "sectionName": "MAVLink Actions",
             "keywords": [

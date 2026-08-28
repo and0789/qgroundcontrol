@@ -1555,6 +1555,52 @@ void LocalGridViewTest::_altitudeCanBeAppliedToEveryItem_test()
     QCOMPARE(changed.toInt(), 0);
 }
 
+/// A new item takes this view's own default height rather than QGC's mission default.
+///
+/// QGC's default is fifty metres, chosen for a vehicle with GNSS and a barometer. A grid flight is
+/// flown indoors or in a confined space, and the rangefinder cap that used to be the only correction
+/// applies solely when the estimator takes its height from a rangefinder -- so on a vehicle holding
+/// height on the barometer, every waypoint placed here was fifty metres up and nothing said so.
+void LocalGridViewTest::_newItemTakesTheGridsOwnDefaultAltitude_test()
+{
+    QVERIFY(vehicle());
+    const QGeoCoordinate origin(47.3977419, 8.5455938, 488.0);
+    QVERIFY(setEstimatorOrigin(vehicle(), mockLink(), origin));
+
+    Fact* const defaultAltitude = SettingsManager::instance()->flyViewSettings()->localGridDefaultAltitude();
+    QVERIFY(defaultAltitude);
+    QVERIFY2(defaultAltitude->rawValue().toDouble() < 10.0,
+             "the shipped default has to be a height this kind of flight is actually flown at");
+    // A whole number: the stub's altitude Fact carries no metadata of its own, so it stores what a
+    // default-typed Fact stores. Four is still distinct from both the shipped default and the fifty
+    // metres this test exists to keep out.
+    defaultAltitude->setRawValue(4.0);
+
+    MAKE_GRID_VIEW(gridView);
+    QQmlComponent stubComponent(&gridViewEngine);
+    QString stubError;
+    const QScopedPointer<QObject> stub(createMissionControllerStub(stubComponent, stubError));
+    QVERIFY2(stub, qPrintable(stubError));
+    gridView->setProperty("missionController", QVariant::fromValue(stub.get()));
+
+    QVariant placed;
+    QVERIFY(QMetaObject::invokeMethod(gridView.get(), "addWaypointAt", Qt::DirectConnection,
+                                      Q_RETURN_ARG(QVariant, placed), Q_ARG(QVariant, 20.0), Q_ARG(QVariant, -10.0)));
+    QVERIFY(placed.toBool());
+
+    // The takeoff the empty plan gained first and the waypoint that was asked for. Both are placed
+    // by the operator and both are flown, so neither may arrive carrying a height from somewhere
+    // else.
+    for (int index = 0; index < 2; index++) {
+        QVariant fact;
+        QVERIFY(QMetaObject::invokeMethod(gridView.get(), "waypointAltitudeFact", Qt::DirectConnection,
+                                          Q_RETURN_ARG(QVariant, fact), Q_ARG(QVariant, index)));
+        QObject* const altitude = fact.value<QObject*>();
+        QVERIFY(altitude);
+        QCOMPARE(altitude->property("rawValue").toDouble(), 4.0);
+    }
+}
+
 /// A landing's altitude is never flown. ArduPilot's do_land() zeroes the one it is given and refills
 /// it from the vehicle's current altitude, so the aircraft arrives over the landing point at
 /// whatever height the leg before it was flown at. Left carrying a number of its own the item is a
