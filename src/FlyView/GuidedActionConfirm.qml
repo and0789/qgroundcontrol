@@ -22,6 +22,14 @@ Item {
     property alias  optionText:         optionCheckBox.text
     property alias  optionChecked:      optionCheckBox.checked
 
+    /// Shows the action and its explanation but refuses to run it.
+    ///
+    /// For an action whose cost is paid by the vehicle rather than by the operator trying again. It
+    /// stays on screen rather than vanishing, because the message beside it is the whole point: a
+    /// control that disappears leaves the operator hunting for a button that was there a moment ago,
+    /// where one that is visible and shut says what has to be fixed first.
+    property bool   blocked:            false
+
     property real _margins:         2
     property bool _emergencyAction: action === guidedController.actionEmergencyStop
 
@@ -47,6 +55,7 @@ Item {
         visible = false
         guidedValueSlider.visible = false
         hideTrigger = false
+        blocked = false
         visibleTimer.stop()
         messageDisplay.opacity = 1.0
         messageFadeTimer.stop()
@@ -91,7 +100,7 @@ Item {
         QGCDelayButton {
             objectName:         "guidedActionConfirmButton"
             text:               control.title
-            enabled:            true
+            enabled:            !control.blocked
 
             onActivated: {
                 control.visible = false
